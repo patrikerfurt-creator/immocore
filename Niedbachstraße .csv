@@ -1,0 +1,10 @@
+﻿# person_typ: 100=Eigentümer | 200=Mieter | 300=Kreditor | 400=Sonstiges;;;;;;;;;;;;;;;
+# Anrede-Werte: Herr | Frau | Eheleute | Herren | Damen | Herr und Frau | Firma;;;;;;;;;;;;;;;
+person_typ;ist_firma;Firma;Anrede;Anrede1;Vorname1;Nachname1;Anrede2;Vorname2;Nachname2;Anschrift;PLZ;Ort;Email1;Email2;IBAN
+100;FALSE;;Frau;Frau;Irina;Suzdanitskaya;;;;Hessenstraße 27;65824;Schwalbach am Taunus;;;
+100;FALSE;;Herr;Herr;Klaus ;Mann;;;;Königsteiner Straße 202;65812;Bad Soden am Taunus;;;
+100;FALSE;;Herr;Herr;Michael;Dreisbach;;;;Höngenstraße 59;65428;Rüsselsheim;;;
+100;FALSE;;Herr;Herr;Lars;Schieblehut;;;;Bornstraße 19;36284;Hohenroda;;;
+100;FALSE;;Herr;Herr;Rainer;Diefenbach;;;;Kopernikusstraße 27;65929;Frankfurt am Main;;;
+100;FALSE;;Frau;Frau;Bettina Elisabeth;Ahwee;;;;Vilbeler Landstraße 186a;60388;Frankfurt am Main;;;
+100;FALSE;;Eheleute;Frau ;Ilona;Ambrosius;Herr;Stefan;Ambrosius;Röderbergweg 243;60385;Frankfurt am Main;;;

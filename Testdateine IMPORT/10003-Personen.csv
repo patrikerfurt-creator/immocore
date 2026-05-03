@@ -1,0 +1,24 @@
+﻿# person_typ: 100=Eigentümer | 200=Mieter | 300=Kreditor | 400=Sonstiges
+# Anrede-Werte: Herr | Frau | Eheleute | Herren | Damen | Herr und Frau | Firma
+person_typ;ist_firma;Firma;Anrede;Anrede1;Vorname1;Nachname1;Anrede2;Vorname2;Nachname2;Anschrift;PLZ;Ort;Email1;Email2;IBAN
+100;FALSE;;Frau;Frau;Helga;Rafflenbeul;;;;61462;;;arnd.rafflenbeul@web.de;;DE74500700240471901900
+100;FALSE;;Frau;Frau;Ilona;Weber-Hahn;;;;61462;;;iloweber@t-online.de;;DE66501900000300531520
+100;FALSE;;Herr;Herr;Udo;Martens;;;;61462;;;martensudo@arcor.de;;DE55500105175406925966
+100;FALSE;;Eheleute;Frau;Andrea;Rüffer;Herr;Michael;Rüffer;61440;;;rueffers@gmx.de;;DE94512500000027507840
+100;FALSE;;Frau;Frau;Bernhelma;Sauer;;;;61462;;;;;DE27512500000013553947
+100;FALSE;;Frau;Frau;Anna;Roth;;;;61462;;;szczesna.a@gmail.com;;DE95300700240046863700
+100;FALSE;;Frau;Frau;Rose;Kömpf;;;;71083;;;hia91@aol.com;;DE97603913100764836005
+100;FALSE;;Herr;Herr;Thomas;Weitz;;;;61462;;;info@familie-weitz.de;;DE13500700240718376700
+100;FALSE;;Herr;Herr;Clemens;Boecker;;;;86199;;;clemens@tapetessaocarlos.com.br;;DE35501900000300434690
+100;FALSE;;Herr;Herr;Wolfgang;Langhammer;;;;61462;;;Wolfgang.Langhammer@web.de;;DE04500400000373950500
+100;FALSE;;Eheleute;Frau;Saskia Maria;Forbes;Herr;Alistar James;Forbes;61462;;;forbes.al@gmail.com;;DE76500400000610015000
+100;FALSE;;Eheleute;Frau;Anna;Lynnyk;Herr;Sergej;Lynnyk;61462;;;sergejlynnyk@icloud.com;;DE87500905000005482351
+100;FALSE;;Herr;Herr;Dietrich;Rössel;;;;61462;;;dietrich.roessel@web.de;;DE02510500150270000703
+100;FALSE;;Herr;Herr;René;Helmer;;;;61476;;;rene@helmerweb.de;;DE14508629003002518864
+100;FALSE;;Herr;Herr;Danijel;Krezo;;;;61462;;;danijel.krezo@gmx.de;;DE37500700240829941400
+100;FALSE;;Herr;Herr;Charly;Gaul;;;;65929;;;charly.gaul@gmx.net;;DE70120300001063503187
+100;FALSE;;Herr;Herr;Philipp;von Meurers;;;;61462;;;philipp.v.meurers@oneequity.com;;DE98500800000012461800
+100;FALSE;;Herr;Herr;Kai;Waldmann;;;;61462;;;kai.waldmann@gmx.net;;DE63200411330704784800
+100;FALSE;;Eheleute;Eheleute;Danjiel;Krezo;;Dijana;Krezo;Kronberger Straße 7;61462;Königstein im Taunus;;;
+100;FALSE;;Eheleute;Eheleute;Thomas;Weitz;;Petra;Weitz;Kronberger Straße 7;61462;Königstein im Taunus;;;
+100;FALSE;;Eheleute;Eheleute;Friedrich Jörg;Rössel;;Hannelore Rössel;;Mühlweg 25;61462;Königstein im Taunus;;;

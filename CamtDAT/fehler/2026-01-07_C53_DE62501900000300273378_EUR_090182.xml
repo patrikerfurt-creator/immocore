@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08 camt.053.001.08.xsd">
+	<BkToCstmrStmt>
+		<GrpHdr>
+			<MsgId>53D20260106T2107078742830N260000002</MsgId>
+			<CreDtTm>2026-01-06T21:07:07.0+01:00</CreDtTm>
+		</GrpHdr>
+		<Stmt>
+			<Id>1740C532026010621070787010300273378</Id>
+			<StmtPgntn>
+				<PgNb>1</PgNb>
+				<LastPgInd>true</LastPgInd>
+			</StmtPgntn>
+			<ElctrncSeqNb>260000002</ElctrncSeqNb>
+			<LglSeqNb>002</LglSeqNb>
+			<CreDtTm>2026-01-06T21:07:07.0+01:00</CreDtTm>
+			<FrToDt>
+				<FrDtTm>2026-01-06T00:00:00+01:00</FrDtTm>
+				<ToDtTm>2026-01-06T23:59:59+01:00</ToDtTm>
+			</FrToDt>
+			<Acct>
+				<Id>
+					<IBAN>DE62501900000300273378</IBAN>
+				</Id>
+				<Ccy>EUR</Ccy>
+				<Ownr>
+					<Nm>WEG Niedbachstr. 1, 61389</Nm>
+				</Ownr>
+				<Svcr>
+					<FinInstnId>
+						<BICFI>FFVBDEFFXXX</BICFI>
+						<Nm>Frankfurter Volksbank Rhein/Main e</Nm>
+						<Othr>
+							<Id>DE 114104100</Id>
+							<Issr>UmsStId</Issr>
+						</Othr>
+					</FinInstnId>
+				</Svcr>
+			</Acct>
+			<Bal>
+				<Tp>
+					<CdOrPrtry>
+						<Cd>OPBD</Cd>
+					</CdOrPrtry>
+				</Tp>
+				<Amt Ccy="EUR">17602.33</Amt>
+				<CdtDbtInd>CRDT</CdtDbtInd>
+				<Dt>
+					<Dt>2026-01-06</Dt>
+				</Dt>
+			</Bal>
+			<Bal>
+				<Tp>
+					<CdOrPrtry>
+						<Cd>CLBD</Cd>
+					</CdOrPrtry>
+				</Tp>
+				<Amt Ccy="EUR">17281.03</Amt>
+				<CdtDbtInd>CRDT</CdtDbtInd>
+				<Dt>
+					<Dt>2026-01-06</Dt>
+				</Dt>
+			</Bal>
+			<Ntry>
+				<Amt Ccy="EUR">321.30</Amt>
+				<CdtDbtInd>DBIT</CdtDbtInd>
+				<Sts><Cd>BOOK</Cd></Sts>
+				<BookgDt>
+					<Dt>2026-01-06</Dt>
+				</BookgDt>
+				<ValDt>
+					<Dt>2026-01-06</Dt>
+				</ValDt>
+				<AcctSvcrRef>2026010612252664000</AcctSvcrRef>
+				<BkTxCd>
+					<Domn>
+						<Cd>PMNT</Cd>
+						<Fmly>
+							<Cd>ICDT</Cd>
+							<SubFmlyCd>ESCT</SubFmlyCd>
+						</Fmly>
+					</Domn>
+					<Prtry>
+						<Cd>NTRF+177+08381</Cd>
+						<Issr>DK</Issr>
+					</Prtry>
+				</BkTxCd>
+				<NtryDtls>
+					<TxDtls>
+						<Refs>
+							<MsgId>windata-1-3213-1037573027</MsgId>
+							<PmtInfId>windata S0458635</PmtInfId>
+							<EndToEndId>70722,OP.51727,20260042</EndToEndId>
+							<TxId>2026010665141715907200000010000001</TxId>
+						</Refs>
+						<Amt Ccy="EUR">321.30</Amt>
+						<CdtDbtInd>DBIT</CdtDbtInd>
+						<BkTxCd>
+							<Domn>
+								<Cd>PMNT</Cd>
+								<Fmly>
+									<Cd>ICDT</Cd>
+									<SubFmlyCd>ESCT</SubFmlyCd>
+								</Fmly>
+							</Domn>
+							<Prtry>
+								<Cd>NTRF+177+08381</Cd>
+								<Issr>DK</Issr>
+							</Prtry>
+						</BkTxCd>
+						<RltdPties>
+							<Dbtr>
+								<Pty>
+									<Nm>Demme Immobilien Verw.GmbH</Nm>
+								</Pty>
+							</Dbtr>
+							<DbtrAcct>
+								<Id>
+									<IBAN>DE62501900000300273378</IBAN>
+								</Id>
+							</DbtrAcct>
+							<Cdtr>
+								<Pty>
+									<Nm>Demme Immobilien Verwaltung  GmbH</Nm>
+								</Pty>
+							</Cdtr>
+							<CdtrAcct>
+								<Id>
+									<IBAN>DE12120300001037573027</IBAN>
+								</Id>
+							</CdtrAcct>
+						</RltdPties>
+						<RltdAgts>
+							<CdtrAgt>
+								<FinInstnId>
+									<BICFI>BYLADEM1001</BICFI>
+								</FinInstnId>
+							</CdtrAgt>
+						</RltdAgts>
+						<RmtInf>
+							<Ustrd>RE.20260042 vom 01.01.2026</Ustrd>
+						</RmtInf>
+					</TxDtls>
+				</NtryDtls>
+				<AddtlNtryInf>EURO-UEBERWEISUNG</AddtlNtryInf>
+			</Ntry>
+		</Stmt>
+	</BkToCstmrStmt>
+</Document>

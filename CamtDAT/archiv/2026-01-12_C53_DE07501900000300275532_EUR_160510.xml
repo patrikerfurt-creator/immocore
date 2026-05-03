@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08 camt.053.001.08.xsd">
+	<BkToCstmrStmt>
+		<GrpHdr>
+			<MsgId>53D20260109T2107129223860N260000004</MsgId>
+			<CreDtTm>2026-01-09T21:07:12.0+01:00</CreDtTm>
+		</GrpHdr>
+		<Stmt>
+			<Id>1740C532026010921071292010300275532</Id>
+			<StmtPgntn>
+				<PgNb>1</PgNb>
+				<LastPgInd>true</LastPgInd>
+			</StmtPgntn>
+			<ElctrncSeqNb>260000004</ElctrncSeqNb>
+			<LglSeqNb>004</LglSeqNb>
+			<CreDtTm>2026-01-09T21:07:12.0+01:00</CreDtTm>
+			<FrToDt>
+				<FrDtTm>2026-01-09T00:00:00+01:00</FrDtTm>
+				<ToDtTm>2026-01-09T23:59:59+01:00</ToDtTm>
+			</FrToDt>
+			<Acct>
+				<Id>
+					<IBAN>DE07501900000300275532</IBAN>
+				</Id>
+				<Ccy>EUR</Ccy>
+				<Ownr>
+					<Nm>WEG Kronberger Str. 7-9, Königst</Nm>
+				</Ownr>
+				<Svcr>
+					<FinInstnId>
+						<BICFI>FFVBDEFFXXX</BICFI>
+						<Nm>Frankfurter Volksbank Rhein/Main e</Nm>
+						<Othr>
+							<Id>DE 114104100</Id>
+							<Issr>UmsStId</Issr>
+						</Othr>
+					</FinInstnId>
+				</Svcr>
+			</Acct>
+			<Bal>
+				<Tp>
+					<CdOrPrtry>
+						<Cd>OPBD</Cd>
+					</CdOrPrtry>
+				</Tp>
+				<Amt Ccy="EUR">26405.37</Amt>
+				<CdtDbtInd>CRDT</CdtDbtInd>
+				<Dt>
+					<Dt>2026-01-09</Dt>
+				</Dt>
+			</Bal>
+			<Bal>
+				<Tp>
+					<CdOrPrtry>
+						<Cd>CLBD</Cd>
+					</CdOrPrtry>
+				</Tp>
+				<Amt Ccy="EUR">37050.51</Amt>
+				<CdtDbtInd>CRDT</CdtDbtInd>
+				<Dt>
+					<Dt>2026-01-09</Dt>
+				</Dt>
+			</Bal>
+			<Ntry>
+				<Amt Ccy="EUR">10645.14</Amt>
+				<CdtDbtInd>CRDT</CdtDbtInd>
+				<Sts><Cd>BOOK</Cd></Sts>
+				<BookgDt>
+					<Dt>2026-01-09</Dt>
+				</BookgDt>
+				<ValDt>
+					<Dt>2026-01-09</Dt>
+				</ValDt>
+				<AcctSvcrRef>2026010900260522000</AcctSvcrRef>
+				<BkTxCd>
+					<Domn>
+						<Cd>PMNT</Cd>
+						<Fmly>
+							<Cd>IDDT</Cd>
+							<SubFmlyCd>ESDD</SubFmlyCd>
+						</Fmly>
+					</Domn>
+					<Prtry>
+						<Cd>NCOL+192+08382</Cd>
+						<Issr>DK</Issr>
+					</Prtry>
+				</BkTxCd>
+				<NtryDtls>
+					<Btch>
+						<PmtInfId>windata S0458592</PmtInfId>
+						<NbOfTxs>30</NbOfTxs>
+						<TtlAmt Ccy="EUR">10645.14</TtlAmt>
+						<CdtDbtInd>CRDT</CdtDbtInd>
+					</Btch>
+					<TxDtls>
+						<Refs>
+							<MsgId>windata-30-1064514-18808074859</MsgId>
+							<PmtInfId>windata S0458592</PmtInfId>
+						</Refs>
+						<Amt Ccy="EUR">10645.14</Amt>
+						<CdtDbtInd>CRDT</CdtDbtInd>
+						<BkTxCd>
+							<Domn>
+								<Cd>PMNT</Cd>
+								<Fmly>
+									<Cd>IDDT</Cd>
+									<SubFmlyCd>ESDD</SubFmlyCd>
+								</Fmly>
+							</Domn>
+							<Prtry>
+								<Cd>NCOL+192+08382</Cd>
+								<Issr>DK</Issr>
+							</Prtry>
+						</BkTxCd>
+						<RltdPties>
+							<Cdtr>
+								<Pty>
+									<Nm>WEG Kronberger Str. 7-9, Ko</Nm>
+								</Pty>
+							</Cdtr>
+							<CdtrAcct>
+								<Id>
+									<IBAN>DE07501900000300275532</IBAN>
+								</Id>
+							</CdtrAcct>
+						</RltdPties>
+						<RmtInf>
+							<Ustrd>SEPA Sammel-Basislastschrift mit 30 Lastschriften MSG-ID: windata-30-1064514-18808074859</Ustrd>
+						</RmtInf>
+					</TxDtls>
+				</NtryDtls>
+				<AddtlNtryInf>LASTSCHRIFTEINR.E.V.</AddtlNtryInf>
+			</Ntry>
+		</Stmt>
+	</BkToCstmrStmt>
+</Document>

@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>Kontenrahmen</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 700px; margin: 60px auto; color: #333; }
+    h1 { font-size: 1.4rem; margin-bottom: 4px; }
+    .sub { color: #666; margin-bottom: 30px; font-size: 0.9rem; }
+    h2 { font-size: 1.1rem; margin-top: 30px; border-bottom: 1px solid #ddd; padding-bottom: 6px; }
+    label { display: block; font-weight: bold; margin-bottom: 6px; }
+    input[type=text] { padding: 7px 10px; font-size: 1rem; border: 1px solid #ccc;
+                       border-radius: 3px; width: 160px; }
+    input[type=file] { display: block; margin-bottom: 20px; }
+    button { background: #417690; color: white; border: none; padding: 10px 24px;
+             font-size: 1rem; cursor: pointer; border-radius: 3px; }
+    button:hover { background: #2b5070; }
+    .result { margin-top: 20px; padding: 16px; border-radius: 4px; white-space: pre-wrap;
+              font-family: monospace; font-size: 0.9rem; display: none; }
+    .ok  { background: #dff0d8; border: 1px solid #b2dba1; }
+    .err { background: #f2dede; border: 1px solid #ebccd1; }
+    .box { padding: 16px; background: #f9f9f9; border: 1px solid #ddd;
+           border-radius: 4px; margin-top: 12px; }
+    .hinweis { font-size: 0.85rem; color: #666; margin-top: 8px; }
+    a { color: #417690; }
+  </style>
+</head>
+<body>
+
+<h1>Kontenrahmen</h1>
+<p class="sub"><a href="/api/v1/">← API-Übersicht</a></p>
+
+<!-- SKR-WEG Vorlage -->
+<h2>SKR-WEG Musterkontenrahmen anlegen</h2>
+<div class="box">
+  <label>Objektnummer</label>
+  <input type="text" id="objnr-vorlage" placeholder="z.B. 10001">
+  <br><br>
+  <button id="btn-vorlage">Musterkontenrahmen anlegen</button>
+  <p class="hinweis">Legt 24 Standardkonten (Klassen 1–6) für das Objekt an.<br>
+  Bereits vorhandene Konten werden übersprungen.</p>
+  <div id="result-vorlage" class="result"></div>
+</div>
+
+<!-- CSV-Import -->
+<h2>Eigene Konten per CSV importieren</h2>
+<div class="box">
+  <p style="margin-top:0">
+    <a href="/api/v1/konten/csv-vorlage/" download>Leere CSV-Vorlage herunterladen</a>
+  </p>
+  <label>CSV-Datei hochladen</label>
+  <form id="csv-form" enctype="multipart/form-data">
+    <input type="file" name="datei" accept=".csv" required>
+    <button type="submit">Importieren</button>
+  </form>
+  <p class="hinweis">Spalten: Objekt-Nr; Kontonummer; Bezeichnung; Klasse; Verteilerschlüssel (MEA/Flaeche/Kopf)</p>
+  <div id="result-csv" class="result"></div>
+</div>
+
+<script>
+  function getCookie(name) {
+    const val = document.cookie.split('; ').find(r => r.startsWith(name + '='));
+    return val ? val.split('=')[1] : '';
+  }
+
+  function showResult(el, ok, text) {
+    el.style.display = 'block';
+    el.className = 'result ' + (ok ? 'ok' : 'err');
+    el.textContent = text;
+  }
+
+  // SKR-WEG Vorlage
+  document.getElementById('btn-vorlage').addEventListener('click', async () => {
+    const objnr = document.getElementById('objnr-vorlage').value.trim();
+    const result = document.getElementById('result-vorlage');
+    if (!objnr) { showResult(result, false, 'Bitte Objektnummer eingeben.'); return; }
+
+    // Objekt-UUID per Objektnummer ermitteln
+    try {
+      const r1 = await fetch(`/api/v1/objekte/?format=json`, { credentials: 'include' });
+      const data1 = await r1.json();
+      const obj = data1.results
+        ? data1.results.find(o => o.objektnummer === objnr)
+        : data1.find(o => o.objektnummer === objnr);
+
+      if (!obj) { showResult(result, false, `Objekt "${objnr}" nicht gefunden.`); return; }
+
+      const r2 = await fetch('/api/v1/konten/vorlage-anlegen/', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': getCookie('csrftoken'),
+        },
+        body: JSON.stringify({ objekt: obj.id }),
+      });
+      const data2 = await r2.json();
+      if (r2.ok) {
+        showResult(result, true,
+          `✓ ${data2.angelegt} Konten angelegt, ${data2.uebersprungen} bereits vorhanden.`);
+      } else {
+        showResult(result, false, JSON.stringify(data2, null, 2));
+      }
+    } catch(e) { showResult(result, false, 'Fehler: ' + e.message); }
+  });
+
+  // CSV-Import
+  document.getElementById('csv-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const result = document.getElementById('result-csv');
+    const form = new FormData(e.target);
+    try {
+      const r = await fetch('/api/v1/konten/csv-import/', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'X-CSRFToken': getCookie('csrftoken') },
+        body: form,
+      });
+      const data = await r.json();
+      if (r.ok && data.angelegt > 0) {
+        let text = `✓ ${data.angelegt} Konto/Konten angelegt.`;
+        if (data.fehler_anzahl > 0)
+          text += `\n\n${data.fehler_anzahl} Fehler:\n` + data.fehler.join('\n');
+        showResult(result, true, text);
+      } else {
+        showResult(result, false, JSON.stringify(data, null, 2));
+      }
+    } catch(e) { showResult(result, false, 'Fehler: ' + e.message); }
+  });
+</script>
+</body>
+</html>

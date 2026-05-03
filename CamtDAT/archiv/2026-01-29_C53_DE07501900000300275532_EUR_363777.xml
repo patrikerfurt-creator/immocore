@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08 camt.053.001.08.xsd">
+	<BkToCstmrStmt>
+		<GrpHdr>
+			<MsgId>53D20260128T2107345201570N260000007</MsgId>
+			<CreDtTm>2026-01-28T21:07:34.0+01:00</CreDtTm>
+		</GrpHdr>
+		<Stmt>
+			<Id>1740C532026012821073451010300275532</Id>
+			<StmtPgntn>
+				<PgNb>1</PgNb>
+				<LastPgInd>true</LastPgInd>
+			</StmtPgntn>
+			<ElctrncSeqNb>260000007</ElctrncSeqNb>
+			<LglSeqNb>007</LglSeqNb>
+			<CreDtTm>2026-01-28T21:07:34.0+01:00</CreDtTm>
+			<FrToDt>
+				<FrDtTm>2026-01-28T00:00:00+01:00</FrDtTm>
+				<ToDtTm>2026-01-28T23:59:59+01:00</ToDtTm>
+			</FrToDt>
+			<Acct>
+				<Id>
+					<IBAN>DE07501900000300275532</IBAN>
+				</Id>
+				<Ccy>EUR</Ccy>
+				<Ownr>
+					<Nm>WEG Kronberger Str. 7-9, Königst</Nm>
+				</Ownr>
+				<Svcr>
+					<FinInstnId>
+						<BICFI>FFVBDEFFXXX</BICFI>
+						<Nm>Frankfurter Volksbank Rhein/Main e</Nm>
+						<Othr>
+							<Id>DE 114104100</Id>
+							<Issr>UmsStId</Issr>
+						</Othr>
+					</FinInstnId>
+				</Svcr>
+			</Acct>
+			<Bal>
+				<Tp>
+					<CdOrPrtry>
+						<Cd>OPBD</Cd>
+					</CdOrPrtry>
+				</Tp>
+				<Amt Ccy="EUR">30370.33</Amt>
+				<CdtDbtInd>CRDT</CdtDbtInd>
+				<Dt>
+					<Dt>2026-01-28</Dt>
+				</Dt>
+			</Bal>
+			<Bal>
+				<Tp>
+					<CdOrPrtry>
+						<Cd>CLBD</Cd>
+					</CdOrPrtry>
+				</Tp>
+				<Amt Ccy="EUR">25267.61</Amt>
+				<CdtDbtInd>CRDT</CdtDbtInd>
+				<Dt>
+					<Dt>2026-01-28</Dt>
+				</Dt>
+			</Bal>
+			<Ntry>
+				<Amt Ccy="EUR">5102.72</Amt>
+				<CdtDbtInd>DBIT</CdtDbtInd>
+				<Sts><Cd>BOOK</Cd></Sts>
+				<BookgDt>
+					<Dt>2026-01-28</Dt>
+				</BookgDt>
+				<ValDt>
+					<Dt>2026-01-28</Dt>
+				</ValDt>
+				<AcctSvcrRef>2026012810252620000</AcctSvcrRef>
+				<BkTxCd>
+					<Domn>
+						<Cd>PMNT</Cd>
+						<Fmly>
+							<Cd>ICDT</Cd>
+							<SubFmlyCd>ESCT</SubFmlyCd>
+						</Fmly>
+					</Domn>
+					<Prtry>
+						<Cd>NTRF+191+08381</Cd>
+						<Issr>DK</Issr>
+					</Prtry>
+				</BkTxCd>
+				<NtryDtls>
+					<Btch>
+						<PmtInfId>windata S0459300</PmtInfId>
+						<NbOfTxs>4</NbOfTxs>
+						<TtlAmt Ccy="EUR">5102.72</TtlAmt>
+						<CdtDbtInd>DBIT</CdtDbtInd>
+					</Btch>
+					<TxDtls>
+						<Refs>
+							<MsgId>windata-4-510272-513742215</MsgId>
+							<PmtInfId>windata S0459300</PmtInfId>
+						</Refs>
+						<Amt Ccy="EUR">5102.72</Amt>
+						<CdtDbtInd>DBIT</CdtDbtInd>
+						<BkTxCd>
+							<Domn>
+								<Cd>PMNT</Cd>
+								<Fmly>
+									<Cd>ICDT</Cd>
+									<SubFmlyCd>ESCT</SubFmlyCd>
+								</Fmly>
+							</Domn>
+							<Prtry>
+								<Cd>NTRF+191+08381</Cd>
+								<Issr>DK</Issr>
+							</Prtry>
+						</BkTxCd>
+						<RltdPties>
+							<Dbtr>
+								<Pty>
+									<Nm>WEG Kronberger Str. 7-9, Ko</Nm>
+								</Pty>
+							</Dbtr>
+							<DbtrAcct>
+								<Id>
+									<IBAN>DE07501900000300275532</IBAN>
+								</Id>
+							</DbtrAcct>
+						</RltdPties>
+						<RmtInf>
+							<Ustrd>SEPA Sammel-Ueberweisung mit 4 Ueberweisungen MSG-ID: windata-4-510272-513742215</Ustrd>
+						</RmtInf>
+					</TxDtls>
+				</NtryDtls>
+				<AddtlNtryInf>EURO-UEBERWEISUNG</AddtlNtryInf>
+			</Ntry>
+		</Stmt>
+	</BkToCstmrStmt>
+</Document>

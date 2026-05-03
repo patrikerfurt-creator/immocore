@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08 camt.053.001.08.xsd">
+	<BkToCstmrStmt>
+		<GrpHdr>
+			<MsgId>53D20260130T2231252181790N260000008</MsgId>
+			<CreDtTm>2026-01-30T22:31:25.0+01:00</CreDtTm>
+		</GrpHdr>
+		<Stmt>
+			<Id>1740C532026013022312521010300275532</Id>
+			<StmtPgntn>
+				<PgNb>1</PgNb>
+				<LastPgInd>true</LastPgInd>
+			</StmtPgntn>
+			<ElctrncSeqNb>260000008</ElctrncSeqNb>
+			<LglSeqNb>008</LglSeqNb>
+			<CreDtTm>2026-01-30T22:31:25.0+01:00</CreDtTm>
+			<FrToDt>
+				<FrDtTm>2026-01-30T00:00:00+01:00</FrDtTm>
+				<ToDtTm>2026-01-30T23:59:59+01:00</ToDtTm>
+			</FrToDt>
+			<Acct>
+				<Id>
+					<IBAN>DE07501900000300275532</IBAN>
+				</Id>
+				<Ccy>EUR</Ccy>
+				<Ownr>
+					<Nm>WEG Kronberger Str. 7-9, Königst</Nm>
+				</Ownr>
+				<Svcr>
+					<FinInstnId>
+						<BICFI>FFVBDEFFXXX</BICFI>
+						<Nm>Frankfurter Volksbank Rhein/Main e</Nm>
+						<Othr>
+							<Id>DE 114104100</Id>
+							<Issr>UmsStId</Issr>
+						</Othr>
+					</FinInstnId>
+				</Svcr>
+			</Acct>
+			<Bal>
+				<Tp>
+					<CdOrPrtry>
+						<Cd>OPBD</Cd>
+					</CdOrPrtry>
+				</Tp>
+				<Amt Ccy="EUR">25267.61</Amt>
+				<CdtDbtInd>CRDT</CdtDbtInd>
+				<Dt>
+					<Dt>2026-01-30</Dt>
+				</Dt>
+			</Bal>
+			<Bal>
+				<Tp>
+					<CdOrPrtry>
+						<Cd>CLBD</Cd>
+					</CdOrPrtry>
+				</Tp>
+				<Amt Ccy="EUR">25253.56</Amt>
+				<CdtDbtInd>CRDT</CdtDbtInd>
+				<Dt>
+					<Dt>2026-01-30</Dt>
+				</Dt>
+			</Bal>
+			<Ntry>
+				<Amt Ccy="EUR">14.05</Amt>
+				<CdtDbtInd>DBIT</CdtDbtInd>
+				<Sts><Cd>BOOK</Cd></Sts>
+				<BookgDt>
+					<Dt>2026-01-30</Dt>
+				</BookgDt>
+				<ValDt>
+					<Dt>2026-01-31</Dt>
+				</ValDt>
+				<AcctSvcrRef>2026013021170459000</AcctSvcrRef>
+				<BkTxCd>
+					<Domn>
+						<Cd>ACMT</Cd>
+						<Fmly>
+							<Cd>OPCL</Cd>
+							<SubFmlyCd>ACCC</SubFmlyCd>
+						</Fmly>
+					</Domn>
+					<Prtry>
+						<Cd>NMSC+805+00905</Cd>
+						<Issr>DK</Issr>
+					</Prtry>
+				</BkTxCd>
+				<NtryDtls>
+					<TxDtls>
+						<Amt Ccy="EUR">14.05</Amt>
+						<CdtDbtInd>DBIT</CdtDbtInd>
+						<BkTxCd>
+							<Domn>
+								<Cd>ACMT</Cd>
+								<Fmly>
+									<Cd>OPCL</Cd>
+									<SubFmlyCd>ACCC</SubFmlyCd>
+								</Fmly>
+							</Domn>
+							<Prtry>
+								<Cd>NMSC+805+00905</Cd>
+								<Issr>DK</Issr>
+							</Prtry>
+						</BkTxCd>
+						<RltdPties>
+							<Dbtr>
+								<Pty>
+									<Nm>WEG Kronberger Str. 7-9, Königst</Nm>
+								</Pty>
+							</Dbtr>
+							<DbtrAcct>
+								<Id>
+									<IBAN>DE07501900000300275532</IBAN>
+								</Id>
+							</DbtrAcct>
+						</RltdPties>
+						<RmtInf>
+							<Ustrd>ABSCHLUSS PER 31.01.2026</Ustrd>
+						</RmtInf>
+					</TxDtls>
+				</NtryDtls>
+				<AddtlNtryInf>ABSCHLUSS</AddtlNtryInf>
+			</Ntry>
+		</Stmt>
+	</BkToCstmrStmt>
+</Document>

@@ -1,0 +1,32 @@
+﻿# Einheit-Typ: 100=Wohnung | 200=Gewerbe | 300=Stellplatz | 400=Sonstiges
+Objektnummer;Eingang;Flächennummer;Bez. Einheit;Einheit-Typ;Lage
+10003;Kronberger Straße 9;100001;Wohnung 201;100;EG links
+10003;Kronberger Straße 9;100002;Wohnung 202;100;EG mitte
+10003;Kronberger Straße 9;100003;Wohnung 203;100;EG rechts
+10003;Kronberger Straße 9;100101;Wohnung 301;100;1. OG links
+10003;Kronberger Straße 9;100102;Wohnung 302;100;1. OG mitte
+10003;Kronberger Straße 9;100103;Wohnung 303;100;1. OG rechts
+10003;Kronberger Straße 9;100201;Wohnung 401;100;2. OG links
+10003;Kronberger Straße 9;100202;Wohnung 402;100;2. OG mitte
+10003;Kronberger Straße 9;100203;Wohnung 403;100;2. OG rechts
+10003;Kronberger Straße 9;100301;Wohnung 501;100;Penthouse
+10003;Kronberger Straße 7;110001;Wohnung 204;100;EG links
+10003;Kronberger Straße 7;110002;Wohnung 205;100;EG mitte
+10003;Kronberger Straße 7;110003;Wohnung 206;100;EG rechts
+10003;Kronberger Straße 7;110101;Wohnung 304;100;1. OG links
+10003;Kronberger Straße 7;110102;Wohnung 305;100;1. OG mitte
+10003;Kronberger Straße 7;110103;Wohnung 306;100;1. OG rechts
+10003;Kronberger Straße 7;110201;Wohnung 404;100;2. OG links
+10003;Kronberger Straße 7;110202;Wohnung 405;100;2. OG mitte
+10003;Kronberger Straße 7;110203;Wohnung 406;100;2. OG rechts
+10003;Kronberger Straße 7;110301;Wohnung 502;100;Penthouse
+10003;Kronberger Straße 7;119901;Wohnung 108;100;Souterrain links
+10003;Kronberger Straße 7;119902;Wohnung 110;100;Souterrain rechts
+10003;Kronberger Straße 7;809801;Garage 101;300;
+10003;Kronberger Straße 7;809802;Garage 102;300;
+10003;Kronberger Straße 7;809803;Garage 103;300;
+10003;Kronberger Straße 7;809804;Garage 104;300;
+10003;Kronberger Straße 7;809805;Garage 105;300;
+10003;Kronberger Straße 9;819806;Garage 106;300;
+10003;Kronberger Straße 9;819807;Garage 107;300;
+10003;Kronberger Straße 9;819901;Garage 109;300;

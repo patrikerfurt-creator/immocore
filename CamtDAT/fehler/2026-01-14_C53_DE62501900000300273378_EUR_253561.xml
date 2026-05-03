@@ -1,0 +1,202 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08 camt.053.001.08.xsd">
+	<BkToCstmrStmt>
+		<GrpHdr>
+			<MsgId>53D20260113T2106547716820N260000004</MsgId>
+			<CreDtTm>2026-01-13T21:06:54.0+01:00</CreDtTm>
+		</GrpHdr>
+		<Stmt>
+			<Id>1740C532026011321065477010300273378</Id>
+			<StmtPgntn>
+				<PgNb>1</PgNb>
+				<LastPgInd>true</LastPgInd>
+			</StmtPgntn>
+			<ElctrncSeqNb>260000004</ElctrncSeqNb>
+			<LglSeqNb>004</LglSeqNb>
+			<CreDtTm>2026-01-13T21:06:54.0+01:00</CreDtTm>
+			<FrToDt>
+				<FrDtTm>2026-01-13T00:00:00+01:00</FrDtTm>
+				<ToDtTm>2026-01-13T23:59:59+01:00</ToDtTm>
+			</FrToDt>
+			<Acct>
+				<Id>
+					<IBAN>DE62501900000300273378</IBAN>
+				</Id>
+				<Ccy>EUR</Ccy>
+				<Ownr>
+					<Nm>WEG Niedbachstr. 1, 61389</Nm>
+				</Ownr>
+				<Svcr>
+					<FinInstnId>
+						<BICFI>FFVBDEFFXXX</BICFI>
+						<Nm>Frankfurter Volksbank Rhein/Main e</Nm>
+						<Othr>
+							<Id>DE 114104100</Id>
+							<Issr>UmsStId</Issr>
+						</Othr>
+					</FinInstnId>
+				</Svcr>
+			</Acct>
+			<Bal>
+				<Tp>
+					<CdOrPrtry>
+						<Cd>OPBD</Cd>
+					</CdOrPrtry>
+				</Tp>
+				<Amt Ccy="EUR">19548.92</Amt>
+				<CdtDbtInd>CRDT</CdtDbtInd>
+				<Dt>
+					<Dt>2026-01-13</Dt>
+				</Dt>
+			</Bal>
+			<Bal>
+				<Tp>
+					<CdOrPrtry>
+						<Cd>CLBD</Cd>
+					</CdOrPrtry>
+				</Tp>
+				<Amt Ccy="EUR">19320.17</Amt>
+				<CdtDbtInd>CRDT</CdtDbtInd>
+				<Dt>
+					<Dt>2026-01-13</Dt>
+				</Dt>
+			</Bal>
+			<Ntry>
+				<Amt Ccy="EUR">228.75</Amt>
+				<CdtDbtInd>DBIT</CdtDbtInd>
+				<Sts><Cd>BOOK</Cd></Sts>
+				<BookgDt>
+					<Dt>2026-01-13</Dt>
+				</BookgDt>
+				<ValDt>
+					<Dt>2026-01-09</Dt>
+				</ValDt>
+				<AcctSvcrRef>2026011302334597000</AcctSvcrRef>
+				<BkTxCd>
+					<Domn>
+						<Cd>PMNT</Cd>
+						<Fmly>
+							<Cd>IDDT</Cd>
+							<SubFmlyCd>UPDD</SubFmlyCd>
+						</Fmly>
+					</Domn>
+					<Prtry>
+						<Cd>NRTI+109+00931+914</Cd>
+						<Issr>DK</Issr>
+					</Prtry>
+				</BkTxCd>
+				<NtryDtls>
+					<TxDtls>
+						<Refs>
+							<EndToEndId>00024+001</EndToEndId>
+							<TxId>2026010664819241907100000010000004</TxId>
+							<MndtId>IX-00024-00000002</MndtId>
+						</Refs>
+						<Amt Ccy="EUR">228.75</Amt>
+						<CdtDbtInd>DBIT</CdtDbtInd>
+						<AmtDtls>
+							<InstdAmt>
+								<Amt Ccy="EUR">246.63</Amt>
+							</InstdAmt>
+							<TxAmt>
+								<Amt Ccy="EUR">228.75</Amt>
+							</TxAmt>
+						</AmtDtls>
+						<BkTxCd>
+							<Domn>
+								<Cd>PMNT</Cd>
+								<Fmly>
+									<Cd>IDDT</Cd>
+									<SubFmlyCd>UPDD</SubFmlyCd>
+								</Fmly>
+							</Domn>
+							<Prtry>
+								<Cd>NRTI+109+00931+914</Cd>
+								<Issr>DK</Issr>
+							</Prtry>
+						</BkTxCd>
+						<Chrgs>
+							<Rcrd>
+								<Amt Ccy="EUR">4.47</Amt>
+								<Agt>
+									<FinInstnId>
+										<BICFI>COBADEFFXXX</BICFI>
+									</FinInstnId>
+								</Agt>
+							</Rcrd>
+							<Rcrd>
+								<Amt Ccy="EUR">2.56</Amt>
+								<Agt>
+									<FinInstnId>
+										<BICFI>FFVBDEFF</BICFI>
+									</FinInstnId>
+								</Agt>
+							</Rcrd>
+						</Chrgs>
+						<RltdPties>
+							<Dbtr>
+								<Pty>
+									<Nm>Suzdanitskaya, Irina</Nm>
+								</Pty>
+							</Dbtr>
+							<DbtrAcct>
+								<Id>
+									<IBAN>DE59500400000117633800</IBAN>
+								</Id>
+							</DbtrAcct>
+							<Cdtr>
+								<Pty>
+									<Nm>WEG Niedbachstr. 1, 61389 z. Hd. Demme Immobilien</Nm>
+								</Pty>
+							</Cdtr>
+							<CdtrAcct>
+								<Id>
+									<IBAN>DE62501900000300273378</IBAN>
+								</Id>
+							</CdtrAcct>
+						</RltdPties>
+						<RltdAgts>
+							<DbtrAgt>
+								<FinInstnId>
+									<BICFI>COBADEFFXXX</BICFI>
+								</FinInstnId>
+							</DbtrAgt>
+						</RltdAgts>
+						<RmtInf>
+							<Ustrd>Retoure SEPA Lastschrift vom 09.01.2026, Rueckgabegrund: MS03 Rückgabegrund vom Kreditinstitut nicht spezifiziert SVWZ: RETURN/REFUND, KND 2</Ustrd>
+							<Ustrd>4+001 HG 01/ 26 EREF: 00024+001 ENTG: 4,47 EUR Entgelt Rücklastschrift/Rückscheck und 2,56 EUR Entgelt eingehende Rücklastschrift ORG.BETR.:</Ustrd>
+							<Ustrd> 246,63 EUR IBAN: DE59500400000117633800 BIC: COBADEFFXXX</Ustrd>
+						</RmtInf>
+						<RtrInf>
+							<OrgnlBkTxCd>
+								<Domn>
+									<Cd>PMNT</Cd>
+									<Fmly>
+										<Cd>IDDT</Cd>
+										<SubFmlyCd>UPDD</SubFmlyCd>
+									</Fmly>
+								</Domn>
+								<Prtry>
+									<Cd>171</Cd>
+									<Issr>DK</Issr>
+								</Prtry>
+							</OrgnlBkTxCd>
+							<Orgtr>
+								<Id>
+									<OrgId>
+										<AnyBIC>FFVBDEFF</AnyBIC>
+									</OrgId>
+								</Id>
+							</Orgtr>
+							<Rsn>
+								<Cd>MS03</Cd>
+							</Rsn>
+							<AddtlInf>Rückgabegrund vom Kreditinstitut nicht spezifizier</AddtlInf>
+						</RtrInf>
+					</TxDtls>
+				</NtryDtls>
+				<AddtlNtryInf>RETOUREN</AddtlNtryInf>
+			</Ntry>
+		</Stmt>
+	</BkToCstmrStmt>
+</Document>

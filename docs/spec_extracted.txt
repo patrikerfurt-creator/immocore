@@ -1,0 +1,485 @@
+﻿IMMOCORE
+Webbasiertes Immobilienverwaltungssystem
+Claude Code Implementierungsprompt
+Modul: 3-stufige Rechnungserkennung mit lernender Buchungslogik
+Eindeutig erkannt  →  Limit-basierter Freigabeworkflow
+Prüffall / Nicht erkannt  →  Objektbetreuer
+Demme Immobilien Verwaltung GmbH
+Coventrystraße 32, 65934 Frankfurt am Main
+Version 1.1  |  Stand: Mai 2026
+Aenderungen ggu. v1.0: Workflow korrigiert — Stufe-1-Erkennung speist Limit-Auto-Buchung; Prüffall + nicht erkannt gehen an Objektbetreuer. Neues Pflichtfeld Objekt.betreuer.
+1. Zweck dieses Dokuments
+Dieses Dokument enthält den vollständigen Claude Code Implementierungsprompt für das Modul „Rechnungserkennung mit Lernlogik“. Es erweitert den bereits in Phase 3 implementierten Rechnungs-Lifecycle (Ausgangsspezifikation v1.1, Kap. 7) um:
+drei klar getrennte Erkennungsstufen mit eindeutiger Routing-Logik
+ein lernendes Regelwerk für die automatische Buchungskonto-Zuordnung
+ein neues Pflichtfeld Objekt.betreuer als Routing-Ziel für Prüffälle und nicht erkannte Rechnungen
+Das Modul ist additiv: Bestehende Status (in_pruefung, freigegeben, gebucht, bezahlt, abgelehnt) und der Mechanismus zahlungsfreigabe_grenzen bleiben unverändert. Ergänzt werden Erkennungs-Felder, Match-Regeln und ein klar definierter Routing-Schritt zwischen Erkennung und Freigabe.
+2. Workflow im Überblick
+Der gesamte Ablauf von der Rechnungseingangs-Pipeline bis zur Buchung folgt einem klaren Entscheidungsbaum. Erkennung und Freigabe sind zwei sauber getrennte Phasen:
+2.1 Phase A — Erkennung (automatisch)
+Die Erkennungs-Pipeline prüft jede eingehende Rechnung auf drei Dimensionen und ordnet sie genau einer von drei Stufen zu. Dies ist ein rein technischer Vorgang ohne Nutzerinteraktion.
+2.2 Phase B — Limit-basierter Freigabeworkflow (nur Stufe 1)
+Eine Rechnung im Status erkannt durchläuft den bereits in Phase 3 implementierten Freigabeworkflow gemäß dem Objekt-spezifischen JSONField zahlungsfreigabe_grenzen. Es gibt keinen zusätzlichen Sichtungsschritt durch den Objektbetreuer:
+2.3 Phase C — Objektbetreuer-Routing (Stufe 2 + 3)
+Prüffälle und nicht erkannte Rechnungen gehen unabhängig vom Betrag immer zuerst an den im Objekt hinterlegten Objektbetreuer. Er erscheint dort unter "Rechnungen zur Prüfung" im Dashboard. Der Objektbetreuer hat eine Doppelfunktion:
+Identifizieren — fehlende Dimensionen ergänzen (Kreditor anlegen/zuordnen, Objekt zuweisen, Buchungskonto wählen).
+Entscheiden im eigenen Limit — ist der Rechnungsbetrag innerhalb seiner Freigabekompetenz, kann er die Rechnung in einem Schritt identifizieren UND freigeben.
+Über Limit — nach Identifikation läuft die Rechnung in den regulären Limit-Workflow (Eskalation an GF).
+Ablehnen — jederzeit mit Begründung möglich, ohne Lerneffekt.
+Ändern — OCR-Felder (Betrag, Datum, Leistungstext) können korrigiert werden; bei Konto-Korrektur entsteht eine Match-Regel (Lernen).
+2.4 Visualisierung des Entscheidungsbaums
+3. Datenmodell-Erweiterungen
+3.1 Objekt — neues Pflichtfeld
+Für das Routing in Phase C wird je Objekt genau ein Objektbetreuer benötigt. Das Feld wird im WEG-Anlage-Wizard (v1.2) als Pflichtfeld ergänzt. Für bestehende Objekte erfolgt eine Daten-Migration mit Pflicht-Nachpflege.
+3.2 Rechnung — neue Felder
+3.3 RechnungsMatchRegel (NEU)
+Zentrale Lerneinheit. Eine Regel beschreibt: für einen bestimmten Kreditor in einem bestimmten Objekt mit einem bestimmten Leistungstext-Muster wird auf ein bestimmtes Konto gebucht.
+3.4 RechnungsErkennungsLog (NEU)
+Audit-Tabelle: jeder Erkennungslauf je Rechnung wird vollständig protokolliert. Wichtig für Diagnose, KI-Verbesserung und Reporting.
+3.5 Leistungstext-Normalisierung
+Die Hash-Bildung muss robust gegen kosmetische Unterschiede sein:
+4. Erweiterter Rechnungs-Lifecycle
+5. Erkennungs-Pipeline (Phase A)
+Wird beim Eingang einer Rechnung synchron ausgeführt (≤ 2 Sekunden Ziel) und kann optional als Celery-Task für OCR-lastige Eingänge ausgelagert werden. Reihenfolge: Kreditor → Objekt → Konto.
+5.1 Erkennungsdimensionen
+5.2 Eindeutigkeits-Schwellen
+5.3 Pseudocode — Stufenableitung + Routing
+6. Routing-Logik (Phase B / C)
+Nach abgeschlossener Erkennung entscheidet route_rechnung, ob die Rechnung in den Limit-Workflow geht oder an den Objektbetreuer.
+6.1 route_rechnung — Pseudocode
+6.2 Doppelfunktion in Phase C
+Wenn der Objektbetreuer eine Rechnung im Prüffall öffnet, sieht er zwei Aktions-Buttons mit unterschiedlicher Wirkung:
+6.3 Limit-Prüfung für Doppelfunktion
+7. Lernlogik — Trigger und Regeln
+Es gibt drei Trigger, die eine RechnungsMatchRegel erzeugen oder aktualisieren. Alle wirken sofort, ohne weiteres Bestätigungs-UI.
+7.1 Trigger A — Identifikation im Prüffall
+Objektbetreuer öffnet Rechnung im Status pruefung_match oder nicht_erkannt.
+Er ergänzt fehlende Dimensionen — typischerweise das Buchungskonto.
+Klick auf "Identifizieren + Speichern" oder "Identifizieren + Freigeben" erzeugt eine RechnungsMatchRegel mit erstellt_aus='pruefung'.
+7.2 Trigger B — Korrektur in der Freigabe
+Buchhalter oder Freigeber öffnet Rechnung im Status in_pruefung oder freigegeben.
+Er ändert das Buchungskonto auf einen abweichenden Wert.
+Speichern: alte Regel → status=veraltet; neue Regel mit erstellt_aus='freigabe_korrektur'.
+7.3 Trigger C — Manuelle Erfassung (Stufe 3, neuer Kreditor)
+Betreuer erfasst Rechnung im Status nicht_erkannt vollständig manuell.
+Falls Kreditor neu: Anlage als Person mit Rolle Dienstleister.
+Bestätigung erzeugt Regel mit erstellt_aus='manuell'.
+7.4 Idempotenz und Konflikt
+Doppelte Bestätigung gleiche Konto-Wahl: keine neue Regel — trefferzahl++ und letzte_anwendung aktualisieren.
+Pro (kreditor, objekt, leistungstext_hash) maximal 1 aktive Regel — unique_together-Constraint erzwingt es.
+Korrektur ersetzt: alte aktive Regel wird auf veraltet gesetzt, neue Regel wird aktiv.
+Opt-out: Checkbox "Nicht als Regel speichern (Einzelfall)" am Speichern-Dialog — deaktiviert das Lernen für diese eine Korrektur.
+8. UI-Anforderungen (React)
+8.1 Dashboard — Button "Rechnungen zur Prüfung"
+Der bereits existierende Dashboard-Button "Rechnungen zur Prüfung" wird inhaltlich präzisiert. Er zeigt mitarbeiterspezifisch alle Rechnungen wo zugewiesen_an = current_user. Innerhalb der Liste erscheinen drei klar unterscheidbare Gruppen mit Tabs:
+Prüffälle (Stufe 2) — Status pruefung_match — gelbe Badge
+Nicht erkannt (Stufe 3) — Status nicht_erkannt — rote Badge
+Zur Freigabe (Stufe 1, in Limit-Workflow) — Status in_pruefung — blaue Badge
+8.2 Prüffall-Detailansicht
+Linke Spalte: PDF-Vorschau / XRechnung-Strukturansicht.
+Rechte Spalte oben: drei Karten Kreditor / Objekt / Buchungskonto, jede mit Status-Badge (✓ erkannt / — offen). Erkannte Karten ausgegraut, fehlende Karten hervorgehoben mit Auswahl/Suche.
+Konto-Auswahl zeigt: Top-3-Kandidaten aus historischen Rechnungen + KI-Vorschlag (sofern vorhanden) + freie Suche im Objekt-Kontenplan.
+Rechte Spalte unten: Aktions-Buttons "Identifizieren + Speichern" (immer aktiv bei vollständigen Pflichtfeldern) und "Identifizieren + Freigeben" (nur aktiv wenn darf_betreuer_direkt_freigeben True).
+Tooltip am gesperrten Freigabe-Button erklärt den Grund (Betrag über Limit / fehlende Rolle / Pflichtfelder).
+Lernhinweis unter den Buttons: "Diese Zuordnung wird für zukünftige Rechnungen dieses Kreditors mit gleichem Leistungstext angewendet."
+Opt-out-Checkbox: "Einzelfall — keine Regel speichern".
+8.3 Freigabe-Korrekturhinweis
+Beim Ändern des Buchungskontos in der regulären Freigabe (Phase B) erscheint Toast: "Regel wird aktualisiert: <Kreditor> / <Objekt> / <Leistungstext> → neues Konto."
+Optional Checkbox "Nicht als Regel speichern".
+8.4 Wizard-Erweiterung (Schritt 8 „Freigabe & Verantwortliche“)
+Im WEG-Anlage-Wizard v1.2 wird Schritt 8 erweitert um zwei Felder: Objektbetreuer (Pflicht, Dropdown aus User-Liste) und Vertretung (optional).
+Validierung: Betreuer muss min. eine der Rollen Sachbearbeiter, Geschaeftsfuehrer oder Administrator haben.
+8.5 Regel-Verwaltung
+Neue Seite /admin/rechnungen/match-regeln (Admin + Buchhalter).
+Filter: Kreditor, Objekt, Status, erstellt_aus.
+Aktion: Regel manuell deaktivieren ohne Rechnungsänderung.
+Anzeige Trefferzahl + letzte Anwendung pro Regel — zur Identifikation toter Regeln.
+9. API-Endpunkte
+10. Tests
+10.1 Unit-Tests
+normalisiere_leistungstext entfernt Datumsangaben, Belegnummern, Stoppwörter.
+leistungstext_hash ist stabil gegen Whitespace, Gross/Klein und Belegnummern-Variation.
+match_kreditor: IBAN-Treffer = 1.0; Fuzzy-Name max 0.85.
+Stufenableitung: alle 8 Kombinationen aus (kreditor_eindeutig, objekt_eindeutig, konto_eindeutig) → korrekter Status.
+RechnungsMatchRegel unique_together-Constraint.
+darf_betreuer_direkt_freigeben: alle Limit-Stufen × alle Rollen-Kombinationen.
+10.2 Integrations-Tests — Workflow-Pfade
+Pfad 1 — Stufe 1 unter Limit: erkannte Rechnung 250 € → sofort gebucht, kein Nutzer involviert.
+Pfad 2 — Stufe 1 über Limit: erkannte Rechnung 5.000 € → in_pruefung, zugewiesen_an = GF, KEIN Routing zum Objektbetreuer.
+Pfad 3 — Stufe 2 in Betreuer-Limit: Prüffall 800 €, Betreuer = Sachbearbeiter → Identifizieren+Freigeben verfügbar → freigegeben → gebucht.
+Pfad 4 — Stufe 2 über Betreuer-Limit: Prüffall 12.000 €, Betreuer = Sachbearbeiter → Identifizieren+Freigeben gesperrt → nach Speichern automatisch in_pruefung mit Eskalation an GF.
+Pfad 5 — Stufe 3: nicht erkannt → Routing an Objektbetreuer → manuelle Erfassung → Regel mit erstellt_aus='manuell'.
+Pfad 6 — Lernen aus Korrektur: Stufe 1 mit Konto-Korrektur in Freigabe → alte Regel veraltet, neue Regel mit erstellt_aus='freigabe_korrektur'.
+Pfad 7 — Idempotenz: zweimalige gleiche Bestätigung → trefferzahl++, keine zweite Regel.
+Pfad 8 — Vertretung: Betreuer.abwesend = True → Routing an betreuer_vertretung.
+Pfad 9 — Stufe 3 ohne Objekt: Routing an mandant_default_pruefer (keine Objekt-Betreuer-Auflösung möglich).
+Pfad 10 — Ablehnung: KEIN Lerneffekt, kein Regel-Eintrag.
+10.3 Edge Cases
+Konto eines anderen Objekts darf nicht zugewiesen werden — Validation Error.
+Veraltete Regel wird bei Erkennung ignoriert; aktive Regel gewinnt.
+Mehrere Objekte gleicher Anschrift (Bauabschnitt A/B) — ohne Verwendungszweck-Match → Stufe 2.
+Kreditor mit mehreren IBANs — alle werden geprüft, erste Treffer-IBAN gewinnt.
+11. Implementierungs-Reihenfolge fuer Claude Code
+Schritt 1 — Migration: Objekt.betreuer + betreuer_vertretung als Pflicht/Optional. Daten-Migration: bestehende Objekte erhalten Default = erster Admin; Hinweis-Banner zur Nachpflege.
+Schritt 2 — Migration: Rechnung-Felder + RechnungsMatchRegel + RechnungsErkennungsLog.
+Schritt 3 — normalisiere_leistungstext + leistungstext_hash + Unit-Tests.
+Schritt 4 — Match-Funktionen (match_kreditor / match_objekt / match_konto_historie) + Unit-Tests.
+Schritt 5 — fuehre_erkennung_aus mit Stufenableitung.
+Schritt 6 — route_rechnung + darf_betreuer_direkt_freigeben.
+Schritt 7 — API-Endpunkte: identifizieren, ablehnen, manuell-erfassen, match-regeln-CRUD.
+Schritt 8 — Lernlogik: Regel-Anlage in identifizieren + Korrektur-Hook in Freigabe-Update.
+Schritt 9 — Wizard-Erweiterung Schritt 8 (Freigabe & Verantwortliche).
+Schritt 10 — Frontend: Dashboard-Button-Logik, Prüffall-Detailansicht mit Doppel-Button, Korrekturhinweis, Regel-Verwaltung.
+Schritt 11 — Integrations-Tests Pfade 1–10.
+Schritt 12 — Datenmigration: einmaliger Erkennungslauf auf alle Bestandsrechnungen im Status erfasst.
+12. Wichtige Hinweise fuer die Implementierung
+13. Claude Code Prompt — Direktverwendung
+Folgender Block kann unverändert in Claude Code eingefügt werden:
+14. Dokumentenmetadaten
+Demme Immobilien Verwaltung GmbH  |  Vertraulich
+--- TABLES ---
+Table 0:
+Voraussetzung
+Phasen 1–3 abgeschlossen. Models Rechnung, Freigabe, Konto, Person (mit Rolle Dienstleister), Objekt vorhanden. KI-OCR-Endpunkt POST /rechnungen/ocr/ und ZUGFeRD/XRechnung-Parser sind funktional. Bezug: IMMOCORE_Ausgangsspezifikation v1.1 Kap. 7 + 7.3. KI-Modell: claude-sonnet-4-6.
+Table 1:
+Stufe | Status | Bedingung | Nächster Schritt
+1 — Erkannt | erkannt | Kreditor + Objekt + Buchungskonto eindeutig zugeordnet (alle drei ≥ Schwelle). | → Phase B (Limit-basierter Freigabeworkflow)
+2 — Prüffall | pruefung_match | Mind. 1, aber nicht alle 3 Dimensionen erkannt. Z.B. Kreditor + Objekt erkannt, Konto offen. | → Phase C (Objektbetreuer klärt)
+3 — Nicht erkannt | nicht_erkannt | Keine Dimension sicher zugeordnet (z.B. unbekannter Kreditor). | → Phase C (Objektbetreuer erfasst manuell)
+Table 2:
+Betragsstufe (Beispiel-Default) | Aktion | Zielstatus
+bis 499,99 € | Automatisch — keine Freigabe. | → gebucht (sofort)
+500 – 1.999,99 € | Sachbearbeiter (objektspezifisch konfiguriert) — in der Praxis oft = Objektbetreuer. | → in_pruefung → freigegeben → gebucht
+2.000 – 9.999,99 € | Geschäftsführer. | → in_pruefung → freigegeben → gebucht
+ab 10.000 € | Geschäftsführer (+ optional Beirat). | → in_pruefung → freigegeben → gebucht
+Table 3:
+Wichtig
+Die Limit-Stufen sind objektspezifisch konfiguriert (zahlungsfreigabe_grenzen JSONField). Wer in der Stufe Sachbearbeiter zuständig ist, ergibt sich aus der je-Objekt-Zuweisung. Wenn der Objekt-betreuer in dieser Stufe konfiguriert ist (typisch), erhält er die Rechnung — aber als regulären Freigabeauftrag, nicht als Prüffall.
+Table 4:
+Rechnungseingang
+      |
+      v
+  [ Erkennungs-Pipeline ]
+      |
+      +----- Stufe 1: erkannt ----------+
+      |                                 v
+      |                          [ Limit-Workflow
+      |                            zahlungsfreigabe_grenzen ]
+      |                                 |
+      |              < Limit auto-gebucht|> Limit Sachbearb./GF
+      |                                 v
+      |                              gebucht
+      |
+      +----- Stufe 2: pruefung_match ---+
+      |                                 v
+      |                       [ Objektbetreuer-Inbox
+      +----- Stufe 3: nicht_erkannt --->     'Rechnungen zur
+                                            Prüfung' ]
+                                            |
+                                            v
+                                  [ Identifizieren
+                                    + Doppelfunktion: ]
+                                            |
+                                            v
+                                  Betrag <= Betreuer-Limit?
+                                       /         \
+                                      ja          nein
+                                       |           |
+                                       v           v
+                                  freigeben    in_pruefung
+                                       |     (Eskalation GF)
+                                       v           |
+                                  gebucht <--------+
+Table 5:
+Feld | Typ | Anmerkung
+betreuer | FK → User (PROTECT) | NEU. Pflichtfeld. Prüffälle und nicht erkannte Rechnungen werden diesem User zugewiesen.
+betreuer_vertretung | FK → User (SET_NULL) | Optional. Bei Abwesenheit (Boolean User.abwesend) fällt Routing auf Vertretung zurück.
+Table 6:
+Wizard-Anpassung
+Im WEG-Objekt-Wizard (v1.2) wird Schritt 8 "Freigabelimits" um die Felder betreuer und betreuer_vertretung ergänzt. Dieser Schritt heisst dann sinngemäss "Freigabe & Verantwortliche". Im Massenimport (v1.0) wird betreuer als Pflichtfeld ergänzt — entweder per neuer Spalte oder per nachgelagerter Massenpflege.
+Table 7:
+Feld | Typ | Anmerkung
+status | Enum (erweitert) | Neue Werte: erkannt, pruefung_match, nicht_erkannt
+erkennungs_stufe | Enum: 1 | 2 | 3 | Resultat der Erkennungs-Pipeline
+erkennungs_konfidenz | JSONField | { kreditor: 0.95, objekt: 0.80, konto: 0.0 } — je Dimension
+zugewiesen_an | FK → User (SET_NULL) | Bei Stufe 2/3: Objektbetreuer; bei Stufe 1: Freigabe-Verantwortlicher gemäss Limit
+match_regel | FK → RechnungsMatchRegel (SET_NULL) | Welche Regel wurde angewendet (audit/learning trace)
+leistungstext | TextField | Aus OCR/XRechnung oder manuell
+leistungstext_hash | CharField(64) | SHA-256 über normalisierten Leistungstext (siehe 3.5)
+kreditor | FK → Person (SET_NULL) | Pflicht ab Status erkannt
+objekt | FK → Objekt (SET_NULL) | Pflicht ab Status erkannt
+buchungskonto | FK → Konto (SET_NULL) | Pflicht ab Status erkannt; konto.objekt = rechnung.objekt
+Table 8:
+Feld | Typ | Anmerkung
+id | UUID (PK) | 
+kreditor | FK → Person (CASCADE) | Person mit Rolle Dienstleister
+objekt | FK → Objekt (CASCADE) | Regel ist objektspezifisch — keine Mandant-Generalisierung
+leistungstext_hash | CharField(64) | SHA-256 über normalisierten Leistungstext
+leistungstext_sample | TextField | Original-Leistungstext der ersten Bestätigung (UI-Anzeige)
+buchungskonto | FK → Konto | Zielkonto, muss zu objekt gehören
+status | Enum: aktiv | veraltet | veraltet bei manueller Korrektur
+trefferzahl | PositiveIntegerField | Wie oft erfolgreich angewendet
+erstellt_durch | FK → User | Wer hat die Regel erzeugt
+erstellt_aus | Enum: pruefung | freigabe_korrektur | manuell | Lernpfad — woher kommt die Regel
+erstellt_am, aktualisiert_am, letzte_anwendung | DateTimeField | auto
+Constraint | unique_together | (kreditor, objekt, leistungstext_hash, status='aktiv')
+Table 9:
+Feld | Typ | Anmerkung
+id | UUID (PK) | 
+rechnung | FK → Rechnung (CASCADE) | 
+zeitpunkt | DateTimeField | auto
+stufe | Enum: 1 | 2 | 3 | Resultat des Laufs
+dimensionen | JSONField | { kreditor: {match_typ, kandidat_id, konfidenz}, objekt: {...}, konto: {...} }
+regel_treffer | FK → RechnungsMatchRegel (NULL) | Welche Regel wurde gematcht
+ki_aufruf | Boolean | Wurde Claude API verwendet (optionaler KI-Fallback)
+ki_kosten_token | PositiveIntegerField | Für Reporting
+ergebnis_status | CharField | Welcher Status wurde gesetzt
+Table 10:
+def normalisiere_leistungstext(text: str) -> str:
+    text = text.lower()
+    text = re.sub(r'\d{1,2}[./]\d{1,2}[./]\d{2,4}', '', text)  # Datum
+    text = re.sub(r'\b(q[1-4]|kw\s?\d{1,2})\b', '', text)     # Quartal/KW
+    text = re.sub(r'(rg|re|rechnung|beleg)[-.\s]?\d+', '', text)  # Belegnr
+    text = re.sub(r'[^a-z0-9\u00e4\u00f6\u00fc\u00df ]+', ' ', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    text = ' '.join(t for t in text.split() if t not in DE_STOPWORDS)
+    return text
+ 
+def leistungstext_hash(text: str) -> str:
+    return hashlib.sha256(
+        normalisiere_leistungstext(text).encode('utf-8')
+    ).hexdigest()
+Table 11:
+Status | Bedeutung | Übergang
+erfasst | Initialer Eingang vor Erkennungslauf. | → Erkennungs-Pipeline
+erkannt (NEU) | Stufe 1: alle 3 Dimensionen eindeutig. | Limit-Workflow: < Untergrenze → gebucht; sonst → in_pruefung
+pruefung_match (NEU) | Stufe 2: Teil-Match. zugewiesen_an = Objekt.betreuer. | Identifikation → erkannt → (a) sofort freigegeben (Doppelfunktion in Limit) ODER (b) Limit-Workflow
+nicht_erkannt (NEU) | Stufe 3: keine Dimension sicher. zugewiesen_an = Objekt.betreuer. | Manuelle Erfassung → erkannt → (a) oder (b) wie Stufe 2
+in_pruefung | Bestehender Freigabe-Workflow. | → freigegeben | abgelehnt
+freigegeben | Zur Buchung freigegeben. | → gebucht
+gebucht | Im Buchungsjournal eingetragen. | → bezahlt
+bezahlt | Zahlung bestätigt. | → archiviert
+abgelehnt | Zurückgewiesen mit Begründung. | Zurück an Erfasser
+Table 12:
+Doppelfunktion des Objektbetreuers
+Im Prüffall (Stufe 2) und bei nicht erkannt (Stufe 3) hat der Objektbetreuer zwei UI-Aktionen: (1) Identifizieren+Speichern — erzeugt Match-Regel und routet weiter in den Limit-Workflow gemäss Betrag. (2) Identifizieren+Freigeben — nur verfügbar wenn Rechnungsbetrag innerhalb der Freigabekompetenz des Betreuers liegt; in einem Schritt zu freigegeben.
+Table 13:
+Dimension | Quelle | Match-Logik
+Kreditor | Person mit Rolle Dienstleister | Primär: IBAN-Match aus Rechnung gegen Person.ibans (= 1.0). Sekundär: Name + USt-IdNr. Tertiar: Fuzzy-Name (max 0.85).
+Objekt | Objekt | Primär: Objekt-/Buchungsreferenz im Verwendungszweck. Sekundär: Anschrift in Rechnungsadresse vs. Liegenschaft. Tertiar: Historie (letzte Rechnung gleicher Kreditor).
+Buchungskonto | Konto (Sachkonto je Objekt) | Primär: aktive RechnungsMatchRegel mit (Kreditor, Objekt, Leistungstext-Hash). Kein Fallback gilt als eindeutig.
+Table 14:
+Dimension | Schwelle | Begründung
+Kreditor | ≥ 0.90 | IBAN-Treffer = 1.0; Fuzzy-Name allein reicht nicht
+Objekt | ≥ 0.85 | Verwendungszweck = 1.0; Anschrift = 0.9
+Konto | = 1.0 | Nur RechnungsMatchRegel-Treffer ist eindeutig. Historie-Match (Vorschlag) bleibt unterhalb — Stufe 2.
+Table 15:
+def fuehre_erkennung_aus(rechnung: Rechnung) -> Rechnung:
+    log = RechnungsErkennungsLog(rechnung=rechnung)
+ 
+    kreditor_match = match_kreditor(rechnung)
+    objekt_match   = match_objekt(rechnung)
+ 
+    # Konto nur sinnvoll wenn Kreditor & Objekt eindeutig
+    konto_match, regel_treffer = MatchResult.empty(), None
+    if kreditor_match.eindeutig and objekt_match.eindeutig:
+        text_hash = leistungstext_hash(rechnung.leistungstext or '')
+        regel_treffer = RechnungsMatchRegel.objects.filter(
+            kreditor=kreditor_match.kandidat,
+            objekt=objekt_match.kandidat,
+            leistungstext_hash=text_hash,
+            status='aktiv',
+        ).first()
+        if regel_treffer:
+            konto_match = MatchResult.eindeutig(regel_treffer.buchungskonto, 1.0)
+        else:
+            konto_match = match_konto_historie(
+                kreditor_match.kandidat, objekt_match.kandidat
+            )  # Konfidenz <= 0.7 — Vorschlag, nicht eindeutig
+ 
+    # Stufenableitung
+    if (kreditor_match.eindeutig and objekt_match.eindeutig
+            and konto_match.eindeutig):
+        rechnung.status = 'erkannt'
+        rechnung.erkennungs_stufe = 1
+    elif kreditor_match.eindeutig or objekt_match.eindeutig:
+        rechnung.status = 'pruefung_match'
+        rechnung.erkennungs_stufe = 2
+    else:
+        rechnung.status = 'nicht_erkannt'
+        rechnung.erkennungs_stufe = 3
+ 
+    rechnung.kreditor      = kreditor_match.kandidat if kreditor_match.eindeutig else None
+    rechnung.objekt        = objekt_match.kandidat   if objekt_match.eindeutig   else None
+    rechnung.buchungskonto = konto_match.kandidat    if konto_match.eindeutig    else None
+    rechnung.match_regel   = regel_treffer
+    rechnung.erkennungs_konfidenz = {
+        'kreditor': kreditor_match.konfidenz,
+        'objekt':   objekt_match.konfidenz,
+        'konto':    konto_match.konfidenz,
+    }
+ 
+    # Routing (Phase B oder C)
+    route_rechnung(rechnung)
+ 
+    rechnung.save(); log.save()
+    return rechnung
+Table 16:
+def route_rechnung(rechnung: Rechnung) -> None:
+    if rechnung.status == 'erkannt':
+        # Phase B — Limit-basierter Freigabeworkflow
+        grenzen = rechnung.objekt.zahlungsfreigabe_grenzen
+        stufe = ermittle_freigabestufe(rechnung.betrag, grenzen)
+ 
+        if stufe['rolle'] == 'auto':
+            buche_rechnung(rechnung)  # Status -> 'gebucht'
+            return
+ 
+        rechnung.status = 'in_pruefung'
+        rechnung.zugewiesen_an = ermittle_freigabeperson(
+            rechnung.objekt, stufe
+        )
+        starte_eskalations_task(rechnung, stufe['frist_tage'])
+        return
+ 
+    # Phase C — Prüffall oder nicht erkannt
+    if rechnung.status in ('pruefung_match', 'nicht_erkannt'):
+        betreuer = rechnung.objekt.betreuer if rechnung.objekt else None
+        # Bei nicht erkannt ohne Objekt: Fallback auf
+        # Default-Inbox (Mandant-Konfiguration)
+        if betreuer is None:
+            betreuer = mandant_default_pruefer()
+        if betreuer.abwesend and rechnung.objekt:
+            betreuer = (rechnung.objekt.betreuer_vertretung
+                        or betreuer)
+        rechnung.zugewiesen_an = betreuer
+        # KEIN Eskalations-Task in Phase C — erst nach
+        # Identifikation gilt der Limit-Workflow.
+        return
+Table 17:
+Button | Wirkung | Voraussetzung
+Identifizieren + Speichern | Erzeugt Match-Regel; setzt Status auf erkannt; ruft danach route_rechnung erneut auf → Limit-Workflow. | Pflichtfelder Kreditor, Objekt, Buchungskonto vollständig.
+Identifizieren + Freigeben | Wie oben + zusätzlich direkter Übergang erkannt → freigegeben (überspringt in_pruefung). | Rechnungsbetrag ≤ Limit des Betreuers gemäss zahlungsfreigabe_grenzen UND Betreuer ist in seiner Limit-Stufe als Freigeber konfiguriert.
+Ablehnen | Status → abgelehnt; Begründung erforderlich; KEIN Lerneffekt. | Begründungstext eingegeben.
+Table 18:
+def darf_betreuer_direkt_freigeben(
+    rechnung: Rechnung,
+    betreuer: User,
+) -> bool:
+    grenzen = rechnung.objekt.zahlungsfreigabe_grenzen
+    stufe = ermittle_freigabestufe(rechnung.betrag, grenzen)
+ 
+    # Auto-Stufe: nichts freizugeben
+    if stufe['rolle'] == 'auto':
+        return True   # Button-Label wird zu 'Identifizieren + Buchen'
+ 
+    # Sachbearbeiter-Stufe: Betreuer muss als Sachbearbeiter
+    # für dieses Objekt konfiguriert sein
+    if stufe['rolle'] == 'sachbearbeiter':
+        return betreuer in rechnung.objekt.sachbearbeiter.all()
+ 
+    # GF-Stufen: Betreuer braucht GF-Rolle
+    if stufe['rolle'] in ('geschaeftsfuehrer',):
+        return betreuer.has_role('Geschaeftsfuehrer')
+ 
+    return False
+Table 19:
+UI-Hinweis
+Der zweite Button "Identifizieren + Freigeben" wird nur dann aktiv geschaltet, wenn darf_betreuer_direkt_freigeben True liefert. Wenn nicht (z.B. Rechnungsbetrag 12.000 €, Betreuer ist Sachbearbeiter): nur "Identifizieren + Speichern" verfügbar; Tooltip erklärt "Betrag über Ihrem Freigabelimit — wird nach Identifikation an GF eskaliert."
+Table 20:
+Zähler
+Auf dem Button-Badge erscheint die Gesamtzahl aller drei Gruppen. Tooltip beim Hover zeigt die Aufschlüsselung: "3 Prüffälle, 1 nicht erkannt, 7 Freigaben."
+Table 21:
+Methode | Pfad | Beschreibung
+POST | /rechnungen/{id}/erkennung-ausfuehren/ | Erkennungs-Pipeline manuell anstossen
+GET | /rechnungen/?stufe=2&zugewiesen_an=me | Filter für Dashboard-Button
+GET | /rechnungen/{id}/erkennungs-log/ | Audit-Trail aller Erkennungsläufe
+POST | /rechnungen/{id}/identifizieren/ | Body: { kreditor_id, objekt_id, buchungskonto_id, modus: 'speichern'|'freigeben', lernen: true }. Erzeugt Regel und ruft route_rechnung erneut auf.
+POST | /rechnungen/{id}/ablehnen/ | Body: { begruendung }. Status → abgelehnt, kein Lerneffekt.
+POST | /rechnungen/{id}/manuell-erfassen/ | Stufe 3: Vollerfassung mit allen Pflichtfeldern. Anlage neuer Kreditor erlaubt.
+GET | /match-regeln/?kreditor=&objekt=&status= | Regelliste mit Filtern
+POST | /match-regeln/ | Regel manuell anlegen (Admin)
+PATCH | /match-regeln/{id}/ | Status ändern (aktiv ↔ veraltet)
+DELETE | /match-regeln/{id}/ | Regel hart entfernen (Admin, mit Audit)
+Table 22:
+STUFE 1 GEHT DIREKT IN DEN LIMIT-WORKFLOW
+Eindeutig erkannte Rechnungen umgehen den Objektbetreuer komplett. Unter Limit → sofort gebucht; über Limit → zuständiger Freigeber gemäss zahlungsfreigabe_grenzen. KEIN Sichtungs-Schritt durch Betreuer.
+Table 23:
+PRÜFFALL UND NICHT ERKANNT GEHEN AN OBJEKTBETREUER
+Unabhängig vom Betrag. Der Betreuer hat eine Doppelfunktion: identifizieren + (im Limit) entscheiden. Liegt der Betrag über seinem Limit, läuft die Rechnung nach Identifikation in den regulären Limit-Workflow.
+Table 24:
+OBJEKTBETREUER IST PFLICHTFELD AM OBJEKT
+Migration für Bestandsobjekte erforderlich. Wizard v1.2 muss Schritt 8 erweitern. Massenimport v1.0 muss neue Pflicht-Spalte berücksichtigen.
+Table 25:
+OBJEKTSPEZIFISCHE REGELN, SOFORTIGES LERNEN
+Regeln gelten je (kreditor, objekt, leistungstext_hash) — keine Mandant-Generalisierung. Jede manuelle Korrektur lernt sofort, mit optionaler Opt-out-Checkbox "Einzelfall".
+Table 26:
+Lies IMMOCORE_Ausgangsspezifikation.docx Kapitel 7 sowie
+IMMOCORE_ClaudeCode_Rechnungserkennung_3stufig_v1_1.docx
+vollständig.
+ 
+Phasen 1-3 sind abgeschlossen. Erweitere den bestehenden
+Rechnungs-Lifecycle um drei Erkennungsstufen mit eindeutigem
+Routing in zwei getrennte Phasen (Limit-Workflow / Objektbetreuer)
+und ein lernendes Match-Regelwerk.
+ 
+Schlüsseldesign:
+  - Neues Pflichtfeld Objekt.betreuer (FK -> User), plus
+    optionales Objekt.betreuer_vertretung
+  - Stufe 1 (erkannt) -> Limit-Workflow nach
+    zahlungsfreigabe_grenzen, Betreuer NICHT involviert
+  - Stufe 2 (pruefung_match) und 3 (nicht_erkannt) -> immer an
+    Objektbetreuer, unabhängig vom Betrag
+  - Doppelfunktion Betreuer: 'Identifizieren+Speichern' immer;
+    'Identifizieren+Freigeben' nur wenn Betrag <= Betreuer-Limit
+  - Lernschlüssel: (kreditor, objekt, leistungstext_hash)
+  - Sofort-Lernen bei jeder Korrektur — alte Regel veraltet,
+    neue Regel aktiv. Idempotenz: Doppelt = trefferzahl++.
+  - Konto-Match nur bei aktiver RechnungsMatchRegel = eindeutig.
+    Historie-Match max 0.7 — bleibt Vorschlag (Stufe 2).
+ 
+Implementiere in dieser Reihenfolge:
+  1.  Migration Objekt: betreuer (PROTECT) + betreuer_vertretung
+      Daten-Migration für Bestandsobjekte (Default Admin)
+  2.  Migration Rechnung-Felder + RechnungsMatchRegel +
+      RechnungsErkennungsLog (Spec Kap. 3)
+  3.  Leistungstext-Normalisierung + Hash (Spec Kap. 3.5)
+  4.  Match-Funktionen (Spec Kap. 5)
+  5.  fuehre_erkennung_aus + Stufenableitung (Spec Kap. 5.3)
+  6.  route_rechnung + darf_betreuer_direkt_freigeben
+      (Spec Kap. 6)
+  7.  API-Endpunkte identifizieren, ablehnen, manuell-erfassen,
+      match-regeln-CRUD (Spec Kap. 9)
+  8.  Lernlogik in identifizieren + Freigabe-Korrektur-Hook
+      (Spec Kap. 7)
+  9.  Wizard v1.2 Schritt 8 erweitern: betreuer + Vertretung
+      (Spec Kap. 8.4)
+  10. React-UI: Dashboard-Filter, Prüffall-Detail mit Doppel-
+      Button + bedingtem Freigabe-Button, Korrekturhinweis,
+      Regel-Verwaltung (Spec Kap. 8)
+  11. Tests: Unit + Integration Pfade 1-10 (Spec Kap. 10)
+  12. Datenmigration: Erkennungslauf auf Bestandsrechnungen
+ 
+Anforderungen:
+  - Match-Regeln objektspezifisch
+  - unique_together (kreditor, objekt, leistungstext_hash, 'aktiv')
+  - Idempotenz: doppelte Bestätigung = trefferzahl++, keine neue Regel
+  - Alle Erkennungsläufe in RechnungsErkennungsLog protokollieren
+  - KI-Modell für optionalen KI-Fallback: claude-sonnet-4-6
+  - Buchungskonto darf nur Konto desselben Objekts sein
+  - Bei Vertretung: Objekt.betreuer.abwesend = True ->
+    Routing an betreuer_vertretung
+  - Suffix .910 bleibt gesperrt (Konsistenz mit v1.2)
+Table 27:
+Feld | Wert
+Auftraggeber | Demme Immobilien Verwaltung GmbH
+Adresse | Coventrystraße 32, 65934 Frankfurt am Main
+Dokument-Typ | Claude Code Implementierungsprompt
+Modul | 3-stufige Rechnungserkennung mit lernender Buchungslogik
+Bezug | IMMOCORE_Ausgangsspezifikation v1.1 Kap. 7 + 7.3; IMMOCORE_ClaudeCode_WEG_Objektanlage v1.2 Schritt 8
+Phase | Erweiterung Phase 3 / Phase 5
+KI-Modell | claude-sonnet-4-6
+Version | 1.1
+Stand | Mai 2026
+Änderungen ggu. v1.0 | Workflow korrigiert: Stufe 1 → Limit-Workflow (Betreuer nicht involviert); Stufe 2/3 → Objektbetreuer mit Doppelfunktion. Neues Pflichtfeld Objekt.betreuer.
+Status | Freigegeben zur Verwendung in Claude Code

@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>Einheiten CSV-Import</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 700px; margin: 60px auto; color: #333; }
+    h1 { font-size: 1.4rem; margin-bottom: 4px; }
+    .sub { color: #666; margin-bottom: 30px; font-size: 0.9rem; }
+    label { display: block; font-weight: bold; margin-bottom: 6px; }
+    input[type=file] { display: block; margin-bottom: 20px; }
+    button { background: #417690; color: white; border: none; padding: 10px 24px;
+             font-size: 1rem; cursor: pointer; border-radius: 3px; }
+    button:hover { background: #2b5070; }
+    .result { margin-top: 30px; padding: 16px; border-radius: 4px; white-space: pre-wrap;
+              font-family: monospace; font-size: 0.9rem; }
+    .ok  { background: #dff0d8; border: 1px solid #b2dba1; }
+    .err { background: #f2dede; border: 1px solid #ebccd1; }
+    .vorlage { margin-bottom: 30px; padding: 14px; background: #f0f7fb;
+               border: 1px solid #c4dce8; border-radius: 4px; }
+    .vorlage input[type=text] { padding: 6px 10px; font-size: 1rem;
+                                 border: 1px solid #ccc; border-radius: 3px; width: 120px; }
+    a.dl-btn { display: inline-block; margin-left: 10px; background: #417690; color: white;
+               padding: 7px 16px; text-decoration: none; border-radius: 3px; font-size: 0.9rem; }
+    a.dl-btn:hover { background: #2b5070; }
+    .hinweis { font-size: 0.85rem; color: #666; margin-top: 8px; }
+  </style>
+</head>
+<body>
+
+<h1>Einheiten — CSV-Import</h1>
+<p class="sub">
+  <a href="/api/v1/">← API-Übersicht</a>
+</p>
+
+<div class="vorlage">
+  <label>Schritt 1 — Vorlage herunterladen</label>
+  <input type="text" id="objnr" placeholder="z.B. 10001">
+  <a class="dl-btn" id="dl-link" href="/api/v1/einheiten/csv-vorlage/" target="_blank">Download</a>
+  <p class="hinweis">Objektnummer eingeben → Vorlage mit vorausgefüllten Eingängen herunterladen.<br>
+  Ohne Objektnummer → leere Vorlage.</p>
+</div>
+
+<label>Schritt 2 — Ausgefüllte CSV hochladen</label>
+<form id="upload-form" enctype="multipart/form-data">
+  <input type="file" name="datei" accept=".csv" required>
+  <button type="submit">Importieren</button>
+</form>
+
+<div id="result" class="result" style="display:none"></div>
+
+<script>
+  // Vorlage-Link dynamisch anpassen
+  document.getElementById('objnr').addEventListener('input', function() {
+    const nr = this.value.trim();
+    const link = document.getElementById('dl-link');
+    link.href = nr
+      ? '/api/v1/einheiten/csv-vorlage/?objekt=' + encodeURIComponent(nr)
+      : '/api/v1/einheiten/csv-vorlage/';
+  });
+
+  // Upload
+  document.getElementById('upload-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const form = new FormData(this);
+    const result = document.getElementById('result');
+    result.style.display = 'none';
+
+    try {
+      const resp = await fetch('/api/v1/einheiten/csv-import/', {
+        method: 'POST',
+        body: form,
+        credentials: 'include',   // Session-Cookie
+        headers: { 'X-CSRFToken': getCookie('csrftoken') }
+      });
+      const data = await resp.json();
+
+      result.style.display = 'block';
+      if (resp.ok && data.angelegt > 0) {
+        result.className = 'result ok';
+        let text = `✓ ${data.angelegt} Einheit(en) angelegt.`;
+        if (data.fehler_anzahl > 0) {
+          text += `\n\n${data.fehler_anzahl} Zeile(n) mit Fehlern:\n` + data.fehler.join('\n');
+        }
+        result.textContent = text;
+      } else {
+        result.className = 'result err';
+        result.textContent = JSON.stringify(data, null, 2);
+      }
+    } catch(err) {
+      result.style.display = 'block';
+      result.className = 'result err';
+      result.textContent = 'Fehler: ' + err.message;
+    }
+  });
+
+  function getCookie(name) {
+    const val = document.cookie.split('; ').find(r => r.startsWith(name + '='));
+    return val ? val.split('=')[1] : '';
+  }
+</script>
+</body>
+</html>
