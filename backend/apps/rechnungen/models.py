@@ -68,10 +68,9 @@ class Rechnung(models.Model):
         ('fehler',        'Fehler'),
     ]
     ERKENNUNGS_STUFE_CHOICES = [
-        ('1',  'Stufe 1 — Erkannt'),
-        ('2a', 'Stufe 2a — Prüffall (Objekt erkannt → Objektbetreuer)'),
-        ('2b', 'Stufe 2b — Prüffall (nur Kreditor → Frontoffice)'),
-        ('3',  'Stufe 3 — Nicht erkannt (Frontoffice)'),
+        ('1', 'Stufe 1 — Erkannt'),
+        ('2', 'Stufe 2 — Prüffall (Objektbetreuer)'),
+        ('3', 'Stufe 3 — Nicht erkannt (Frontoffice)'),
     ]
     ROUTING_ZIEL_CHOICES = [
         ('limit_workflow',  'Limit-Workflow'),
@@ -173,13 +172,6 @@ class Rechnung(models.Model):
         null=True, blank=True,
         related_name='angewendet_auf',
     )
-    buchungskonto = models.ForeignKey(
-        Konto, on_delete=models.SET_NULL,
-        null=True, blank=True,
-        related_name='rechnungen_buchungskonto',
-        help_text='Pflicht ab Status erkannt; muss zum selben Objekt gehören',
-    )
-
     # --- OP-Buchung (Kassenprinzip §28 WEG) ---
     aufwandskonto = models.ForeignKey(
         Konto, on_delete=models.PROTECT,
@@ -263,7 +255,7 @@ class Freigabe(models.Model):
 
 
 class RechnungsMatchRegel(models.Model):
-    """Lernende Zuordnungsregel: (Kreditor, Objekt, Leistungstext-Hash) → Buchungskonto."""
+    """Lernende Zuordnungsregel: (Kreditor, Objekt, Leistungstext-Hash) → Aufwandskonto."""
 
     STATUS_CHOICES = [
         ('aktiv',   'Aktiv'),
@@ -284,7 +276,7 @@ class RechnungsMatchRegel(models.Model):
     )
     leistungstext_hash  = models.CharField(max_length=64)
     leistungstext_sample= models.TextField(blank=True, help_text='Original-Leistungstext der ersten Bestätigung')
-    buchungskonto       = models.ForeignKey(
+    aufwandskonto       = models.ForeignKey(
         Konto, on_delete=models.PROTECT, related_name='match_regeln',
     )
     status              = models.CharField(max_length=10, choices=STATUS_CHOICES, default='aktiv')
@@ -312,7 +304,7 @@ class RechnungsMatchRegel(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.kreditor.name} / {self.objekt} → {self.buchungskonto} [{self.status}]"
+        return f"{self.kreditor.name} / {self.objekt} → {self.aufwandskonto} [{self.status}]"
 
 
 class RechnungsErkennungsLog(models.Model):

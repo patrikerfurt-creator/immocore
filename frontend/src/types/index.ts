@@ -594,15 +594,16 @@ export interface RechnungList {
   vorgeschlagenes_konto_label: string | null
   kostenstelle_id: string | null
   kostenstelle_label: string | null
-  // Erkennungs-Pipeline v1.2
-  erkennungs_stufe: '1' | '2a' | '2b' | '3' | null
-  erkennungs_konfidenz: { kreditor: number; objekt: number; konto: number } | null
-  buchungskonto_id: string | null
-  buchungskonto_label: string | null
+  // Erkennungs-Pipeline v1.3
+  erkennungs_stufe: '1' | '2' | '3' | null
+  erkennungs_konfidenz: { kreditor: number; objekt: number; aufwandskonto: number } | null
+  aufwandskonto_id: string | null
+  aufwandskonto_label: string | null
   zugewiesen_an_id: string | null
   zugewiesen_an_name: string | null
   routing_ziel: 'limit_workflow' | 'objektbetreuer' | 'frontoffice' | null
   leistungstext: string
+  lock_user: string | null
 }
 
 export interface Freigabe {
@@ -635,8 +636,6 @@ export interface Rechnung extends RechnungList {
   match_regel: string | null
   // OP-Buchung
   aufwandskonto: string | null
-  aufwandskonto_id: string | null
-  aufwandskonto_label: string | null
   op_buchung: string | null
   aufwand_buchung: string | null
 }
@@ -649,8 +648,8 @@ export interface RechnungsMatchRegel {
   objekt_bezeichnung: string
   leistungstext_hash: string
   leistungstext_sample: string
-  buchungskonto: string
-  konto_label: string
+  aufwandskonto: string
+  aufwandskonto_label: string
   status: 'aktiv' | 'veraltet'
   trefferzahl: number
   erstellt_durch: string

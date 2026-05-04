@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useQuery, useMutation } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useObjektStore } from '../../stores/objekt'
 import { rechnungenApi } from '../../api/rechnungen'
 import { zahlungsverkehrApi } from '../../api/zahlungsverkehr'
@@ -8,12 +8,6 @@ import { objekteApi } from '../../api/objekte'
 import { Badge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import type { RechnungList, Bankkonto } from '../../types'
-
-const STATUS_FARBE: Record<string, 'blue' | 'green' | 'yellow' | 'gray'> = {
-  erfasst: 'yellow',
-  freigegeben: 'blue',
-  gebucht: 'green',
-}
 
 function formatEuro(val: string | number | null | undefined) {
   if (val == null) return '—'
@@ -28,29 +22,33 @@ function formatDatum(s: string | null | undefined) {
 
 export function Zahlungen() {
   const objektId = useObjektStore(s => s.selectedId)
+  const qc = useQueryClient()
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [habenKontoId, setHabenKontoId] = useState('')
   const [faelligkeitsdatum, setFaelligkeitsdatum] = useState(
     new Date().toISOString().split('T')[0]
   )
-  const [statusFilter, setStatusFilter] = useState<string>('freigegeben')
   const [error, setError] = useState<string | null>(null)
 
   const { data: rechnungen, isLoading } = useQuery({
-    queryKey: ['rechnungen-zahlung', objektId, statusFilter],
+    queryKey: ['rechnungen-zahlung', objektId],
     queryFn: () =>
       rechnungenApi.list(
         objektId
-          ? { objekt: objektId, status: statusFilter }
-          : { status: statusFilter }
+          ? { objekt: objektId, status: 'gebucht' }
+          : { status: 'gebucht' }
       ),
     enabled: true,
   })
 
+  // Objekt für Bankkonto-Auswahl: globales Objekt oder aus erster gewählter Rechnung ableiten
+  const selectedRechnungen = (rechnungen ?? []).filter(r => selected.has(r.id))
+  const effektivesObjektId = objektId ?? selectedRechnungen[0]?.objekt_id ?? null
+
   const { data: objekt } = useQuery({
-    queryKey: ['objekt', objektId],
-    queryFn: () => objekteApi.get(objektId ?? ''),
-    enabled: !!objektId,
+    queryKey: ['objekt', effektivesObjektId],
+    queryFn: () => objekteApi.get(effektivesObjektId ?? ''),
+    enabled: !!effektivesObjektId,
   })
 
   const bankkonten: Bankkonto[] = objekt?.bankkonten?.filter(b => b.aktiv && b.iban) ?? []
@@ -59,6 +57,9 @@ export function Zahlungen() {
     mutationFn: zahlungsverkehrApi.exportRechnungenSepa,
     onSuccess: () => {
       setError(null)
+      setSelected(new Set())
+      qc.invalidateQueries({ queryKey: ['rechnungen-zahlung'] })
+      qc.invalidateQueries({ queryKey: ['rechnungen'] })
     },
     onError: (err: unknown) => {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
@@ -86,12 +87,7 @@ export function Zahlungen() {
   }
 
   function kannBezahlen(r: RechnungList) {
-    return (
-      !!r.kostenstelle_id &&
-      !!r.betrag_brutto &&
-      r.kreditor_name &&
-      ['erfasst', 'freigegeben', 'gebucht'].includes(r.status)
-    )
+    return r.status === 'gebucht' && !!r.aufwandskonto_id && !!r.betrag_brutto && !!r.kreditor_name
   }
 
   const zahlbareRechnungen = (rechnungen ?? []).filter(kannBezahlen)
@@ -102,16 +98,10 @@ export function Zahlungen() {
   return (
     <div className="p-6 max-w-6xl">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-xl font-semibold">Ausgangsüberweisungen</h1>
-        <select
-          className="border rounded px-3 py-1.5 text-sm"
-          value={statusFilter}
-          onChange={e => { setStatusFilter(e.target.value); setSelected(new Set()) }}
-        >
-          <option value="freigegeben">Freigegeben</option>
-          <option value="erfasst">Erfasst</option>
-          <option value="gebucht">Gebucht</option>
-        </select>
+        <div>
+          <h1 className="text-xl font-semibold">Zahlungslauf</h1>
+          <p className="text-sm text-gray-500 mt-0.5">Freigegebene Rechnungen (Status: gebucht) — bereit zur Zahlung</p>
+        </div>
       </div>
 
       {selected.size > 0 && (
@@ -121,20 +111,18 @@ export function Zahlungen() {
           </span>
 
           <div className="flex items-center gap-3 ml-auto">
-            {objektId && (
-              <select
-                className="border rounded px-3 py-1.5 text-sm"
-                value={habenKontoId}
-                onChange={e => setHabenKontoId(e.target.value)}
-              >
-                <option value="">Bankkonto wählen…</option>
-                {bankkonten.map((b: Bankkonto) => (
-                  <option key={b.id} value={b.id}>
-                    {b.bezeichnung} — {b.iban}
-                  </option>
-                ))}
-              </select>
-            )}
+            <select
+              className="border rounded px-3 py-1.5 text-sm"
+              value={habenKontoId}
+              onChange={e => setHabenKontoId(e.target.value)}
+            >
+              <option value="">Bankkonto wählen…</option>
+              {bankkonten.map((b: Bankkonto) => (
+                <option key={b.id} value={b.id}>
+                  {b.bezeichnung} — {b.iban}
+                </option>
+              ))}
+            </select>
 
             <input
               type="date"
@@ -167,7 +155,7 @@ export function Zahlungen() {
 
       {!isLoading && zahlbareRechnungen.length === 0 && (
         <p className="text-gray-500 text-sm">
-          Keine Rechnungen im Status &ldquo;{statusFilter}&rdquo; mit Sachkonto und Kreditor vorhanden.
+          Keine freigegebenen Rechnungen (Status &ldquo;gebucht&rdquo;) mit Aufwandskonto und Kreditor vorhanden.
         </p>
       )}
 
@@ -224,12 +212,10 @@ export function Zahlungen() {
                   <td className="px-4 py-3 font-medium">{r.kreditor_name || '—'}</td>
                   <td className="px-4 py-3 text-gray-600">{r.rechnungsnummer || '—'}</td>
                   <td className="px-4 py-3 text-gray-600">{formatDatum(r.rechnungsdatum)}</td>
-                  <td className="px-4 py-3 text-xs text-gray-600">{r.kostenstelle_label || '—'}</td>
+                  <td className="px-4 py-3 text-xs text-gray-600">{r.aufwandskonto_label || '—'}</td>
                   <td className="px-4 py-3 text-right font-mono">{formatEuro(r.betrag_brutto)}</td>
                   <td className="px-4 py-3">
-                    <Badge color={STATUS_FARBE[r.status] ?? 'gray'}>
-                      {r.status}
-                    </Badge>
+                    <Badge value={r.status} />
                   </td>
                 </tr>
               ))}

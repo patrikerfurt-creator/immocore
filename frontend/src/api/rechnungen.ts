@@ -27,7 +27,7 @@ export const rechnungenApi = {
     client.post<Rechnung>('/rechnungen/', data).then(r => r.data),
   update: (id: string, data: Partial<Rechnung>) =>
     client.patch<Rechnung>(`/rechnungen/${id}/`, data).then(r => r.data),
-  freigeben: (id: string, data?: { begruendung?: string; aufwandskonto_id?: string; buchungskonto_id?: string }) =>
+  freigeben: (id: string, data?: { begruendung?: string; aufwandskonto_id?: string }) =>
     client.post(`/rechnungen/${id}/freigeben/`, data ?? {}).then(r => r.data),
   ablehnen: (id: string, begruendung: string) =>
     client.post(`/rechnungen/${id}/ablehnen/`, { begruendung }).then(r => r.data),
@@ -35,8 +35,10 @@ export const rechnungenApi = {
     client.post(`/rechnungen/${id}/als-neu/`).then(r => r.data),
   buchen: (id: string, data: { objekt_id: string; konto_id: string }) =>
     client.post(`/rechnungen/${id}/buchen/`, data).then(r => r.data),
-  bezahlen: (id: string, data: { haben_konto_id: string; buchungsdatum: string; buchungstext?: string }) =>
-    client.post(`/rechnungen/${id}/bezahlen/`, data).then(r => r.data),
+  bezahlen: (id: string, data?: { buchungsdatum?: string }) =>
+    client.post(`/rechnungen/${id}/bezahlen/`, data ?? {}).then(r => r.data),
+  bankabgang: (id: string, data: { haben_konto_id: string; buchungsdatum?: string }) =>
+    client.post(`/rechnungen/${id}/bankabgang/`, data).then(r => r.data),
   openPdf: async (id: string) => {
     const response = await client.get(`/rechnungen/${id}/pdf/`, { responseType: 'blob' })
     const url = URL.createObjectURL(response.data)
@@ -49,8 +51,7 @@ export const rechnungenApi = {
   erkennungsLog: (id: string) =>
     client.get(`/rechnungen/${id}/erkennungs-log/`).then(r => r.data),
   identifizieren: (id: string, data: {
-    kreditor_id: string; objekt_id: string; buchungskonto_id?: string
-    aufwandskonto_id?: string
+    kreditor_id: string; objekt_id: string; aufwandskonto_id?: string
     modus?: 'speichern' | 'freigeben'; lernen?: boolean
   }) =>
     client.post<Rechnung>(`/rechnungen/${id}/identifizieren/`, data).then(r => r.data),

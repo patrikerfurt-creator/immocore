@@ -34,7 +34,7 @@ const STATUS_LABEL: Record<string, string> = {
   nicht_erkannt:  'Nicht erkannt (Stufe 3)',
 }
 
-const PRUEFFALL_STATI = new Set(['pruefung_match', 'nicht_erkannt'])
+const PRUEFFALL_STATI = new Set(['pruefung_match', 'nicht_erkannt', 'in_pruefung'])
 
 // ---------------------------------------------------------------------------
 // Sachkonto erfassen (kein Buchungssatz — Buchung erfolgt erst bei Zahlung)
@@ -100,33 +100,31 @@ function SachkontoForm({ rechnung, onSuccess }: { rechnung: RechnungList; onSucc
 }
 
 // ---------------------------------------------------------------------------
-// Zahlung buchen — erstellt den Buchungssatz im Sachkonto
+// Phase 3 – Bankabgang (13600 / Bank)
 // ---------------------------------------------------------------------------
-function BezahlenForm({ rechnung, onSuccess }: { rechnung: RechnungList; onSuccess: () => void }) {
+function BankabgangForm({ rechnung, onSuccess }: { rechnung: RechnungList; onSuccess: () => void }) {
   const qc = useQueryClient()
   const [habenKontoId, setHabenKontoId] = useState('')
   const [buchungsdatum, setBuchungsdatum] = useState(new Date().toISOString().slice(0, 10))
-  const [buchungstext, setBuchungstext] = useState('')
 
   const { data: konten } = useQuery({
     queryKey: ['konten-bank', rechnung.objekt_id],
     queryFn: () => client.get<Konto[]>('/konten/', { params: { objekt: rechnung.objekt_id, direktes_buchen: 'true' } }).then(r => r.data),
     enabled: !!rechnung.objekt_id,
   })
-
-  const bankKonten = (konten ?? []).filter(k => k.aktiv && k.kontonummer.startsWith('1'))
+  const bankKonten = (konten ?? []).filter(k => k.aktiv && k.kontonummer.startsWith('18'))
 
   const mut = useMutation({
-    mutationFn: () => rechnungenApi.bezahlen(rechnung.id, { haben_konto_id: habenKontoId, buchungsdatum, buchungstext }),
+    mutationFn: () => rechnungenApi.bankabgang(rechnung.id, { haben_konto_id: habenKontoId, buchungsdatum }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['rechnungen'] }); onSuccess() },
   })
 
   return (
     <div className="border-t pt-4 space-y-3">
-      <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Zahlung buchen</div>
+      <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Bankabgang erfassen</div>
 
-      <div className="bg-blue-50 border border-blue-200 rounded px-3 py-2 text-xs text-blue-800 font-mono mb-2">
-        Buchungssatz: {rechnung.kostenstelle_label} / Bankkonto &nbsp;|&nbsp; {EUR(rechnung.betrag_brutto)}
+      <div className="bg-teal-50 border border-teal-200 rounded px-3 py-2 text-xs text-teal-800 font-mono">
+        13600 / Bankkonto &nbsp;|&nbsp; {EUR(rechnung.betrag_brutto)}
       </div>
 
       <div className="grid grid-cols-2 gap-3">
@@ -138,17 +136,9 @@ function BezahlenForm({ rechnung, onSuccess }: { rechnung: RechnungList; onSucce
             {bankKonten.map(k => <option key={k.id} value={k.id}>{k.kontonummer} — {k.kontoname}</option>)}
           </select>
         </div>
-
         <div>
           <label className="block text-xs text-gray-500 mb-1">Buchungsdatum</label>
           <input type="date" value={buchungsdatum} onChange={e => setBuchungsdatum(e.target.value)}
-                 className="border rounded px-2 py-1.5 text-sm w-full" />
-        </div>
-
-        <div className="col-span-2">
-          <label className="block text-xs text-gray-500 mb-1">Buchungstext</label>
-          <input type="text" value={buchungstext} onChange={e => setBuchungstext(e.target.value)}
-                 placeholder="Optional — wird automatisch befüllt"
                  className="border rounded px-2 py-1.5 text-sm w-full" />
         </div>
       </div>
@@ -156,7 +146,7 @@ function BezahlenForm({ rechnung, onSuccess }: { rechnung: RechnungList; onSucce
       {mut.isError && <div className="text-xs text-red-600">Fehler beim Buchen. Bitte prüfen.</div>}
 
       <Button onClick={() => mut.mutate()} disabled={!habenKontoId || mut.isPending}>
-        {mut.isPending ? 'Wird gebucht…' : 'Zahlung buchen'}
+        {mut.isPending ? 'Wird gebucht…' : 'Bankabgang buchen'}
       </Button>
     </div>
   )
@@ -175,7 +165,7 @@ function DetailModal({ rechnung, onClose }: { rechnung: RechnungList; onClose: (
   })
 
   const freigebenMut = useMutation({
-    mutationFn: () => rechnungenApi.freigeben(rechnung.id, begruendung),
+    mutationFn: () => rechnungenApi.freigeben(rechnung.id, begruendung ? { begruendung } : undefined),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['rechnungen'] }); onClose() },
   })
   const ablehnMut = useMutation({
@@ -191,7 +181,7 @@ function DetailModal({ rechnung, onClose }: { rechnung: RechnungList; onClose: (
   const kannAblehnen = !['bezahlt', 'abgelehnt'].includes(rechnung.status)
   const kannAlsNeu = ['prueffall', 'duplikat'].includes(rechnung.status)
   const kannSachkonto = !['bezahlt', 'abgelehnt', 'fehler'].includes(rechnung.status)
-  const kannBezahlen = !!rechnung.kostenstelle_id && ['erfasst', 'freigegeben', 'gebucht'].includes(rechnung.status)
+  const kannBankabgang = rechnung.status === 'bezahlt'
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -217,7 +207,7 @@ function DetailModal({ rechnung, onClose }: { rechnung: RechnungList; onClose: (
               ['Fällig', DATUM(rechnung.faelligkeitsdatum)],
               ['Betrag brutto', EUR(rechnung.betrag_brutto)],
               ['Objekt', rechnung.objekt_bezeichnung || '—'],
-              ['Sachkonto', rechnung.kostenstelle_label || rechnung.buchungskonto_label || (rechnung.vorgeschlagenes_konto_label ? rechnung.vorgeschlagenes_konto_label + ' (Vorschlag)' : '—')],
+              ['Sachkonto', rechnung.kostenstelle_label || rechnung.aufwandskonto_label || (rechnung.vorgeschlagenes_konto_label ? rechnung.vorgeschlagenes_konto_label + ' (Vorschlag)' : '—')],
               ['MwSt.', detail?.mwst_satz ? `${detail.mwst_satz} %` : '—'],
             ].map(([label, value]) => (
               <div key={label} className="bg-gray-50 rounded-lg px-3 py-2">
@@ -258,8 +248,8 @@ function DetailModal({ rechnung, onClose }: { rechnung: RechnungList; onClose: (
             <SachkontoForm rechnung={rechnung} onSuccess={onClose} />
           )}
 
-          {kannBezahlen && (
-            <BezahlenForm rechnung={rechnung} onSuccess={onClose} />
+          {kannBankabgang && (
+            <BankabgangForm rechnung={rechnung} onSuccess={onClose} />
           )}
 
           {(kannFreigeben || kannAblehnen || kannAlsNeu) && (

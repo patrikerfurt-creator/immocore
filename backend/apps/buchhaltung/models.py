@@ -875,3 +875,52 @@ class LastschriftLauf(models.Model):
             f"Lastschrift {self.bezeichnung or self.faelligkeitsdatum} "
             f"| {self.objekt.bezeichnung} [{self.status}]"
         )
+
+
+# ---------------------------------------------------------------------------
+# KreditorOP — Offener Posten für Eingangsrechnungen (Kreditoren-Subledger)
+# ---------------------------------------------------------------------------
+
+class KreditorOP(models.Model):
+    STATUS_CHOICES = [
+        ('offen',       'Offen'),
+        ('bezahlt',     'Bezahlt'),
+        ('teilbezahlt', 'Teilbezahlt'),
+        ('storniert',   'Storniert'),
+    ]
+
+    op_nummer       = models.IntegerField(unique=True, db_index=True)
+    rechnung        = models.OneToOneField(
+        'rechnungen.Rechnung', on_delete=models.PROTECT,
+        related_name='kreditor_op', null=True, blank=True,
+    )
+    kreditor        = models.ForeignKey(
+        'rechnungen.Kreditor', on_delete=models.PROTECT,
+        related_name='offene_posten',
+    )
+    objekt          = models.ForeignKey(
+        Objekt, on_delete=models.PROTECT,
+        related_name='kreditor_ops',
+    )
+    buchung         = models.ForeignKey(
+        Buchung, on_delete=models.PROTECT,
+        related_name='kreditor_op_erstellung',
+    )
+    zahlung_buchung = models.ForeignKey(
+        Buchung, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='kreditor_op_zahlung',
+    )
+    betrag_ursprung = models.DecimalField(max_digits=12, decimal_places=2)
+    betrag_offen    = models.DecimalField(max_digits=12, decimal_places=2)
+    faellig_ab      = models.DateField()
+    status          = models.CharField(max_length=20, choices=STATUS_CHOICES, default='offen')
+    erstellt_am     = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name        = 'Kreditor-OP'
+        verbose_name_plural = 'Kreditor-OPs'
+        ordering            = ['-op_nummer']
+
+    def __str__(self):
+        return f"OP-{self.op_nummer} | {self.kreditor} | {self.betrag_offen} € | {self.status}"

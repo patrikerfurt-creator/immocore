@@ -34,7 +34,7 @@ class VerarbeitungslogSerializer(serializers.ModelSerializer):
 class RechnungsMatchRegelSerializer(serializers.ModelSerializer):
     kreditor_name     = serializers.CharField(source='kreditor.name', read_only=True)
     objekt_bezeichnung = serializers.CharField(source='objekt.bezeichnung', read_only=True)
-    konto_label       = serializers.SerializerMethodField()
+    aufwandskonto_label = serializers.SerializerMethodField()
     erstellt_durch_name = serializers.CharField(source='erstellt_durch.get_full_name', read_only=True)
 
     class Meta:
@@ -42,8 +42,8 @@ class RechnungsMatchRegelSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ['id', 'erstellt_am', 'aktualisiert_am']
 
-    def get_konto_label(self, obj):
-        return f"{obj.buchungskonto.kontonummer} — {obj.buchungskonto.kontoname}"
+    def get_aufwandskonto_label(self, obj):
+        return f"{obj.aufwandskonto.kontonummer} — {obj.aufwandskonto.kontoname}"
 
 
 class RechnungsErkennungsLogSerializer(serializers.ModelSerializer):
@@ -56,10 +56,10 @@ class RechnungsErkennungsLogSerializer(serializers.ModelSerializer):
 class RechnungSerializer(serializers.ModelSerializer):
     kreditor_name          = serializers.CharField(source='kreditor.name', read_only=True)
     lieferant_person_name  = serializers.CharField(source='lieferant.name', read_only=True)
+    objekt_bezeichnung     = serializers.CharField(source='objekt.bezeichnung', read_only=True)
     freigaben              = FreigabeSerializer(many=True, read_only=True)
     duplikat_von_dateiname = serializers.CharField(source='duplikat_von.dateiname', read_only=True)
     zugewiesen_an_name     = serializers.CharField(source='zugewiesen_an.get_full_name', read_only=True)
-    buchungskonto_label    = serializers.SerializerMethodField()
     aufwandskonto_id       = serializers.UUIDField(source='aufwandskonto.id', read_only=True)
     aufwandskonto_label    = serializers.SerializerMethodField()
     darf_direkt_freigeben  = serializers.SerializerMethodField()
@@ -68,11 +68,6 @@ class RechnungSerializer(serializers.ModelSerializer):
         model = Rechnung
         fields = '__all__'
         read_only_fields = ['id', 'erstellt_am', 'sha256_hash']
-
-    def get_buchungskonto_label(self, obj):
-        if obj.buchungskonto:
-            return f"{obj.buchungskonto.kontonummer} — {obj.buchungskonto.kontoname}"
-        return None
 
     def get_aufwandskonto_label(self, obj):
         if obj.aufwandskonto:
@@ -96,10 +91,11 @@ class RechnungListSerializer(serializers.ModelSerializer):
     vorgeschlagenes_konto_label = serializers.SerializerMethodField()
     kostenstelle_id = serializers.UUIDField(source='kostenstelle.id', read_only=True)
     kostenstelle_label = serializers.SerializerMethodField()
-    buchungskonto_id = serializers.UUIDField(source='buchungskonto.id', read_only=True)
-    buchungskonto_label = serializers.SerializerMethodField()
+    aufwandskonto_id = serializers.UUIDField(source='aufwandskonto.id', read_only=True)
+    aufwandskonto_label = serializers.SerializerMethodField()
     zugewiesen_an_id = serializers.UUIDField(source='zugewiesen_an.id', read_only=True)
     zugewiesen_an_name = serializers.CharField(source='zugewiesen_an.get_full_name', read_only=True)
+    lock_user = serializers.SerializerMethodField()
 
     class Meta:
         model = Rechnung
@@ -112,9 +108,10 @@ class RechnungListSerializer(serializers.ModelSerializer):
             'kundennummer', 'vorgeschlagenes_konto_id', 'vorgeschlagenes_konto_label',
             'kostenstelle_id', 'kostenstelle_label',
             'erkennungs_stufe', 'erkennungs_konfidenz',
-            'buchungskonto_id', 'buchungskonto_label',
+            'aufwandskonto_id', 'aufwandskonto_label',
             'zugewiesen_an_id', 'zugewiesen_an_name',
             'routing_ziel', 'leistungstext',
+            'lock_user',
         ]
 
     def get_kreditor_name(self, obj):
@@ -136,8 +133,17 @@ class RechnungListSerializer(serializers.ModelSerializer):
             return None
         return f"{k.kontonummer} — {k.kontoname}"
 
-    def get_buchungskonto_label(self, obj):
-        k = obj.buchungskonto
+    def get_aufwandskonto_label(self, obj):
+        k = obj.aufwandskonto
         if not k:
             return None
         return f"{k.kontonummer} — {k.kontoname}"
+
+    def get_lock_user(self, obj):
+        try:
+            lock = obj.bearbeitungslock
+            if lock.ist_aktiv:
+                return lock.user.get_full_name() or lock.user.username
+        except Exception:
+            pass
+        return None

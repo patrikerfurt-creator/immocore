@@ -152,7 +152,7 @@ class RechnungViewSet(viewsets.ModelViewSet):
         qs = Rechnung.objects.select_related(
             'kreditor', 'lieferant', 'duplikat_von', 'objekt',
             'vorgeschlagenes_konto', 'kostenstelle',
-            'buchungskonto', 'zugewiesen_an', 'match_regel',
+            'aufwandskonto', 'zugewiesen_an', 'match_regel',
         )
         p = self.request.query_params
         if objekt_id := p.get('objekt'):
@@ -192,33 +192,40 @@ class RechnungViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Trigger B: Buchungskonto-Korrektur → Lernlogik
-        neues_konto_id = request.data.get('buchungskonto_id')
         lernen = request.data.get('lernen', True)
-        if neues_konto_id and rechnung.buchungskonto_id and str(rechnung.buchungskonto_id) != neues_konto_id:
-            from .recognition import lege_match_regel_an
-            try:
-                neues_konto = Konto.objects.get(pk=neues_konto_id, objekt=rechnung.objekt)
-                rechnung.buchungskonto = neues_konto
-                rechnung.kostenstelle  = neues_konto
-                lege_match_regel_an(rechnung, request.user, 'freigabe_korrektur', lernen=lernen)
-            except Konto.DoesNotExist:
-                pass
+        neues_konto_id = request.data.get('aufwandskonto_id')
 
-        # OP-Service: aufwandskonto validieren und speichern
-        aufwandskonto_id = request.data.get('aufwandskonto_id')
-        if aufwandskonto_id:
-            try:
-                aufwandskonto = Konto.objects.get(pk=aufwandskonto_id)
+        if neues_konto_id:
+            # Trigger B: Aufwandskonto-Korrektur gegenüber gespeichertem Wert → Lernlogik
+            if str(rechnung.aufwandskonto_id or '') != neues_konto_id:
+                from .recognition import lege_match_regel_an
                 try:
-                    op_freigeben(rechnung, aufwandskonto, request.user)
-                except DjangoValidationError as exc:
-                    return Response({'error': exc.message}, status=status.HTTP_400_BAD_REQUEST)
-            except Konto.DoesNotExist:
-                return Response({'error': 'Aufwandskonto nicht gefunden'}, status=status.HTTP_400_BAD_REQUEST)
+                    neues_konto = Konto.objects.get(
+                        pk=neues_konto_id, objekt=rechnung.objekt,
+                    )
+                    if not (50000 <= int(neues_konto.kontonummer) <= 55999) or neues_konto.direktes_buchen:
+                        return Response(
+                            {'error': 'Aufwandskonto muss im Bereich 50000–55999 liegen und direktes_buchen=False haben'},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                    rechnung.aufwandskonto = neues_konto
+                    lege_match_regel_an(rechnung, request.user, 'freigabe_korrektur', lernen=lernen)
+                except Konto.DoesNotExist:
+                    return Response({'error': 'Aufwandskonto nicht gefunden oder gehört nicht zu diesem Objekt'}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                aufwandskonto = rechnung.aufwandskonto
+                op_freigeben(rechnung, aufwandskonto, request.user)
+            except DjangoValidationError as exc:
+                return Response({'error': exc.message}, status=status.HTTP_400_BAD_REQUEST)
+        elif rechnung.aufwandskonto_id:
+            # Aufwandskonto bereits gesetzt — direkt OP-Buchung durchführen
+            try:
+                op_freigeben(rechnung, rechnung.aufwandskonto, request.user)
+            except DjangoValidationError as exc:
+                return Response({'error': exc.message}, status=status.HTTP_400_BAD_REQUEST)
         else:
             rechnung.status = 'freigegeben'
-            rechnung.save(update_fields=['status', 'buchungskonto', 'kostenstelle'])
+            rechnung.save(update_fields=['status'])
 
         Freigabe.objects.create(
             rechnung=rechnung,
@@ -331,11 +338,53 @@ class RechnungViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='bezahlen')
     def bezahlen(self, request, pk=None):
-        """Zahlung buchen (Kassenprinzip): Soll Aufwandskonto / Haben Bankkonto."""
+        """
+        Phase 2 – Zahlungslauf.
+        Buchung 1: Soll Aufwandskonto / Haben 15900
+        Buchung 2: Soll Kreditorenkonto / Haben 13600  → schließt KreditorOP
+        """
         from datetime import date, datetime
-        from decimal import Decimal
-        from apps.konten.models import Konto
         from .services.rechnung_zahlung_service import rechnung_bezahlen as op_bezahlen
+        from django.core.exceptions import ValidationError as DjangoValidationError
+
+        rechnung = self.get_object()
+        buchungsdatum_str = request.data.get('buchungsdatum')
+
+        try:
+            buchungsdatum = datetime.strptime(buchungsdatum_str, '%Y-%m-%d').date() if buchungsdatum_str else date.today()
+        except ValueError:
+            buchungsdatum = date.today()
+
+        try:
+            buchung_aufwand, buchung_kreditor = op_bezahlen(
+                rechnung=rechnung,
+                buchungsdatum=buchungsdatum,
+                gebucht_von=request.user,
+            )
+        except DjangoValidationError as exc:
+            return Response({'error': exc.message}, status=status.HTTP_400_BAD_REQUEST)
+
+        Verarbeitungslog.objects.create(
+            rechnung=rechnung,
+            aktion='Zahlungslauf',
+            status='bezahlt',
+            details=(
+                f'Aufwand: {buchung_aufwand.soll_konto.kontonummer} / 15900 | '
+                f'Kreditor: {buchung_kreditor.soll_konto.kontonummer} / 13600 | '
+                f'Betrag: {rechnung.betrag_brutto} EUR'
+            ),
+        )
+        return Response(RechnungSerializer(rechnung, context={'request': request}).data)
+
+    @action(detail=True, methods=['post'], url_path='bankabgang')
+    def bankabgang(self, request, pk=None):
+        """
+        Phase 3 – Bankabgang.
+        Buchung: Soll 13600 / Haben Bankkonto
+        """
+        from datetime import date, datetime
+        from apps.konten.models import Konto
+        from .services.rechnung_zahlung_service import bank_abgang_buchen
         from django.core.exceptions import ValidationError as DjangoValidationError
 
         rechnung = self.get_object()
@@ -346,7 +395,7 @@ class RechnungViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Bankkonto fehlt'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            haben_konto = Konto.objects.get(id=haben_konto_id, objekt=rechnung.objekt)
+            bankkonto = Konto.objects.get(id=haben_konto_id, objekt=rechnung.objekt)
         except Konto.DoesNotExist:
             return Response({'error': 'Bankkonto nicht gefunden'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -355,29 +404,16 @@ class RechnungViewSet(viewsets.ModelViewSet):
         except ValueError:
             buchungsdatum = date.today()
 
-        betrag = Decimal(str(request.data.get('betrag', rechnung.betrag_brutto or 0)))
-
         try:
-            buchung = op_bezahlen(
-                rechnung=rechnung,
-                bankkonto=haben_konto,
-                betrag=betrag,
-                buchungsdatum=buchungsdatum,
-                gebucht_von=request.user,
-            )
+            buchung = bank_abgang_buchen(rechnung, bankkonto, buchungsdatum, request.user)
         except DjangoValidationError as exc:
             return Response({'error': exc.message}, status=status.HTTP_400_BAD_REQUEST)
 
-        konto_soll = rechnung.aufwandskonto or rechnung.kostenstelle
         Verarbeitungslog.objects.create(
             rechnung=rechnung,
-            aktion='Bezahlt',
+            aktion='Bankabgang',
             status='bezahlt',
-            details=(
-                f'Soll: {konto_soll.kontonummer} {konto_soll.kontoname} | '
-                f'Haben: {haben_konto.kontonummer} {haben_konto.kontoname} | '
-                f'Betrag: {betrag} EUR'
-            ) if konto_soll else f'Haben: {haben_konto.kontonummer} | Betrag: {betrag} EUR',
+            details=f'13600 / {bankkonto.kontonummer} | {rechnung.betrag_brutto} EUR',
         )
         return Response(RechnungSerializer(rechnung, context={'request': request}).data)
 
@@ -478,7 +514,7 @@ class RechnungViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='identifizieren')
     def identifizieren(self, request, pk=None):
         """
-        Body: { kreditor_id, objekt_id, buchungskonto_id,
+        Body: { kreditor_id, objekt_id, aufwandskonto_id,
                 modus: 'speichern'|'freigeben', lernen: true }
         Erzeugt Match-Regel und routet neu.
         """
@@ -497,9 +533,16 @@ class RechnungViewSet(viewsets.ModelViewSet):
             )
 
         data        = request.data
+
+        if data.get('buchungskonto_id'):
+            return Response(
+                {'error': "Unbekanntes Feld 'buchungskonto_id' — bitte 'aufwandskonto_id' verwenden"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         kreditor_id = data.get('kreditor_id')
         objekt_id   = data.get('objekt_id')
-        konto_id    = data.get('buchungskonto_id')
+        konto_id    = data.get('aufwandskonto_id')
         modus       = data.get('modus', 'speichern')
         lernen      = data.get('lernen', True)
 
@@ -518,31 +561,36 @@ class RechnungViewSet(viewsets.ModelViewSet):
         except Objekt.DoesNotExist:
             return Response({'error': 'Objekt nicht gefunden'}, status=status.HTTP_400_BAD_REQUEST)
 
+        aufwandskonto = None
         if konto_id:
             try:
-                buchungskonto = Konto.objects.get(pk=konto_id, objekt=objekt)
+                aufwandskonto = Konto.objects.get(pk=konto_id, objekt=objekt)
             except Konto.DoesNotExist:
                 return Response(
-                    {'error': 'Buchungskonto nicht gefunden oder gehört nicht zu diesem Objekt'},
+                    {'error': 'Aufwandskonto nicht gefunden oder gehört nicht zu diesem Objekt'},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-        else:
-            # Auto-detect: erstes direktes Buchungskonto des Objekts
-            buchungskonto = Konto.objects.filter(
-                objekt=objekt, direktes_buchen=True, aktiv=True,
-            ).order_by('kontonummer').first()
+            try:
+                nr = int(aufwandskonto.kontonummer)
+            except (ValueError, TypeError):
+                nr = 0
+            if not (50000 <= nr <= 55999) or aufwandskonto.direktes_buchen:
+                return Response(
+                    {'error': 'Aufwandskonto muss im Bereich 50000–55999 liegen und direktes_buchen=False haben'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         # Felder setzen
         rechnung.kreditor      = kreditor
         rechnung.objekt        = objekt
-        rechnung.buchungskonto = buchungskonto
+        rechnung.aufwandskonto = aufwandskonto if aufwandskonto else rechnung.aufwandskonto
         rechnung.leistungstext_hash = leistungstext_hash(
             rechnung.leistungstext or rechnung.leistungsbeschreibung or ''
         )
         rechnung.status        = 'erkannt'
 
         # Lernlogik (Trigger A oder C)
-        erstellt_aus = 'manuell' if rechnung.erkennungs_stufe == 3 else 'pruefung'
+        erstellt_aus = 'manuell' if rechnung.erkennungs_stufe == '3' else 'pruefung'
         regel = lege_match_regel_an(rechnung, request.user, erstellt_aus, lernen=lernen)
         if regel:
             rechnung.match_regel = regel
@@ -554,20 +602,6 @@ class RechnungViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_403_FORBIDDEN,
                 )
             rechnung.status = 'freigegeben'
-
-            # OP-Buchung: aufwandskonto optional speichern
-            aufwandskonto_id = data.get('aufwandskonto_id')
-            if aufwandskonto_id:
-                from apps.konten.models import Konto as _Konto
-                from .services.rechnung_op_service import _validiere_aufwandskonto
-                from django.core.exceptions import ValidationError as _VE
-                try:
-                    awk = _Konto.objects.get(pk=aufwandskonto_id)
-                    _validiere_aufwandskonto(awk, rechnung.objekt_id)
-                    rechnung.aufwandskonto = awk
-                except (_Konto.DoesNotExist, _VE):
-                    pass  # Validation errors are non-fatal here; can be corrected later
-
             Freigabe.objects.create(
                 rechnung=rechnung,
                 bearbeiter=request.user,
@@ -576,7 +610,6 @@ class RechnungViewSet(viewsets.ModelViewSet):
                 begruendung='Identifizieren + Freigeben durch Objektbetreuer',
             )
         else:
-            # Neu routen → Limit-Workflow
             route_rechnung(rechnung)
 
         rechnung.save()
@@ -584,7 +617,7 @@ class RechnungViewSet(viewsets.ModelViewSet):
             rechnung=rechnung, aktion='Identifiziert', status=rechnung.status,
             details=(
                 f'Modus: {modus} | Kreditor: {kreditor.name} | '
-                f'Konto: {buchungskonto.kontonummer} | Lernen: {lernen}'
+                f'Aufwandskonto: {aufwandskonto.kontonummer if aufwandskonto else "—"} | Lernen: {lernen}'
             ),
         )
         return Response(RechnungSerializer(rechnung, context={'request': request}).data)
@@ -648,18 +681,28 @@ class RechnungViewSet(viewsets.ModelViewSet):
             return Response({'error': 'kreditor_id oder kreditor_neu erforderlich'}, status=status.HTTP_400_BAD_REQUEST)
 
         objekt_id = data.get('objekt_id')
-        konto_id  = data.get('buchungskonto_id')
+        konto_id  = data.get('aufwandskonto_id')
         if not objekt_id or not konto_id:
-            return Response({'error': 'objekt_id und buchungskonto_id erforderlich'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'objekt_id und aufwandskonto_id erforderlich'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             objekt = Objekt.objects.get(pk=objekt_id)
         except Objekt.DoesNotExist:
             return Response({'error': 'Objekt nicht gefunden'}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            buchungskonto = Konto.objects.get(pk=konto_id, objekt=objekt)
+            aufwandskonto = Konto.objects.get(pk=konto_id, objekt=objekt)
         except Konto.DoesNotExist:
-            return Response({'error': 'Buchungskonto gehört nicht zu diesem Objekt'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'Aufwandskonto gehört nicht zu diesem Objekt'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            nr = int(aufwandskonto.kontonummer)
+        except (ValueError, TypeError):
+            nr = 0
+        if not (50000 <= nr <= 55999) or aufwandskonto.direktes_buchen:
+            return Response(
+                {'error': 'Aufwandskonto muss im Bereich 50000–55999 liegen und direktes_buchen=False haben'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # OCR-Felder optional überschreiben
         for feld in ('leistungstext', 'rechnungsnummer', 'betrag_brutto', 'rechnungsdatum'):
@@ -668,7 +711,7 @@ class RechnungViewSet(viewsets.ModelViewSet):
 
         rechnung.kreditor      = kreditor
         rechnung.objekt        = objekt
-        rechnung.buchungskonto = buchungskonto
+        rechnung.aufwandskonto = aufwandskonto
         rechnung.status        = 'erkannt'
         rechnung.erfasst_von   = request.user
         rechnung.leistungstext_hash = leistungstext_hash(
@@ -758,9 +801,26 @@ class RechnungViewSet(viewsets.ModelViewSet):
         }
 
         xml_bytes = exportiere_sepa(zahlungen, auftraggeber)
+
+        # Phase-2-Buchungen für alle im XML enthaltenen Rechnungen
+        from .services.rechnung_zahlung_service import rechnung_bezahlen as op_bezahlen
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        buchungs_fehler = []
+        for r in rechnungen:
+            if not (r.kreditor and r.kreditor.iban and r.betrag_brutto):
+                continue
+            if r.status != 'gebucht':
+                continue
+            try:
+                op_bezahlen(rechnung=r, buchungsdatum=faelligkeitsdatum, gebucht_von=request.user)
+            except DjangoValidationError as exc:
+                buchungs_fehler.append(f"{r.rechnungsnummer or str(r.id)[:8]}: {exc.message}")
+
         dateiname = f"zahlungen_{faelligkeitsdatum.strftime('%Y%m%d')}.xml"
         response = HttpResponse(xml_bytes, content_type='application/xml')
         response['Content-Disposition'] = f'attachment; filename="{dateiname}"'
+        if buchungs_fehler:
+            response['X-Buchungs-Fehler'] = '; '.join(buchungs_fehler)
         return response
 
 
@@ -806,7 +866,7 @@ class RechnungsMatchRegelViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = RechnungsMatchRegel.objects.select_related(
-            'kreditor', 'objekt', 'buchungskonto', 'erstellt_durch'
+            'kreditor', 'objekt', 'aufwandskonto', 'erstellt_durch'
         )
         p = self.request.query_params
         if kreditor_id := p.get('kreditor'):

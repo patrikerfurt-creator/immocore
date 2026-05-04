@@ -17,6 +17,8 @@ from typing import Optional
 from django.db.models import Q
 from django.utils import timezone
 
+from .models import RechnungsErkennungsLog, RechnungsMatchRegel
+
 # ----- Schwellwerte --------------------------------------------------------
 
 SCHWELLE_KREDITOR      = 0.90
@@ -206,8 +208,6 @@ def fuehre_erkennung_aus(rechnung) -> object:
     Führt die 3-stufige Erkennungs-Pipeline durch und routet die Rechnung.
     Gibt die (gespeicherte) Rechnung zurück.
     """
-    from .models import RechnungsErkennungsLog, RechnungsMatchRegel
-
     log_dimensionen: dict = {}
 
     # --- Kreditor ---
@@ -250,7 +250,7 @@ def fuehre_erkennung_aus(rechnung) -> object:
         ).first()
 
         if regel_treffer:
-            konto_match = MatchResult.treffer(regel_treffer.buchungskonto, 1.0, 'match_regel')
+            konto_match = MatchResult.treffer(regel_treffer.aufwandskonto, 1.0, 'match_regel')
         else:
             # Fallback: KreditorRegel-Historie (max 0.70 → kein eindeutiger Treffer)
             konto_match = match_konto_historie(
@@ -258,7 +258,7 @@ def fuehre_erkennung_aus(rechnung) -> object:
                 objekt_match.kandidat,
             )
 
-    log_dimensionen['konto'] = {
+    log_dimensionen['aufwandskonto'] = {
         'match_typ':   konto_match.match_typ,
         'kandidat_id': str(konto_match.kandidat.id) if konto_match.kandidat else None,
         'konfidenz':   konto_match.konfidenz,
@@ -266,18 +266,13 @@ def fuehre_erkennung_aus(rechnung) -> object:
 
     konto_eindeutig = konto_match.konfidenz >= SCHWELLE_KONTO
 
-    # --- Stufenableitung v1.2 (Sub-Stufen 2a / 2b) ---
+    # --- Stufenableitung v1.3 ---
     if kreditor_eindeutig and objekt_eindeutig and konto_eindeutig:
         rechnung.status           = 'erkannt'
         rechnung.erkennungs_stufe = '1'
     elif objekt_eindeutig:
-        # Objekt erkannt (ggf. auch Kreditor) → Objektbetreuer
         rechnung.status           = 'pruefung_match'
-        rechnung.erkennungs_stufe = '2a'
-    elif kreditor_eindeutig:
-        # Nur Kreditor erkannt, Objekt fehlt → Frontoffice
-        rechnung.status           = 'pruefung_match'
-        rechnung.erkennungs_stufe = '2b'
+        rechnung.erkennungs_stufe = '2'
     else:
         rechnung.status           = 'nicht_erkannt'
         rechnung.erkennungs_stufe = '3'
@@ -285,12 +280,12 @@ def fuehre_erkennung_aus(rechnung) -> object:
     # --- Felder setzen ---
     rechnung.kreditor      = kreditor_match.kandidat if kreditor_eindeutig else rechnung.kreditor
     rechnung.objekt        = objekt_match.kandidat   if objekt_eindeutig   else rechnung.objekt
-    rechnung.buchungskonto = konto_match.kandidat    if konto_eindeutig    else None
+    rechnung.aufwandskonto = konto_match.kandidat    if konto_eindeutig    else None
     rechnung.match_regel   = regel_treffer
     rechnung.erkennungs_konfidenz = {
-        'kreditor': kreditor_match.konfidenz,
-        'objekt':   objekt_match.konfidenz,
-        'konto':    konto_match.konfidenz,
+        'kreditor':     kreditor_match.konfidenz,
+        'objekt':       objekt_match.konfidenz,
+        'aufwandskonto': konto_match.konfidenz,
     }
 
     # --- Routing ---
@@ -326,22 +321,22 @@ def route_rechnung(rechnung) -> bool:
         rechnung.routing_ziel = 'limit_workflow'
         return _route_limit_workflow(rechnung)
 
-    # Stufe 2a → Objektbetreuer; 2b + 3 → Frontoffice
-    if rechnung.erkennungs_stufe == '2a':
+    # Stufe 2 (Objekt erkannt) → Objektbetreuer; Stufe 3 → Frontoffice
+    if rechnung.objekt_id is not None:
         rechnung.routing_ziel  = 'objektbetreuer'
         rechnung.zugewiesen_an = _ermittle_betreuer(rechnung)
     else:
         rechnung.routing_ziel  = 'frontoffice'
-        rechnung.zugewiesen_an = None   # geteilte Queue
+        rechnung.zugewiesen_an = None
     return False
 
 
 def _konfidenz_min(rechnung) -> float:
     k = rechnung.erkennungs_konfidenz or {}
     return min(
-        k.get('kreditor', 0.0),
-        k.get('objekt',   0.0),
-        k.get('konto',    0.0),
+        k.get('kreditor',     0.0),
+        k.get('objekt',       0.0),
+        k.get('aufwandskonto', 0.0),
     )
 
 
@@ -501,11 +496,10 @@ def lege_match_regel_an(
     Erzeugt oder aktualisiert eine RechnungsMatchRegel.
     Gibt None zurück wenn lernen=False oder Pflichtdaten fehlen.
     """
-    from .models import RechnungsMatchRegel
 
     if not lernen:
         return None
-    if not (rechnung.kreditor and rechnung.objekt and rechnung.buchungskonto):
+    if not (rechnung.kreditor and rechnung.objekt and rechnung.aufwandskonto):
         return None
 
     text_hash = rechnung.leistungstext_hash or leistungstext_hash(
@@ -524,7 +518,7 @@ def lege_match_regel_an(
     ).first()
 
     if existing:
-        if existing.buchungskonto_id == rechnung.buchungskonto_id:
+        if existing.aufwandskonto_id == rechnung.aufwandskonto_id:
             # Gleiches Konto → nur Trefferzahl hochzählen
             existing.trefferzahl += 1
             existing.letzte_anwendung = timezone.now()
@@ -540,7 +534,7 @@ def lege_match_regel_an(
         objekt=rechnung.objekt,
         leistungstext_hash=text_hash,
         leistungstext_sample=rechnung.leistungstext or rechnung.leistungsbeschreibung or '',
-        buchungskonto=rechnung.buchungskonto,
+        aufwandskonto=rechnung.aufwandskonto,
         status='aktiv',
         trefferzahl=1,
         erstellt_durch=erstellt_durch,

@@ -19,8 +19,18 @@ function RechnungenCard({ objektbetreuer, frontoffice, freigaben, istFrontoffice
   objektbetreuer: number; frontoffice: number; freigaben: number; istFrontoffice: boolean
 }) {
   const total = objektbetreuer + freigaben + (istFrontoffice ? frontoffice : 0)
+  const parts: string[] = []
+  if (objektbetreuer > 0) parts.push(`${objektbetreuer} Prüffall Objekt`)
+  if (istFrontoffice && frontoffice > 0) parts.push(`${frontoffice} Frontoffice-Queue`)
+  if (freigaben > 0) parts.push(`${freigaben} Freigabe`)
+  const tooltip = parts.length > 0 ? parts.join(', ') + '.' : 'Keine offenen Rechnungen.'
+
   return (
-    <Link to="/rechnungen" className="rounded-lg p-5 bg-orange-500 text-white hover:opacity-90 transition-opacity">
+    <Link
+      to="/rechnungen"
+      title={tooltip}
+      className="rounded-lg p-5 bg-orange-500 text-white hover:opacity-90 transition-opacity"
+    >
       <p className="text-3xl font-bold">{total}</p>
       <p className="text-sm mt-1 opacity-90">Rechnungen in Prüfung</p>
       <div className="flex gap-2 mt-2 flex-wrap">
@@ -49,7 +59,18 @@ export function Dashboard() {
 
   const { data: objekte } = useQuery({ queryKey: ['objekte'], queryFn: objekteApi.list })
   const { data: tickets } = useQuery({ queryKey: ['tickets'], queryFn: () => ticketsApi.list() })
-  const { data: rechnungen } = useQuery({ queryKey: ['rechnungen'], queryFn: () => rechnungenApi.list() })
+  const { data: rechnungen } = useQuery({
+    queryKey: ['rechnungen-offen-widget'],
+    queryFn: () => rechnungenApi.list({ zugewiesen_an: 'me' }),
+  })
+  const { data: meineObjektbetreuer } = useQuery({
+    queryKey: ['rechnungen-objektbetreuer-me'],
+    queryFn: () => rechnungenApi.list({ routing_ziel: 'objektbetreuer', zugewiesen_an: 'me' }),
+  })
+  const { data: meineFreigaben } = useQuery({
+    queryKey: ['rechnungen-freigaben-me'],
+    queryFn: () => rechnungenApi.list({ status: 'in_pruefung', zugewiesen_an: 'me' }),
+  })
   const { data: frontofficeQueue } = useQuery({
     queryKey: ['frontoffice-inbox'],
     queryFn: () => rechnungenApi.list({ routing_ziel: 'frontoffice', zugewiesen_an: 'null' }),
@@ -58,9 +79,8 @@ export function Dashboard() {
   const { data: prozesse } = useQuery({ queryKey: ['prozesse'], queryFn: () => prozesseApi.list({ status: 'aktiv' }) })
 
   const offeneTickets  = tickets?.filter(t => t.status === 'offen' || t.status === 'in_bearbeitung').length ?? 0
-  // Stufe 2a: zugewiesen an Objektbetreuer; eigene Rechnungen + Freigaben
-  const objektbetreuer = rechnungen?.filter(r => r.routing_ziel === 'objektbetreuer').length ?? 0
-  const freigaben      = rechnungen?.filter(r => r.status === 'in_pruefung').length ?? 0
+  const objektbetreuer = meineObjektbetreuer?.length ?? 0
+  const freigaben      = meineFreigaben?.length ?? 0
   const frontoffice    = frontofficeQueue?.length ?? 0
   const aktiveProzesse = prozesse?.length ?? 0
 
