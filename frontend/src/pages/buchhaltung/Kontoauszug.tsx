@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { buchhaltungApi } from '../../api/buchhaltung'
+import { wirtschaftsjahreApi } from '../../api/wirtschaftsjahre'
 import { useObjektStore } from '../../stores/objekt'
-import type { BebuchtesKonto } from '../../types'
+import type { BebuchtesKonto, Wirtschaftsjahr } from '../../types'
 
 const EUR = (v: number | null | undefined) =>
   (v ?? 0).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })
@@ -11,17 +12,65 @@ const DATUM = (s: string) => new Date(s).toLocaleDateString('de-DE')
 export function Kontoauszug() {
   const objektId = useObjektStore(s => s.selectedId)
   const [selected, setSelected] = useState<BebuchtesKonto | null>(null)
+  const [selectedWjId, setSelectedWjId] = useState<string | null>(null)
+
+  const { data: wirtschaftsjahre = [], isLoading: wjLaden } = useQuery({
+    queryKey: ['wirtschaftsjahre', objektId],
+    queryFn: () => wirtschaftsjahreApi.list({ objekt: objektId! }),
+    enabled: !!objektId,
+    select: (wjs: Wirtschaftsjahr[]) => [...wjs].sort((a, b) => b.jahr - a.jahr),
+  })
+
+  const aktivesWj: Wirtschaftsjahr | undefined = (() => {
+    if (!wirtschaftsjahre.length) return undefined
+    if (selectedWjId) return wirtschaftsjahre.find(w => w.id === selectedWjId)
+    return wirtschaftsjahre.find(w => w.status === 'offen') ?? wirtschaftsjahre[0]
+  })()
 
   if (!objektId) {
     return <div className="p-6 text-gray-500">Bitte zuerst ein Objekt auswählen.</div>
   }
 
+  const wjSelector = (
+    <div className="flex items-center gap-2">
+      {wjLaden ? (
+        <span className="text-sm text-gray-400">Lade WJ…</span>
+      ) : wirtschaftsjahre.length > 0 ? (
+        <>
+          <span className="text-sm text-gray-500 font-medium">Wirtschaftsjahr:</span>
+          <select
+            value={aktivesWj?.id ?? ''}
+            onChange={e => { setSelectedWjId(e.target.value || null); setSelected(null) }}
+            className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            {wirtschaftsjahre.map(wj => (
+              <option key={wj.id} value={wj.id}>
+                {wj.jahr}{wj.status === 'abgeschlossen' ? ' (abgeschlossen)' : ''}
+              </option>
+            ))}
+          </select>
+        </>
+      ) : null}
+    </div>
+  )
+
   return (
     <div>
       {selected ? (
-        <KontoDetail konto={selected} onBack={() => setSelected(null)} />
+        <KontoDetail
+          konto={selected}
+          wjId={aktivesWj?.id}
+          onBack={() => setSelected(null)}
+          wjSelector={wjSelector}
+        />
       ) : (
-        <KontenListe objektId={objektId} onSelect={setSelected} />
+        <KontenListe
+          objektId={objektId}
+          wjId={aktivesWj?.id}
+          wjLaden={wjLaden}
+          onSelect={setSelected}
+          wjSelector={wjSelector}
+        />
       )}
     </div>
   )
@@ -33,14 +82,21 @@ export function Kontoauszug() {
 
 function KontenListe({
   objektId,
+  wjId,
+  wjLaden,
   onSelect,
+  wjSelector,
 }: {
   objektId: string
+  wjId: string | undefined
+  wjLaden: boolean
   onSelect: (k: BebuchtesKonto) => void
+  wjSelector: React.ReactNode
 }) {
   const { data: konten, isLoading } = useQuery({
-    queryKey: ['bebuchte-konten', objektId],
-    queryFn: () => buchhaltungApi.bebuchteKonten(objektId),
+    queryKey: ['bebuchte-konten', objektId, wjId ?? 'alle'],
+    queryFn: () => buchhaltungApi.bebuchteKonten(objektId, wjId ? { wirtschaftsjahr: wjId } : undefined),
+    enabled: !wjLaden,
   })
 
   const gruppen = gruppiereNachBereich(konten ?? [])
@@ -49,7 +105,10 @@ function KontenListe({
     <div>
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Kontoauszug / Sachkonten</h1>
-        <div className="text-sm text-gray-400">{(konten ?? []).length} bebuchte Konten</div>
+        <div className="flex items-center gap-4">
+          {wjSelector}
+          <div className="text-sm text-gray-400">{(konten ?? []).length} bebuchte Konten</div>
+        </div>
       </div>
 
       {isLoading ? (
@@ -122,24 +181,31 @@ function KontenListe({
 
 function KontoDetail({
   konto,
+  wjId,
   onBack,
+  wjSelector,
 }: {
   konto: BebuchtesKonto
+  wjId: string | undefined
   onBack: () => void
+  wjSelector: React.ReactNode
 }) {
   const { data, isLoading } = useQuery({
-    queryKey: ['sachkonto-auszug', konto.id],
-    queryFn: () => buchhaltungApi.sachkontoAuszug(konto.id),
+    queryKey: ['sachkonto-auszug', konto.id, wjId ?? 'alle'],
+    queryFn: () => buchhaltungApi.sachkontoAuszug(konto.id, wjId ? { wirtschaftsjahr: wjId } : undefined),
   })
 
   return (
     <div>
-      <button
-        onClick={onBack}
-        className="flex items-center gap-2 text-sm text-blue-600 mb-4 hover:underline"
-      >
-        ← Zurück zur Kontenübersicht
-      </button>
+      <div className="flex items-center justify-between mb-4">
+        <button
+          onClick={onBack}
+          className="flex items-center gap-2 text-sm text-blue-600 hover:underline"
+        >
+          ← Zurück zur Kontenübersicht
+        </button>
+        {wjSelector}
+      </div>
 
       {/* Konto-Header */}
       <div className="bg-white rounded-lg border p-5 mb-4">

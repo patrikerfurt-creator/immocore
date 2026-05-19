@@ -57,17 +57,19 @@ def rechnung_bezahlen(rechnung, buchungsdatum: date, gebucht_von):
     if not rechnung.aufwandskonto_id:
         raise ValidationError("Kein Aufwandskonto gesetzt – bitte zuerst freigeben.")
 
-    konto_15900 = Konto.objects.filter(
-        objekt_id=rechnung.objekt_id, kontonummer=KONTO_SCHWEBENDE_ER
+    konto_15900 = Konto.objects.select_related('wirtschaftsjahr').filter(
+        wirtschaftsjahr__objekt_id=rechnung.objekt_id, kontonummer=KONTO_SCHWEBENDE_ER
     ).first()
     if not konto_15900:
         raise ValidationError(f"Konto {KONTO_SCHWEBENDE_ER} nicht im Objekt angelegt.")
 
     konto_13600 = Konto.objects.filter(
-        objekt_id=rechnung.objekt_id, kontonummer=KONTO_ZAHLUNGSAUSGANG
+        wirtschaftsjahr__objekt_id=rechnung.objekt_id, kontonummer=KONTO_ZAHLUNGSAUSGANG
     ).first()
     if not konto_13600:
         raise ValidationError(f"Konto {KONTO_ZAHLUNGSAUSGANG} (Zahlungsausgang) nicht im Objekt angelegt.")
+
+    wj = konto_15900.wirtschaftsjahr
 
     kreditor_konto = rechnung.op_buchung.haben_konto
     if not kreditor_konto:
@@ -91,7 +93,8 @@ def rechnung_bezahlen(rechnung, buchungsdatum: date, gebucht_von):
         buchungstext=text,
         belegnr=belegnr,
         beleg_referenz=ref,
-        wirtschaftsjahr=buchungsdatum.year,
+        wirtschaftsjahr=wj,
+        wirtschaftsjahr_nr=wj.jahr if wj else buchungsdatum.year,
         status="festgeschrieben",
         erstellt_von=gebucht_von,
     )
@@ -106,7 +109,8 @@ def rechnung_bezahlen(rechnung, buchungsdatum: date, gebucht_von):
         buchungstext=text,
         belegnr=belegnr,
         beleg_referenz=ref,
-        wirtschaftsjahr=buchungsdatum.year,
+        wirtschaftsjahr=wj,
+        wirtschaftsjahr_nr=wj.jahr if wj else buchungsdatum.year,
         status="festgeschrieben",
         erstellt_von=gebucht_von,
     )
@@ -141,12 +145,13 @@ def bank_abgang_buchen(rechnung, bankkonto: Konto, buchungsdatum: date, gebucht_
             f"Bank-Abgang nur für bezahlte Rechnungen möglich (Status: '{rechnung.status}')."
         )
 
-    konto_13600 = Konto.objects.filter(
-        objekt_id=rechnung.objekt_id, kontonummer=KONTO_ZAHLUNGSAUSGANG
+    konto_13600 = Konto.objects.select_related('wirtschaftsjahr').filter(
+        wirtschaftsjahr__objekt_id=rechnung.objekt_id, kontonummer=KONTO_ZAHLUNGSAUSGANG
     ).first()
     if not konto_13600:
         raise ValidationError(f"Konto {KONTO_ZAHLUNGSAUSGANG} nicht im Objekt angelegt.")
 
+    wj = konto_13600.wirtschaftsjahr
     text = (
         f"Bankabgang {rechnung.rechnungsnummer or rechnung.dateiname} / "
         f"{rechnung.kreditor.name if rechnung.kreditor else 'Lieferant'}"
@@ -161,7 +166,8 @@ def bank_abgang_buchen(rechnung, bankkonto: Konto, buchungsdatum: date, gebucht_
         buchungstext=text,
         belegnr=_naechste_belegnr(buchungsdatum),
         beleg_referenz=rechnung.rechnungsnummer or str(rechnung.id),
-        wirtschaftsjahr=buchungsdatum.year,
+        wirtschaftsjahr=wj,
+        wirtschaftsjahr_nr=wj.jahr if wj else buchungsdatum.year,
         status="festgeschrieben",
         erstellt_von=gebucht_von,
     )

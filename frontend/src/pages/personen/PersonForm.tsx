@@ -20,6 +20,39 @@ interface Props {
 
 const PAAR_ANREDEN = new Set(['Eheleute', 'Herren', 'Damen', 'Herr und Frau'])
 
+const PAAR_EINZEL: Record<string, [string, string]> = {
+  'Eheleute':      ['Frau',  'Herr'],
+  'Herren':        ['Herr',  'Herr'],
+  'Damen':         ['Frau',  'Frau'],
+  'Herr und Frau': ['Frau',  'Herr'],
+}
+
+function briefanredeZeile(einzelAnrede: string, name: string, gross: boolean): string {
+  const prefix = gross ? 'Sehr' : 'sehr'
+  const endung = einzelAnrede === 'Herr' ? 'er' : 'e'
+  return `${prefix} geehrt${endung} ${einzelAnrede} ${name},`
+}
+
+function autoBriefanreden(
+  anrede: string,
+  nachname: string,
+  nachname2: string,
+  istFirma: boolean,
+): [string, string] {
+  if (istFirma || anrede === 'Firma') return ['Sehr geehrte Damen und Herren,', '']
+
+  const paar = PAAR_EINZEL[anrede]
+  if (paar) {
+    const [a1, a2] = paar
+    const n1 = nachname.trim()
+    const n2 = nachname2.trim() || nachname.trim()
+    return [briefanredeZeile(a1, n1, true), briefanredeZeile(a2, n2, false)]
+  }
+  if (anrede === 'Herr') return [briefanredeZeile('Herr', nachname.trim(), true), '']
+  if (anrede === 'Frau') return [briefanredeZeile('Frau', nachname.trim(), true), '']
+  return ['', '']
+}
+
 interface FormState {
   person_typ: string
   anrede: string
@@ -35,6 +68,8 @@ interface FormState {
   telefon: string
   adresse: string
   ibans: string[]
+  briefanrede: string
+  briefanrede2: string
 }
 
 function toFormState(p?: Person): FormState {
@@ -53,17 +88,37 @@ function toFormState(p?: Person): FormState {
     telefon: p?.telefon ?? '',
     adresse: (p as unknown as Record<string, string>)?.adresse ?? '',
     ibans: p?.ibans ?? [''],
+    briefanrede:  (p as unknown as Record<string, string>)?.briefanrede  ?? '',
+    briefanrede2: (p as unknown as Record<string, string>)?.briefanrede2 ?? '',
   }
 }
 
 export function PersonForm({ person }: Props) {
   const navigate = useNavigate()
   const [form, setForm] = useState<FormState>(() => toFormState(person))
+  const [briefanredeManual, setBriefanredeManual] = useState(
+    !!(person && (person as unknown as Record<string, string>).briefanrede)
+  )
   const [saving, setSaving] = useState(false)
   const [errors, setErrors] = useState<string[]>([])
 
+  const AUTO_FELDER = new Set(['anrede', 'nachname', 'nachname2', 'firmenname', 'ist_firma'])
+
   const set = <K extends keyof FormState>(field: K, value: FormState[K]) =>
-    setForm(prev => ({ ...prev, [field]: value }))
+    setForm(prev => {
+      const next = { ...prev, [field]: value }
+      if (!briefanredeManual && AUTO_FELDER.has(field as string)) {
+        const [ba1, ba2] = autoBriefanreden(
+          field === 'anrede'    ? (value as string)  : prev.anrede,
+          field === 'nachname'  ? (value as string)  : prev.nachname,
+          field === 'nachname2' ? (value as string)  : prev.nachname2,
+          field === 'ist_firma' ? (value as boolean) : prev.ist_firma,
+        )
+        next.briefanrede  = ba1
+        next.briefanrede2 = ba2
+      }
+      return next
+    })
 
   const updateIban = (idx: number, val: string) =>
     set('ibans', form.ibans.map((v, i) => i === idx ? val : v))
@@ -201,6 +256,60 @@ export function PersonForm({ person }: Props) {
           )}
         </div>
       )}
+
+      {/* Briefanrede */}
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <label className="text-sm font-medium text-gray-700">
+            Briefanrede{PAAR_EINZEL[form.anrede] ? ' 1' : ''}
+          </label>
+          {briefanredeManual && (
+            <button
+              type="button"
+              onClick={() => {
+                setBriefanredeManual(false)
+                const [ba1, ba2] = autoBriefanreden(
+                  form.anrede, form.nachname, form.nachname2, form.ist_firma
+                )
+                setForm(prev => ({ ...prev, briefanrede: ba1, briefanrede2: ba2 }))
+              }}
+              className="text-xs text-primary-600 hover:text-primary-700 underline"
+            >
+              Automatisch zurücksetzen
+            </button>
+          )}
+        </div>
+        <input
+          type="text"
+          value={form.briefanrede}
+          onChange={e => {
+            setBriefanredeManual(true)
+            setForm(prev => ({ ...prev, briefanrede: e.target.value }))
+          }}
+          placeholder="Sehr geehrter Herr Mustermann,"
+          className="rounded border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none"
+        />
+
+        {PAAR_EINZEL[form.anrede] && (
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium text-gray-700">Briefanrede 2</label>
+            <input
+              type="text"
+              value={form.briefanrede2}
+              onChange={e => {
+                setBriefanredeManual(true)
+                setForm(prev => ({ ...prev, briefanrede2: e.target.value }))
+              }}
+              placeholder="sehr geehrter Herr Mustermann,"
+              className="rounded border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none"
+            />
+          </div>
+        )}
+
+        <p className="text-xs text-gray-400">
+          Wird automatisch aus Anrede und Nachname befüllt. Manuell änderbar.
+        </p>
+      </div>
 
       {/* Kontakt */}
       <div className="grid grid-cols-2 gap-4">

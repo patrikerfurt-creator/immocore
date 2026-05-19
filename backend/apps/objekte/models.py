@@ -42,20 +42,20 @@ class Objekt(models.Model):
         related_name='vertretene_objekte',
         verbose_name='Betreuer-Vertretung',
     )
+    auto_pipeline_aktiv      = models.BooleanField(
+        default=True,
+        verbose_name='Auto-Pipeline aktiv',
+        help_text='Deaktivieren um dieses Objekt aus der monatlichen Auto-Pipeline auszuschließen.',
+    )
+    auto_verbuchen_aktiv     = models.BooleanField(
+        default=True,
+        verbose_name='Auto-Verbuchen aktiv (E-Banking)',
+        help_text='Eindeutig erkannte Bankbuchungen (Konfidenz 1.0) automatisch ins Hauptbuch übernehmen.',
+    )
     bundesland               = models.CharField(
         max_length=50, blank=True, default='',
         verbose_name='Bundesland',
         help_text='Bundesland für Feiertags-Berechnung (Auto-Pipeline)',
-    )
-    auto_pipeline_aktiv      = models.BooleanField(
-        default=False,
-        verbose_name='Auto-Pipeline aktiv',
-        help_text='Automatische monatliche Hausgeld-Sollstellung + SEPA-Lastschrift',
-    )
-    auto_verbuchen_aktiv     = models.BooleanField(
-        default=False,
-        verbose_name='Auto-Verbuchen aktiv',
-        help_text='Bankabgänge automatisch verbuchen wenn eindeutiger WKZ-Match',
     )
 
     class Meta:
@@ -109,6 +109,13 @@ class Bankkonto(models.Model):
         verbose_name        = 'Bankkonto'
         verbose_name_plural = 'Bankkonten'
         ordering            = ['reihenfolge', 'bezeichnung']
+
+    def save(self, *args, **kwargs):
+        if self.zahlungsverkehr:
+            Bankkonto.objects.filter(
+                objekt=self.objekt, zahlungsverkehr=True
+            ).exclude(pk=self.pk).update(zahlungsverkehr=False)
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.bezeichnung} ({self.iban})"
@@ -202,3 +209,94 @@ class VerteilerschluesselWert(models.Model):
 
     def __str__(self):
         return f"{self.schluessel.bezeichnung}: {self.einheit.einheit_nr} = {self.wert}"
+
+
+# ---------------------------------------------------------------------------
+# Wirtschaftsjahr — eigenständige Entität je Objekt (Spec v1.0 Kap. 3.1)
+# ---------------------------------------------------------------------------
+
+class Wirtschaftsjahr(models.Model):
+    STATUS_CHOICES = [
+        ('offen',         'Offen'),
+        ('abgeschlossen', 'Abgeschlossen'),
+    ]
+
+    id            = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    objekt        = models.ForeignKey(Objekt, on_delete=models.CASCADE, related_name='wirtschaftsjahre')
+    jahr          = models.IntegerField()
+    beginn_monat  = models.IntegerField()
+    status        = models.CharField(max_length=20, choices=STATUS_CHOICES, default='offen')
+    vorjahr       = models.ForeignKey(
+        'self', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='folgejahre',
+    )
+    eroeffnet_am  = models.DateTimeField(auto_now_add=True)
+    eroeffnet_von = models.ForeignKey(
+        'auth.User', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='eroeffnete_wirtschaftsjahre',
+    )
+    abgeschlossen_am = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name        = 'Wirtschaftsjahr'
+        verbose_name_plural = 'Wirtschaftsjahre'
+        ordering            = ['objekt', 'jahr']
+        constraints = [
+            models.UniqueConstraint(fields=['objekt', 'jahr'], name='unique_objekt_wirtschaftsjahr'),
+            models.CheckConstraint(check=models.Q(jahr__gte=2000), name='wirtschaftsjahr_min_2000'),
+        ]
+
+    @property
+    def beginn_datum(self):
+        from datetime import date
+        return date(self.jahr, self.beginn_monat, 1)
+
+    @property
+    def ende_datum(self):
+        from datetime import date, timedelta
+        return date(self.jahr + 1, self.beginn_monat, 1) - timedelta(days=1)
+
+    def __str__(self):
+        return f"WJ {self.jahr} ({self.objekt.bezeichnung}) [{self.status}]"
+
+
+# ---------------------------------------------------------------------------
+# EinheitVerbrauch — Verbrauchswerte je Einheit, WJ und VS-Code (Spec v1.0 Kap. 3.4)
+# ---------------------------------------------------------------------------
+
+class EinheitVerbrauch(models.Model):
+    QUELLE_CHOICES = [
+        ('manuell',        'Manuell'),
+        ('heiwako_import', 'HEIWAKO-Import'),
+    ]
+    VS_CODE_CHOICES = [
+        ('140', '140'), ('141', '141'), ('142', '142'),
+        ('143', '143'), ('144', '144'), ('145', '145'),
+    ]
+
+    id              = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    wirtschaftsjahr = models.ForeignKey(
+        Wirtschaftsjahr, on_delete=models.CASCADE, related_name='einheit_verbraeuche',
+    )
+    einheit         = models.ForeignKey(Einheit, on_delete=models.CASCADE, related_name='verbraeuche')
+    vs_code         = models.CharField(max_length=3, choices=VS_CODE_CHOICES)
+    wert            = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    einheit_text    = models.CharField(max_length=20, blank=True)
+    quelle          = models.CharField(max_length=20, choices=QUELLE_CHOICES, null=True, blank=True)
+
+    class Meta:
+        verbose_name        = 'Einheit-Verbrauch'
+        verbose_name_plural = 'Einheit-Verbräuche'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['wirtschaftsjahr', 'einheit', 'vs_code'],
+                name='unique_einheit_verbrauch',
+            ),
+            models.CheckConstraint(
+                check=models.Q(vs_code__in=['140', '141', '142', '143', '144', '145']),
+                name='einheit_verbrauch_valid_vs_code',
+            ),
+        ]
+
+    def __str__(self):
+        return f"VS {self.vs_code}: {self.einheit} WJ {self.wirtschaftsjahr.jahr}"

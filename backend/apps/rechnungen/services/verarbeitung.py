@@ -112,10 +112,13 @@ def _finde_duplikat_rechnungsnummer(nr_norm: str) -> Rechnung | None:
     ).exclude(status='duplikat').first()
 
 
-def _finde_duplikat_iban(iban: str, betrag: Decimal, datum) -> Rechnung | None:
+def _finde_duplikat_iban(iban: str, betrag: Decimal, datum, nr_norm: str = '') -> Rechnung | None:
     if not iban:
         return None
     qs = Rechnung.objects.filter(lieferant_iban=iban).exclude(status='duplikat')
+    # Wenn Rechnungsnummer erkannt: nur Treffer mit gleicher Nummer zulassen
+    if nr_norm:
+        qs = qs.filter(rechnungsnummer_normalisiert=nr_norm)
     if betrag and datum:
         r = qs.filter(betrag_brutto=betrag, rechnungsdatum=datum).first()
         if r:
@@ -168,7 +171,7 @@ def _vorschlage_konto_ki(leistungsbeschreibung: str, objekt):
 
     if not leistungsbeschreibung or not objekt:
         return None
-    konten = list(Konto.objects.filter(objekt=objekt, direktes_buchen=True, aktiv=True)[:80])
+    konten = list(Konto.objects.filter(wirtschaftsjahr__objekt=objekt, direktes_buchen=False, aktiv=True)[:80])
     if not konten:
         return None
     konten_text = "\n".join(f"{k.kontonummer}: {k.kontoname}" for k in konten)
@@ -257,14 +260,19 @@ def verarbeite_datei(datei_pfad: str, archiv_root: Path) -> dict:
                 if dup:
                     status, duplikat_typ, duplikat_von = 'duplikat', 'rechnungsnummer', dup
                     notiz = f'Gleiche Rechnungsnummer: {dup.dateiname}'
-            # Stufe 3: IBAN + Betrag + Datum
+            # Stufe 3: IBAN + Betrag + Datum (+ Rechnungsnummer wenn vorhanden)
             if status == 'importiert' and parsed.get('iban') and parsed.get('gross_amount'):
-                dup = _finde_duplikat_iban(parsed['iban'], parsed['gross_amount'], parsed.get('invoice_date'))
+                dup = _finde_duplikat_iban(
+                    parsed['iban'],
+                    parsed['gross_amount'],
+                    parsed.get('invoice_date'),
+                    parsed.get('invoice_number_normalized', ''),
+                )
                 if dup:
                     status, duplikat_typ, duplikat_von = 'duplikat', 'iban_betrag_datum', dup
                     notiz = f'IBAN+Betrag+Datum Duplikat: {dup.dateiname}'
-            # Stufe 4: Fuzzy
-            if status == 'importiert' and parsed.get('gross_amount') and parsed.get('supplier_normalized'):
+            # Stufe 4: Fuzzy — nur wenn keine Rechnungsnummer erkannt (erkannte Nr. ist stärkerer Beweis)
+            if status == 'importiert' and not parsed.get('invoice_number_normalized') and parsed.get('gross_amount') and parsed.get('supplier_normalized'):
                 dup = _finde_prueffall(parsed['gross_amount'], parsed['supplier_normalized'], parsed.get('invoice_date'))
                 if dup:
                     status, duplikat_typ, duplikat_von = 'prueffall', 'unscharf', dup
@@ -325,7 +333,11 @@ def verarbeite_datei(datei_pfad: str, archiv_root: Path) -> dict:
     if rechnung.status == 'importiert':
         try:
             from apps.rechnungen.recognition import fuehre_erkennung_aus
+            from apps.rechnungen.services.rechnung_op_service import rechnung_freigeben as op_freigeben
             fuehre_erkennung_aus(rechnung)
+            if rechnung.status == 'gebucht' and not rechnung.op_buchung_id and rechnung.aufwandskonto_id:
+                rechnung.status = 'erkannt'
+                op_freigeben(rechnung, rechnung.aufwandskonto, freigegeben_von=None)
             status = rechnung.status
             notiz = rechnung.verarbeitungsnotiz or notiz
         except Exception as exc:

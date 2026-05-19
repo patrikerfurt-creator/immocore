@@ -37,6 +37,130 @@ class ObjektViewSet(viewsets.ModelViewSet):
             return ObjektListSerializer
         return ObjektSerializer
 
+    @action(detail=True, methods=['get'], url_path='vertraege/csv-vorlage')
+    def vertraege_csv_vorlage(self, request, pk=None):
+        """
+        CSV-Vorlage für Vertragsmanagement-Import herunterladen.
+        Vorbelegt mit Einheiten und Abrechnungsarten des Objekts.
+        """
+        objekt = self.get_object()
+        from apps.konten.models import Abrechnungsart
+        from apps.personen.models import EigentumsVerhaeltnis
+
+        einheiten = list(objekt.einheiten.order_by('einheit_nr'))
+        abrechnungsarten = list(
+            Abrechnungsart.objects.filter(objekt=objekt, aktiv=True).order_by('code')
+        )
+
+        # Aktive Verträge vorbeladen: einheit_id → Person
+        ev_person_map = {
+            ev.einheit_id: ev.person
+            for ev in EigentumsVerhaeltnis.objects.filter(
+                einheit__objekt=objekt, ende__isnull=True
+            ).select_related('person')
+        }
+
+        output = io.StringIO()
+        writer = csv.writer(output, delimiter=';')
+        writer.writerow([
+            'einheit_nr', 'flaechennummer', 'personennummer', 'eigentuemer_email',
+            'vertrag_beginn', 'vertrag_ende',
+            'abrechnungsart', 'betrag', 'gueltig_ab', 'wirtschaftsplan_jahr', 'bemerkung',
+        ])
+
+        today = __import__('datetime').date.today()
+        for einheit in einheiten:
+            person = ev_person_map.get(einheit.pk)
+            personennummer = person.personennummer if person else ''
+            email = person.email if person else ''
+            for abr in abrechnungsarten:
+                writer.writerow([
+                    einheit.einheit_nr, einheit.flaechennummer,
+                    personennummer, email,
+                    today.strftime('%Y-01-01'), '',
+                    abr.code, '0.00', today.strftime('%Y-01-01'), today.year, '',
+                ])
+
+        if not einheiten:
+            writer.writerow(['WE01', '', '100000', 'eigentuemer@example.de', '2025-01-01', '', '900', '250.00', '2025-01-01', '2025', ''])
+
+        dateiname = f'{objekt.objektnummer}-Vertraege.csv'
+        response = HttpResponse(
+            output.getvalue().encode('utf-8-sig'),
+            content_type='text/csv; charset=utf-8-sig',
+        )
+        response['Content-Disposition'] = f'attachment; filename="{dateiname}"'
+        return response
+
+    @action(detail=True, methods=['post'], url_path='vertraege/csv-preview')
+    def vertraege_csv_preview(self, request, pk=None):
+        """
+        CSV hochladen, parsen und validieren. Keine DB-Änderung.
+        Antwort: { zusammenfassung, zeilen }
+        """
+        objekt = self.get_object()
+        datei = request.FILES.get('datei')
+        if not datei:
+            return Response({'error': 'datei erforderlich'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from apps.personen.services.vertragsimport import parse_csv, vorschau, ImportFehler
+
+        try:
+            zeilen_roh = parse_csv(datei.read())
+        except ImportFehler as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        ergebnisse = vorschau(zeilen_roh, objekt)
+
+        from dataclasses import asdict
+        zeilen_data = [asdict(z) for z in ergebnisse]
+
+        zusammenfassung = {
+            'zeilen_gesamt':  len(ergebnisse),
+            'zeilen_ok':      sum(1 for z in ergebnisse if z.status == 'ok'),
+            'zeilen_warnung': sum(1 for z in ergebnisse if z.status == 'warnung'),
+            'zeilen_fehler':  sum(1 for z in ergebnisse if z.status == 'fehler'),
+        }
+
+        return Response({
+            'objekt': {'id': str(objekt.id), 'bezeichnung': objekt.bezeichnung, 'objekt_nr': objekt.objektnummer},
+            'zusammenfassung': zusammenfassung,
+            'zeilen': zeilen_data,
+        })
+
+    @action(detail=True, methods=['post'], url_path='vertraege/csv-commit')
+    def vertraege_csv_commit(self, request, pk=None):
+        """
+        CSV hochladen und atomar importieren.
+        Bei Fehler in einer Zeile vollständiger Rollback.
+        """
+        objekt = self.get_object()
+        datei = request.FILES.get('datei')
+        if not datei:
+            return Response({'error': 'datei erforderlich'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from apps.personen.services.vertragsimport import parse_csv, commit, ImportFehler
+
+        try:
+            zeilen_roh = parse_csv(datei.read())
+        except ImportFehler as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            ergebnis = commit(zeilen_roh, objekt, request.user)
+        except ImportFehler as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        from dataclasses import asdict
+        return Response(
+            {
+                'status': ergebnis.status,
+                'zusammenfassung': ergebnis.zusammenfassung,
+                'zeilen': [asdict(z) for z in ergebnis.zeilen],
+            },
+            status=status.HTTP_200_OK,
+        )
+
 
 class EingangViewSet(viewsets.ModelViewSet):
     serializer_class = EingangSerializer

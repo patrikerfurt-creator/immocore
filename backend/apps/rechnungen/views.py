@@ -104,16 +104,19 @@ class KreditorViewSet(viewsets.ModelViewSet):
         qs = (
             Rechnung.objects
             .filter(kreditor=kreditor)
-            .select_related('objekt', 'buchung', 'buchung__soll_konto')
+            .select_related('objekt', 'buchung', 'aufwandskonto', 'kostenstelle', 'kreditor_op')
             .order_by('-rechnungsdatum', '-erstellt_am')
         )
         if objekt_id := request.query_params.get('objekt'):
             qs = qs.filter(objekt_id=objekt_id)
+        if jahr := request.query_params.get('jahr'):
+            qs = qs.filter(rechnungsdatum__year=jahr)
 
         positionen = []
         for r in qs:
-            b = r.buchung
-            sk = (b.soll_konto if b else None) or r.kostenstelle
+            b   = r.buchung
+            op  = getattr(r, 'kreditor_op', None)
+            sk  = r.aufwandskonto or r.kostenstelle
             positionen.append({
                 'id': str(r.id),
                 'rechnungsnummer': r.rechnungsnummer,
@@ -124,7 +127,7 @@ class KreditorViewSet(viewsets.ModelViewSet):
                 'objekt': r.objekt.bezeichnung if r.objekt else None,
                 'sachkonto_nr': sk.kontonummer if sk else None,
                 'sachkonto_name': sk.kontoname if sk else None,
-                'opos_nr': b.belegnr if b else None,
+                'opos_nr': op.op_nummer if op else None,
                 'buchungsdatum': str(b.buchungsdatum) if b else None,
                 'buchung_status': b.status if b else None,
             })
@@ -158,7 +161,8 @@ class RechnungViewSet(viewsets.ModelViewSet):
         if objekt_id := p.get('objekt'):
             qs = qs.filter(Q(objekt_id=objekt_id) | Q(objekt__isnull=True))
         if s := p.get('status'):
-            qs = qs.filter(status=s)
+            stati = [x.strip() for x in s.split(',') if x.strip()]
+            qs = qs.filter(status__in=stati)
         if stufe := p.get('stufe'):
             qs = qs.filter(erkennungs_stufe=stufe)
         if kreditor_id := p.get('kreditor'):
@@ -201,7 +205,7 @@ class RechnungViewSet(viewsets.ModelViewSet):
                 from .recognition import lege_match_regel_an
                 try:
                     neues_konto = Konto.objects.get(
-                        pk=neues_konto_id, objekt=rechnung.objekt,
+                        pk=neues_konto_id, wirtschaftsjahr__objekt=rechnung.objekt,
                     )
                     if not (50000 <= int(neues_konto.kontonummer) <= 55999) or neues_konto.direktes_buchen:
                         return Response(
@@ -305,7 +309,7 @@ class RechnungViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Objekt nicht gefunden'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            sachkonto = Konto.objects.get(id=konto_id, objekt=objekt)
+            sachkonto = Konto.objects.get(id=konto_id, wirtschaftsjahr__objekt=objekt)
         except Konto.DoesNotExist:
             return Response({'error': 'Sachkonto nicht gefunden'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -391,13 +395,34 @@ class RechnungViewSet(viewsets.ModelViewSet):
         haben_konto_id    = request.data.get('haben_konto_id')
         buchungsdatum_str = request.data.get('buchungsdatum')
 
-        if not haben_konto_id:
-            return Response({'error': 'Bankkonto fehlt'}, status=status.HTTP_400_BAD_REQUEST)
+        bankkonto = None
+        if haben_konto_id:
+            try:
+                bankkonto = Konto.objects.get(id=haben_konto_id, wirtschaftsjahr__objekt=rechnung.objekt)
+            except Konto.DoesNotExist:
+                return Response({'error': 'Bankkonto nicht gefunden'}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            # Auto-Auflösung über Zahlungsverkehr-Bankkonto des Objekts
+            from apps.objekte.models import Bankkonto as BankkontoMaster
+            zv = BankkontoMaster.objects.filter(
+                objekt=rechnung.objekt, zahlungsverkehr=True, aktiv=True
+            ).first()
+            if zv:
+                if zv.konto_typ == 'bewirtschaftung':
+                    knr = '18000'
+                elif zv.reihenfolge == 1:
+                    knr = '18911'
+                else:
+                    knr = f'0991{zv.reihenfolge}'
+                bankkonto = Konto.objects.filter(
+                    wirtschaftsjahr__objekt=rechnung.objekt, kontonummer=knr
+                ).first()
 
-        try:
-            bankkonto = Konto.objects.get(id=haben_konto_id, objekt=rechnung.objekt)
-        except Konto.DoesNotExist:
-            return Response({'error': 'Bankkonto nicht gefunden'}, status=status.HTTP_400_BAD_REQUEST)
+        if not bankkonto:
+            return Response(
+                {'error': 'Kein Bankkonto angegeben und kein Zahlungsverkehrskonto am Objekt hinterlegt.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             buchungsdatum = datetime.strptime(buchungsdatum_str, '%Y-%m-%d').date() if buchungsdatum_str else date.today()
@@ -490,9 +515,18 @@ class RechnungViewSet(viewsets.ModelViewSet):
     # ------------------------------------------------------------------
     @action(detail=True, methods=['post'], url_path='erkennung-ausfuehren')
     def erkennung_ausfuehren(self, request, pk=None):
-        rechnung = self.get_object()
         from .recognition import fuehre_erkennung_aus
+        from .services.rechnung_op_service import rechnung_freigeben as op_freigeben
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        rechnung = self.get_object()
         rechnung = fuehre_erkennung_aus(rechnung)
+        if rechnung.status == 'gebucht' and not rechnung.op_buchung_id:
+            try:
+                op_freigeben(rechnung, rechnung.aufwandskonto, request.user)
+            except DjangoValidationError as exc:
+                rechnung.status = 'erkannt'
+                rechnung.save(update_fields=['status'])
+                return Response({'error': exc.message}, status=status.HTTP_400_BAD_REQUEST)
         Verarbeitungslog.objects.create(
             rechnung=rechnung, aktion='Erkennung ausgeführt', status=rechnung.status,
             details=f'Stufe {rechnung.erkennungs_stufe} | Konfidenz: {rechnung.erkennungs_konfidenz}',
@@ -564,7 +598,7 @@ class RechnungViewSet(viewsets.ModelViewSet):
         aufwandskonto = None
         if konto_id:
             try:
-                aufwandskonto = Konto.objects.get(pk=konto_id, objekt=objekt)
+                aufwandskonto = Konto.objects.get(pk=konto_id, wirtschaftsjahr__objekt=objekt)
             except Konto.DoesNotExist:
                 return Response(
                     {'error': 'Aufwandskonto nicht gefunden oder gehört nicht zu diesem Objekt'},
@@ -588,6 +622,9 @@ class RechnungViewSet(viewsets.ModelViewSet):
             rechnung.leistungstext or rechnung.leistungsbeschreibung or ''
         )
         rechnung.status        = 'erkannt'
+        # Manuelle Identifikation = 100 % Konfidenz für alle drei Dimensionen,
+        # damit route_rechnung() bei Beträgen unter dem Auto-Limit direkt bucht.
+        rechnung.erkennungs_konfidenz = {'kreditor': 1.0, 'objekt': 1.0, 'aufwandskonto': 1.0}
 
         # Lernlogik (Trigger A oder C)
         erstellt_aus = 'manuell' if rechnung.erkennungs_stufe == '3' else 'pruefung'
@@ -601,7 +638,19 @@ class RechnungViewSet(viewsets.ModelViewSet):
                     {'error': 'Direktfreigabe nicht erlaubt — Betrag über Ihrem Freigabelimit'},
                     status=status.HTTP_403_FORBIDDEN,
                 )
-            rechnung.status = 'freigegeben'
+            from .services.rechnung_op_service import rechnung_freigeben as op_freigeben
+            from django.core.exceptions import ValidationError as DjangoValidationError
+            if rechnung.aufwandskonto_id:
+                rechnung.status = 'erkannt'
+                try:
+                    op_freigeben(rechnung, rechnung.aufwandskonto, request.user)
+                except DjangoValidationError as exc:
+                    rechnung.status = 'in_pruefung'
+                    rechnung.save(update_fields=['status'])
+                    return Response({'error': exc.message}, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                rechnung.status = 'freigegeben'
+                rechnung.save(update_fields=['status'])
             Freigabe.objects.create(
                 rechnung=rechnung,
                 bearbeiter=request.user,
@@ -610,9 +659,20 @@ class RechnungViewSet(viewsets.ModelViewSet):
                 begruendung='Identifizieren + Freigeben durch Objektbetreuer',
             )
         else:
-            route_rechnung(rechnung)
-
-        rechnung.save()
+            auto_gebucht = route_rechnung(rechnung)
+            if auto_gebucht and rechnung.aufwandskonto_id:
+                from .services.rechnung_op_service import rechnung_freigeben as op_freigeben
+                from django.core.exceptions import ValidationError as DjangoValidationError
+                rechnung.status = 'erkannt'  # zurücksetzen damit op_freigeben die Validierung passiert
+                try:
+                    op_freigeben(rechnung, rechnung.aufwandskonto, request.user)
+                    # op_freigeben setzt status='gebucht' und speichert selbst
+                except DjangoValidationError as exc:
+                    rechnung.status = 'in_pruefung'
+                    rechnung.save()
+                    return Response({'error': exc.message}, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                rechnung.save()
         Verarbeitungslog.objects.create(
             rechnung=rechnung, aktion='Identifiziert', status=rechnung.status,
             details=(
@@ -743,66 +803,77 @@ class RechnungViewSet(viewsets.ModelViewSet):
         from apps.buchhaltung.services.sepa_export import exportiere_sepa
         from apps.objekte.models import Bankkonto
 
+        from collections import defaultdict
         rechnung_ids = request.data.get('rechnung_ids', [])
-        haben_konto_id = request.data.get('haben_konto_id')
         faelligkeitsdatum_str = request.data.get('faelligkeitsdatum')
 
         if not rechnung_ids:
             return Response({'error': 'Keine Rechnungen ausgewählt'}, status=status.HTTP_400_BAD_REQUEST)
-        if not haben_konto_id:
-            return Response({'error': 'Bankkonto fehlt'}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            bankkonto = Bankkonto.objects.select_related('objekt').get(id=haben_konto_id)
-        except Bankkonto.DoesNotExist:
-            return Response({'error': 'Bankkonto nicht gefunden'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             faelligkeitsdatum = datetime.strptime(faelligkeitsdatum_str, '%Y-%m-%d').date() if faelligkeitsdatum_str else date.today()
         except ValueError:
             faelligkeitsdatum = date.today()
 
-        rechnungen = Rechnung.objects.filter(
-            id__in=rechnung_ids,
-            kreditor__isnull=False,
-        ).select_related('kreditor')
-
-        if not rechnungen.exists():
+        rechnungen = list(
+            Rechnung.objects.filter(id__in=rechnung_ids, kreditor__isnull=False)
+            .select_related('kreditor', 'objekt')
+        )
+        if not rechnungen:
             return Response({'error': 'Keine gültigen Rechnungen mit Kreditor gefunden'}, status=status.HTTP_400_BAD_REQUEST)
 
-        zahlungen = []
+        # Rechnungen nach Objekt gruppieren, je Objekt Zahlungsverkehrs-Bankkonto auflösen
+        by_objekt: dict = defaultdict(list)
         for r in rechnungen:
-            if not r.betrag_brutto:
+            by_objekt[r.objekt_id].append(r)
+
+        sepa_gruppen = []
+        uebersprungen = []
+        for objekt_id, rg in by_objekt.items():
+            zv_bk = Bankkonto.objects.select_related('objekt').filter(
+                objekt_id=objekt_id, zahlungsverkehr=True, aktiv=True
+            ).first()
+            if not zv_bk or not zv_bk.iban:
+                for r in rg:
+                    uebersprungen.append(f"{r.rechnungsnummer or str(r.id)[:8]}: kein Zahlungsverkehrskonto")
                 continue
-            kreditor = r.kreditor
-            if not kreditor or not kreditor.iban:
-                continue
-            zahlungen.append({
-                'betrag': Decimal(str(r.betrag_brutto)),
-                'empfaenger_name': kreditor.name,
-                'empfaenger_iban': kreditor.iban,
-                'empfaenger_bic': kreditor.bic or 'NOTPROVIDED',
-                'verwendungszweck': (
-                    f"{r.rechnungsnummer or r.dateiname or str(r.id)[:8]} / "
-                    f"{kreditor.name}"
-                )[:140],
-                'faelligkeitsdatum': faelligkeitsdatum,
-                'end_to_end_id': f"RG-{str(r.id)[:12].upper()}",
-            })
 
-        if not zahlungen:
-            return Response({'error': 'Keine Rechnungen mit IBAN-Kreditor gefunden'}, status=status.HTTP_400_BAD_REQUEST)
+            zahlungen = []
+            for r in rg:
+                if not r.betrag_brutto or not r.kreditor or not r.kreditor.iban:
+                    continue
+                zahlungen.append({
+                    'betrag': Decimal(str(r.betrag_brutto)),
+                    'empfaenger_name': r.kreditor.name,
+                    'empfaenger_iban': r.kreditor.iban,
+                    'empfaenger_bic': r.kreditor.bic or 'NOTPROVIDED',
+                    'verwendungszweck': (
+                        f"{r.rechnungsnummer or r.dateiname or str(r.id)[:8]} / "
+                        f"{r.kreditor.name}"
+                    )[:140],
+                    'faelligkeitsdatum': faelligkeitsdatum,
+                    'end_to_end_id': f"RG-{str(r.id)[:12].upper()}",
+                })
+            if zahlungen:
+                sepa_gruppen.append({
+                    'auftraggeber': {
+                        'name': zv_bk.kontoinhaber or zv_bk.objekt.bezeichnung,
+                        'iban': zv_bk.iban,
+                        'bic': zv_bk.bic or 'NOTPROVIDED',
+                        'bank_bezeichnung': zv_bk.bezeichnung,
+                    },
+                    'zahlungen': zahlungen,
+                })
 
-        auftraggeber = {
-            'name': bankkonto.kontoinhaber or bankkonto.objekt.bezeichnung,
-            'iban': bankkonto.iban,
-            'bic': bankkonto.bic,
-            'bank_bezeichnung': bankkonto.bezeichnung,
-        }
+        if not sepa_gruppen:
+            msg = 'Keine Rechnungen exportierbar.'
+            if uebersprungen:
+                msg += ' ' + '; '.join(uebersprungen)
+            return Response({'error': msg}, status=status.HTTP_400_BAD_REQUEST)
 
-        xml_bytes = exportiere_sepa(zahlungen, auftraggeber)
+        xml_bytes = exportiere_sepa(gruppen=sepa_gruppen)
 
-        # Phase-2-Buchungen für alle im XML enthaltenen Rechnungen
+        # Phase-2-Buchungen für alle exportierten Rechnungen
         from .services.rechnung_zahlung_service import rechnung_bezahlen as op_bezahlen
         from django.core.exceptions import ValidationError as DjangoValidationError
         buchungs_fehler = []
@@ -821,6 +892,8 @@ class RechnungViewSet(viewsets.ModelViewSet):
         response['Content-Disposition'] = f'attachment; filename="{dateiname}"'
         if buchungs_fehler:
             response['X-Buchungs-Fehler'] = '; '.join(buchungs_fehler)
+        if uebersprungen:
+            response['X-Uebersprungen'] = '; '.join(uebersprungen)
         return response
 
 

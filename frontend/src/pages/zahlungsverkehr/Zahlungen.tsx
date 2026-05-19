@@ -3,11 +3,10 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useObjektStore } from '../../stores/objekt'
 import { rechnungenApi } from '../../api/rechnungen'
 import { zahlungsverkehrApi } from '../../api/zahlungsverkehr'
-import { objekteApi } from '../../api/objekte'
 
 import { Badge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
-import type { RechnungList, Bankkonto } from '../../types'
+import type { RechnungList } from '../../types'
 
 function formatEuro(val: string | number | null | undefined) {
   if (val == null) return '—'
@@ -24,12 +23,12 @@ export function Zahlungen() {
   const objektId = useObjektStore(s => s.selectedId)
   const qc = useQueryClient()
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [habenKontoId, setHabenKontoId] = useState('')
   const [faelligkeitsdatum, setFaelligkeitsdatum] = useState(
     new Date().toISOString().split('T')[0]
   )
   const [error, setError] = useState<string | null>(null)
 
+  // Alle gebucht-Rechnungen laden — objektübergreifend wenn kein Objekt gewählt
   const { data: rechnungen, isLoading } = useQuery({
     queryKey: ['rechnungen-zahlung', objektId],
     queryFn: () =>
@@ -40,18 +39,6 @@ export function Zahlungen() {
       ),
     enabled: true,
   })
-
-  // Objekt für Bankkonto-Auswahl: globales Objekt oder aus erster gewählter Rechnung ableiten
-  const selectedRechnungen = (rechnungen ?? []).filter(r => selected.has(r.id))
-  const effektivesObjektId = objektId ?? selectedRechnungen[0]?.objekt_id ?? null
-
-  const { data: objekt } = useQuery({
-    queryKey: ['objekt', effektivesObjektId],
-    queryFn: () => objekteApi.get(effektivesObjektId ?? ''),
-    enabled: !!effektivesObjektId,
-  })
-
-  const bankkonten: Bankkonto[] = objekt?.bankkonten?.filter(b => b.aktiv && b.iban) ?? []
 
   const exportMut = useMutation({
     mutationFn: zahlungsverkehrApi.exportRechnungenSepa,
@@ -68,11 +55,10 @@ export function Zahlungen() {
   })
 
   function handleExport() {
-    if (selected.size === 0 || !habenKontoId) return
+    if (selected.size === 0) return
     setError(null)
     exportMut.mutate({
       rechnung_ids: Array.from(selected),
-      haben_konto_id: habenKontoId,
       faelligkeitsdatum,
     })
   }
@@ -95,46 +81,45 @@ export function Zahlungen() {
     .filter((r: RechnungList) => selected.has(r.id))
     .reduce((s: number, r: RechnungList) => s + Number(r.betrag_brutto ?? 0), 0)
 
+  // Anzahl unterschiedliche Objekte in Auswahl
+  const selectedRechnungen = (rechnungen ?? []).filter(r => selected.has(r.id))
+  const objekteInAuswahl = new Set(selectedRechnungen.map(r => r.objekt_id)).size
+
   return (
     <div className="p-6 max-w-6xl">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-xl font-semibold">Zahlungslauf</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Freigegebene Rechnungen (Status: gebucht) — bereit zur Zahlung</p>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Freigegebene Rechnungen (Status: gebucht) — bereit zur Zahlung
+            {!objektId && <span className="ml-1 text-blue-600">· alle Objekte</span>}
+          </p>
         </div>
       </div>
 
       {selected.size > 0 && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-5 flex items-center gap-4">
-          <span className="font-medium text-blue-800">
-            {selected.size} Rechnungen ausgewählt — {formatEuro(summeSelected)} Gesamt
-          </span>
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-5 flex items-center gap-4 flex-wrap">
+          <div>
+            <span className="font-medium text-blue-800">
+              {selected.size} {selected.size === 1 ? 'Rechnung' : 'Rechnungen'} ausgewählt
+              {' — '}
+              {formatEuro(summeSelected)}
+            </span>
+            {objekteInAuswahl > 1 && (
+              <span className="ml-2 text-xs text-blue-600">
+                ({objekteInAuswahl} Objekte — je Objekt wird das Zahlungsverkehrskonto verwendet)
+              </span>
+            )}
+          </div>
 
           <div className="flex items-center gap-3 ml-auto">
-            <select
-              className="border rounded px-3 py-1.5 text-sm"
-              value={habenKontoId}
-              onChange={e => setHabenKontoId(e.target.value)}
-            >
-              <option value="">Bankkonto wählen…</option>
-              {bankkonten.map((b: Bankkonto) => (
-                <option key={b.id} value={b.id}>
-                  {b.bezeichnung} — {b.iban}
-                </option>
-              ))}
-            </select>
-
             <input
               type="date"
               className="border rounded px-3 py-1.5 text-sm"
               value={faelligkeitsdatum}
               onChange={e => setFaelligkeitsdatum(e.target.value)}
             />
-
-            <Button
-              onClick={handleExport}
-              disabled={!habenKontoId || exportMut.isPending}
-            >
+            <Button onClick={handleExport} disabled={exportMut.isPending}>
               {exportMut.isPending ? 'Wird exportiert…' : 'SEPA XML herunterladen'}
             </Button>
           </div>
@@ -147,15 +132,11 @@ export function Zahlungen() {
         </div>
       )}
 
-      {!objektId && (
-        <p className="text-gray-500 text-sm">Bitte ein Objekt auswählen.</p>
-      )}
-
       {isLoading && <p className="text-gray-500 text-sm">Wird geladen…</p>}
 
       {!isLoading && zahlbareRechnungen.length === 0 && (
         <p className="text-gray-500 text-sm">
-          Keine freigegebenen Rechnungen (Status &ldquo;gebucht&rdquo;) mit Aufwandskonto und Kreditor vorhanden.
+          Keine freigegebenen Rechnungen (Status &ldquo;gebucht&rdquo;) vorhanden.
         </p>
       )}
 
@@ -173,6 +154,7 @@ export function Zahlungen() {
                   />
                 </th>
                 <th className="px-4 py-3 text-left font-medium text-gray-700">Kreditor</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-700">Objekt</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-700">Rechnungsnr.</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-700">Datum</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-700">Sachkonto</th>
@@ -210,6 +192,7 @@ export function Zahlungen() {
                     />
                   </td>
                   <td className="px-4 py-3 font-medium">{r.kreditor_name || '—'}</td>
+                  <td className="px-4 py-3 text-xs text-gray-500">{r.objekt_bezeichnung || '—'}</td>
                   <td className="px-4 py-3 text-gray-600">{r.rechnungsnummer || '—'}</td>
                   <td className="px-4 py-3 text-gray-600">{formatDatum(r.rechnungsdatum)}</td>
                   <td className="px-4 py-3 text-xs text-gray-600">{r.aufwandskonto_label || '—'}</td>
@@ -222,7 +205,7 @@ export function Zahlungen() {
             </tbody>
             <tfoot className="bg-gray-50 border-t">
               <tr>
-                <td colSpan={5} className="px-4 py-2 text-sm font-medium text-gray-600">
+                <td colSpan={6} className="px-4 py-2 text-sm font-medium text-gray-600">
                   Gesamt ({zahlbareRechnungen.length} Rechnungen)
                 </td>
                 <td className="px-4 py-2 text-right font-mono font-medium">

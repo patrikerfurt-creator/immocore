@@ -195,7 +195,7 @@ def fuehre_mahnlauf_aus(lauf_id: str, user) -> dict:
 def _fallback_konto(objekt):
     from apps.konten.models import Konto
     return (
-        Konto.objects.filter(objekt=objekt, aktiv=True)
+        Konto.objects.filter(wirtschaftsjahr__objekt=objekt, aktiv=True)
         .order_by('kontonummer')
         .first()
     )

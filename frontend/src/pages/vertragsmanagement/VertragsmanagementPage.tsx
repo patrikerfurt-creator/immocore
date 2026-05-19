@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { objekteApi } from '../../api/objekte'
 import { personenApi } from '../../api/personen'
 import { buchhaltungApi } from '../../api/buchhaltung'
-import type { Abrechnungsart, Einheit, EigentumsVerhaeltnis, PersonList } from '../../types'
+import type { Abrechnungsart, Einheit, EigentumsVerhaeltnis, HausgeldHistorie, PersonList } from '../../types'
 import type { VertraegeVorschauResponse } from '../../api/personen'
 import { Button } from '../../components/ui/Button'
 import { Input } from '../../components/ui/Input'
@@ -390,6 +390,21 @@ const STATUS_LABEL: Record<string, string> = {
   fehler: 'Fehler',
 }
 
+const AKTION_LABEL: Record<string, string> = {
+  neu: 'Neu',
+  aktualisiert: 'Update',
+  bestehend_unveraendert: 'Unverändert',
+  vertrag_neu: 'Neuer Vertrag',
+  fehler: 'Fehler',
+}
+const AKTION_STYLE: Record<string, string> = {
+  neu: 'text-green-700',
+  aktualisiert: 'text-blue-700',
+  bestehend_unveraendert: 'text-gray-400',
+  vertrag_neu: 'text-purple-700',
+  fehler: 'text-red-600',
+}
+
 function VertraegeVorschauModal({
   vorschau,
   importing,
@@ -401,18 +416,17 @@ function VertraegeVorschauModal({
   onImport: () => void
   onClose: () => void
 }) {
-  const importierbar = vorschau.rows.filter(r => r.status !== 'fehler' && r.person_info)
-  const fehlerZeilen = vorschau.rows.filter(r => r.status === 'fehler')
-  const warnZeilen = vorschau.rows.filter(r => r.status === 'warnung')
+  const { zusammenfassung: zs, zeilen } = vorschau
+  const importierbar = zeilen.filter(r => r.status !== 'fehler')
 
   return (
     <Overlay onClose={onClose} wide>
       <h2 className="text-lg font-semibold text-gray-800 mb-1">Verträge-Import — Vorschau</h2>
       <p className="text-sm text-gray-500 mb-4">
-        {vorschau.rows.length} Zeilen gelesen ·{' '}
-        <span className="text-green-700 font-medium">{importierbar.length} importierbar</span>
-        {warnZeilen.length > 0 && <span className="text-amber-700"> · {warnZeilen.length} mit Warnung</span>}
-        {fehlerZeilen.length > 0 && <span className="text-red-700"> · {fehlerZeilen.length} mit Fehler (werden übersprungen)</span>}
+        {zs.zeilen_gesamt} Zeilen ·{' '}
+        <span className="text-green-700 font-medium">{zs.zeilen_ok} OK</span>
+        {zs.zeilen_warnung > 0 && <span className="text-amber-700"> · {zs.zeilen_warnung} mit Warnung</span>}
+        {zs.zeilen_fehler > 0 && <span className="text-red-700"> · {zs.zeilen_fehler} Fehler (werden übersprungen)</span>}
       </p>
 
       <div className="overflow-x-auto rounded-lg border border-gray-200 mb-4 max-h-[55vh] overflow-y-auto">
@@ -420,48 +434,39 @@ function VertraegeVorschauModal({
           <thead className="bg-gray-50 border-b border-gray-200 sticky top-0">
             <tr>
               <th className="text-left px-2 py-2 font-medium text-gray-600 w-8">Z.</th>
-              <th className="text-left px-2 py-2 font-medium text-gray-600 w-14">Fl.Nr.</th>
               <th className="text-left px-2 py-2 font-medium text-gray-600 w-24">Einheit</th>
-              <th className="text-left px-2 py-2 font-medium text-gray-600">Person</th>
-              <th className="text-left px-2 py-2 font-medium text-gray-600 w-24">ET ab</th>
-              <th className="text-left px-2 py-2 font-medium text-gray-600 w-16">Sollarten</th>
+              <th className="text-left px-2 py-2 font-medium text-gray-600 w-12">SA</th>
+              <th className="text-right px-2 py-2 font-medium text-gray-600 w-24">Betrag</th>
+              <th className="text-left px-2 py-2 font-medium text-gray-600 w-24">Gültig ab</th>
+              <th className="text-left px-2 py-2 font-medium text-gray-600 w-28">Aktion</th>
               <th className="text-left px-2 py-2 font-medium text-gray-600 w-20">Status</th>
               <th className="text-left px-2 py-2 font-medium text-gray-600">Hinweise</th>
             </tr>
           </thead>
           <tbody>
-            {vorschau.rows.map(zeile => (
-              <tr key={zeile.zeile} className="border-t border-gray-100 align-top">
-                <td className="px-2 py-1.5 text-gray-400">{zeile.zeile}</td>
-                <td className="px-2 py-1.5 font-mono text-gray-700">{zeile.fl_nr}</td>
-                <td className="px-2 py-1.5 text-gray-700">
-                  {zeile.einheit_info
-                    ? <span>{zeile.einheit_info.einheit_nr}<span className="text-gray-400 ml-1">{zeile.einheit_info.lage}</span></span>
-                    : <span className="text-red-500">–</span>}
+            {zeilen.map(z => (
+              <tr key={z.zeilennummer} className="border-t border-gray-100 align-top">
+                <td className="px-2 py-1.5 text-gray-400">{z.zeilennummer}</td>
+                <td className="px-2 py-1.5 font-mono text-gray-700">{z.einheit_nr}</td>
+                <td className="px-2 py-1.5 font-mono text-gray-700">{z.abrechnungsart}</td>
+                <td className="px-2 py-1.5 text-right text-gray-700">
+                  {z.betrag
+                    ? `${parseFloat(z.betrag).toLocaleString('de-DE', { minimumFractionDigits: 2 })} €`
+                    : '–'}
                 </td>
-                <td className="px-2 py-1.5 text-gray-700">
-                  {zeile.person_info
-                    ? <span>{zeile.person_info.name}<span className="text-gray-400 ml-1">({zeile.personnummer})</span></span>
-                    : zeile.personnummer
-                      ? <span className="text-red-500">{zeile.personnummer} nicht gefunden</span>
-                      : <span className="text-gray-400 italic">–</span>}
+                <td className="px-2 py-1.5 text-gray-600">{z.gueltig_ab || '–'}</td>
+                <td className={`px-2 py-1.5 font-medium ${AKTION_STYLE[z.aktion] ?? 'text-gray-700'}`}>
+                  {AKTION_LABEL[z.aktion] ?? z.aktion}
                 </td>
-                <td className="px-2 py-1.5 text-gray-600">{zeile.et_ab || '–'}</td>
-                <td className="px-2 py-1.5 text-gray-600 text-center">{zeile.sollarten.length || '–'}</td>
                 <td className="px-2 py-1.5">
-                  <span className={`inline-block px-1.5 py-0.5 rounded border text-xs font-medium ${STATUS_STYLE[zeile.status]}`}>
-                    {STATUS_LABEL[zeile.status]}
+                  <span className={`inline-block px-1.5 py-0.5 rounded border text-xs font-medium ${STATUS_STYLE[z.status]}`}>
+                    {STATUS_LABEL[z.status]}
                   </span>
                 </td>
                 <td className="px-2 py-1.5">
-                  {zeile.fehler.length > 0 && (
-                    <ul className="text-red-600 space-y-0.5">
-                      {zeile.fehler.map((f, i) => <li key={i}>{f}</li>)}
-                    </ul>
-                  )}
-                  {zeile.info.length > 0 && (
-                    <ul className="text-amber-700 space-y-0.5">
-                      {zeile.info.map((f, i) => <li key={i}>{f}</li>)}
+                  {z.meldungen.length > 0 && (
+                    <ul className={`space-y-0.5 ${z.status === 'fehler' ? 'text-red-600' : 'text-amber-700'}`}>
+                      {z.meldungen.map((m, i) => <li key={i}>{m}</li>)}
                     </ul>
                   )}
                 </td>
@@ -480,7 +485,7 @@ function VertraegeVorschauModal({
           onClick={onImport}
           disabled={importing || importierbar.length === 0}
         >
-          {importing ? 'Importiere…' : `${importierbar.length} Zeile${importierbar.length !== 1 ? 'n' : ''} importieren`}
+          {importing ? 'Importiere…' : `${importierbar.length} Eintr${importierbar.length !== 1 ? 'äge' : 'ag'} importieren`}
         </Button>
       </div>
     </Overlay>
@@ -619,20 +624,21 @@ function EigentumsZuweisungModal({
 // ────────────────────────────────────────────────────────────────────────────
 // Modal: Hausgeld erfassen (Tabelle je Abrechnungsart)
 // ────────────────────────────────────────────────────────────────────────────
-type HausgeldZeile = { kontoart: string; betrag: string; gueltigAb: string }
+type HausgeldZeile = { abrechnungsartId: string; code: string; betrag: string; gueltigAb: string }
 
-function latestHistorie(ev: EigentumsVerhaeltnis, kontoart: string) {
-  return ev.hausgeld_historie
-    .filter(h => h.kontoart === kontoart)
+function latestHistorie(eintraege: HausgeldHistorie[], code: string) {
+  return eintraege
+    .filter(h => h.abrechnungsart_code === code)
     .sort((a, b) => b.gueltig_ab.localeCompare(a.gueltig_ab))[0] ?? null
 }
 
-function initZeilen(arts: Abrechnungsart[], ev: EigentumsVerhaeltnis): HausgeldZeile[] {
+function initZeilen(arts: Abrechnungsart[], eintraege: HausgeldHistorie[]): HausgeldZeile[] {
   const today = new Date().toISOString().split('T')[0]
   return arts.map(a => {
-    const prev = latestHistorie(ev, `.${a.code}`)
+    const prev = latestHistorie(eintraege, a.code)
     return {
-      kontoart: `.${a.code}`,
+      abrechnungsartId: a.id,
+      code: a.code,
       betrag: prev ? parseFloat(prev.betrag).toFixed(2).replace('.', ',') : '',
       gueltigAb: prev?.gueltig_ab ?? today,
     }
@@ -657,6 +663,11 @@ function HausgeldModal({
     queryFn: () => buchhaltungApi.abrechnungsarten(objektId),
   })
 
+  const { data: eintraege = [], isLoading: loadingEintraege } = useQuery({
+    queryKey: ['hausgeld-eintraege', ev.id],
+    queryFn: () => personenApi.hausgeldEintraege(ev.id),
+  })
+
   // Nur Hausgeld-relevante Abrechnungsarten: 900 und 91x (Rücklagen)
   const arts = useMemo(
     () => alleArts.filter(a => a.aktiv && (a.code === '900' || a.code.startsWith('91'))),
@@ -668,8 +679,8 @@ function HausgeldModal({
   const [error, setError] = useState('')
 
   useEffect(() => {
-    if (arts.length > 0) setZeilen(initZeilen(arts, ev))
-  }, [arts]) // ev ist stabil für dieses Modal
+    if (arts.length > 0 && !loadingEintraege) setZeilen(initZeilen(arts, eintraege))
+  }, [arts, eintraege, loadingEintraege])
 
   const updateZeile = (idx: number, field: 'betrag' | 'gueltigAb', value: string) => {
     setZeilen(prev => prev.map((z, i) => i === idx ? { ...z, [field]: value } : z))
@@ -693,9 +704,9 @@ function HausgeldModal({
         zuSpeichern.map(z =>
           personenApi.createHausgeldHistorie({
             eigentumsverhaeltnis: ev.id,
+            abrechnungsart: z.abrechnungsartId,
             betrag: parseFloat(z.betrag.replace(',', '.')).toFixed(2),
             gueltig_ab: z.gueltigAb,
-            kontoart: z.kontoart,
           }),
         ),
       )
@@ -707,6 +718,15 @@ function HausgeldModal({
     }
   }
 
+  // History sorted by code ASC, then gueltig_ab DESC
+  const historieSorted = useMemo(
+    () => [...eintraege].sort((a, b) => {
+      const c = (a.abrechnungsart_code ?? '').localeCompare(b.abrechnungsart_code ?? '', 'de', { numeric: true })
+      return c !== 0 ? c : b.gueltig_ab.localeCompare(a.gueltig_ab)
+    }),
+    [eintraege],
+  )
+
   return (
     <Overlay onClose={onClose} wide>
       <h2 className="text-lg font-semibold text-gray-800 mb-1">
@@ -714,6 +734,42 @@ function HausgeldModal({
       </h2>
       <p className="text-sm text-gray-500 mb-4">{ev.person_name}</p>
 
+      {/* Historie */}
+      <div className="mb-5">
+        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Bisherige Einträge</h3>
+        {loadingEintraege ? (
+          <p className="text-xs text-gray-400">Laden…</p>
+        ) : historieSorted.length === 0 ? (
+          <p className="text-xs text-gray-400 italic">Keine Einträge vorhanden.</p>
+        ) : (
+          <div className="overflow-x-auto rounded-lg border border-gray-200 max-h-40 overflow-y-auto">
+            <table className="w-full text-xs">
+              <thead className="bg-gray-50 border-b border-gray-200 sticky top-0">
+                <tr>
+                  <th className="text-left px-3 py-1.5 font-medium text-gray-600 w-14">Code</th>
+                  <th className="text-right px-3 py-1.5 font-medium text-gray-600 w-24">Betrag</th>
+                  <th className="text-left px-3 py-1.5 font-medium text-gray-600 w-24">Gültig ab</th>
+                  <th className="text-left px-3 py-1.5 font-medium text-gray-600 w-16">WP-Jahr</th>
+                </tr>
+              </thead>
+              <tbody>
+                {historieSorted.map(h => (
+                  <tr key={h.id} className="border-t border-gray-100">
+                    <td className="px-3 py-1.5 font-mono text-gray-700">{h.abrechnungsart_code ?? '–'}</td>
+                    <td className="px-3 py-1.5 text-right text-gray-700">
+                      {parseFloat(h.betrag).toLocaleString('de-DE', { minimumFractionDigits: 2 })} €
+                    </td>
+                    <td className="px-3 py-1.5 text-gray-600">{h.gueltig_ab}</td>
+                    <td className="px-3 py-1.5 text-gray-400">{h.wirtschaftsplan_jahr ?? '–'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Erfassungsformular */}
       {loadingArts ? (
         <p className="text-sm text-gray-400 py-4">Abrechnungsarten laden…</p>
       ) : arts.length === 0 ? (
@@ -722,6 +778,7 @@ function HausgeldModal({
         </p>
       ) : (
         <form onSubmit={handleSubmit}>
+          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Neuer Eintrag</h3>
           <div className="overflow-x-auto rounded-lg border border-gray-200 mb-4">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b border-gray-200">
@@ -736,7 +793,7 @@ function HausgeldModal({
               <tbody>
                 {arts.map((art, idx) => {
                   const zeile = zeilen[idx]
-                  const prev = latestHistorie(ev, `.${art.code}`)
+                  const prev = latestHistorie(eintraege, art.code)
                   if (!zeile) return null
                   return (
                     <tr key={art.id} className="border-t border-gray-100">

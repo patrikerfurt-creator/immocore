@@ -71,15 +71,21 @@ def exportiere_lastschrift(lastschriften: list[dict], glaeubiger: dict) -> bytes
     initiating = _sub(grp_hdr, 'InitgPty')
     _sub(initiating, 'Nm', glaeubiger['name'][:70])
 
-    # Group by (faelligkeitsdatum, seq_typ)
+    # Group by (faelligkeitsdatum, seq_typ, kreditorkonto_iban).
+    # kreditorkonto_iban erlaubt pro Position eine abweichende Gläubiger-IBAN
+    # (z.B. unterschiedliche Bankkonten für Bewirtschaftung vs. Rücklagen).
     gruppen: dict[tuple, list] = {}
     for z in lastschriften:
         dt = z['faelligkeitsdatum']
         dt_str = dt.isoformat() if isinstance(dt, date) else str(dt)
         seq = z.get('seq_typ', 'RCUR')
-        gruppen.setdefault((dt_str, seq), []).append(z)
+        kreditor_iban = z.get('kreditorkonto_iban', glaeubiger['iban'])
+        gruppen.setdefault((dt_str, seq, kreditor_iban), []).append(z)
 
-    for (dt_str, seq), gruppe in gruppen.items():
+    for (dt_str, seq, kreditor_iban), gruppe in gruppen.items():
+        eff_iban = gruppe[0].get('kreditorkonto_iban', glaeubiger['iban'])
+        eff_bic  = gruppe[0].get('kreditorkonto_bic',  glaeubiger['bic'])
+
         pmt_inf = _sub(init, 'PmtInf')
         pmt_inf_id = str(uuid.uuid4()).replace('-', '')[:35]
         _sub(pmt_inf, 'PmtInfId', pmt_inf_id)
@@ -101,11 +107,11 @@ def exportiere_lastschrift(lastschriften: list[dict], glaeubiger: dict) -> bytes
 
         cdtr_acct = _sub(pmt_inf, 'CdtrAcct')
         cdtr_id = _sub(cdtr_acct, 'Id')
-        _sub(cdtr_id, 'IBAN', glaeubiger['iban'])
+        _sub(cdtr_id, 'IBAN', eff_iban)
 
         cdtr_agt = _sub(pmt_inf, 'CdtrAgt')
         fin_instn = _sub(cdtr_agt, 'FinInstnId')
-        _sub(fin_instn, 'BIC', glaeubiger['bic'])
+        _sub(fin_instn, 'BIC', eff_bic)
 
         # Gläubiger-ID
         cdtr_schme = _sub(pmt_inf, 'CdtrSchmeId')
@@ -149,3 +155,142 @@ def exportiere_lastschrift(lastschriften: list[dict], glaeubiger: dict) -> bytes
     xml_str = ET.tostring(doc, encoding='unicode', xml_declaration=False)
     dom = minidom.parseString(f'<?xml version="1.0" encoding="UTF-8"?>{xml_str}')
     return dom.toprettyxml(indent='  ', encoding='UTF-8')
+
+
+# ---------------------------------------------------------------------------
+# Hilfsfunktionen für Lastschrift aus dem Hausgeld-Nebenbuch (Phase C)
+# ---------------------------------------------------------------------------
+
+def bestimme_suffix(bankkonto_id, objekt) -> str:
+    """
+    Bestimmt den EndToEnd-Suffix für eine Sollstellung.
+    'B' für Bewirtschaftungskonto, 'R{n}' für Rücklagenkonto Nr. n.
+    """
+    from apps.objekte.models import Bankkonto
+    bk = Bankkonto.objects.get(pk=bankkonto_id)
+    if bk.konto_typ == 'bewirtschaftung':
+        return 'B'
+    elif bk.konto_typ == 'ruecklage':
+        return f'R{bk.reihenfolge - 1}'
+    raise ValueError(f"Unbekannter Bankkonto-Typ: {bk.konto_typ}")
+
+
+def commite_lastschriftlauf(
+    objekt,
+    stichtag,
+    kandidaten: list,
+    user,
+    lauf_quelle: str = 'manuell',
+):
+    """
+    Erstellt einen LastschriftLauf aus einer Liste von HausgeldSollstellungen.
+    Pro Split (Bankkonto) wird eine eigene SEPA-Position erzeugt.
+
+    Returns: LastschriftLauf
+    """
+    from decimal import Decimal
+    from apps.buchhaltung.models import LastschriftLauf
+
+    positionen = []
+    gesamt = Decimal('0')
+
+    sollstellungslauf = kandidaten[0].sollstellungslauf if kandidaten else None
+
+    for ss in kandidaten:
+        person = ss.eigentumsverhaeltnis.person
+        mandat = person.sepa_mandat
+
+        for split in ss.splits.select_related('bankkonto_ziel', 'ba'):
+            if split.bankkonto_ziel is None:
+                continue
+            suffix = bestimme_suffix(split.bankkonto_ziel.id, objekt)
+            verwendungszweck = baue_verwendungszweck(ss, suffix)
+            pos = {
+                'betrag': str(split.betrag),
+                'schuldner_name': person.name,
+                'schuldner_iban': mandat.iban,
+                'schuldner_bic': mandat.bic or 'NOTPROVIDED',
+                'mandatsreferenz': mandat.mandatsreferenz,
+                'mandat_datum': mandat.unterzeichnet_am.isoformat(),
+                'verwendungszweck': verwendungszweck,
+                'faelligkeitsdatum': stichtag.isoformat() if hasattr(stichtag, 'isoformat') else str(stichtag),
+                'seq_typ': 'RCUR',
+                'kreditorkonto_iban': split.bankkonto_ziel.iban,
+                'kreditorkonto_bic': split.bankkonto_ziel.bic or 'NOTPROVIDED',
+                'sollstellung_id': str(ss.id),
+                'split_ba_nr': str(split.ba.nr),
+            }
+            positionen.append(pos)
+            gesamt += split.betrag
+
+    bezeichnung = f'Hausgeld {stichtag.strftime("%m/%Y") if hasattr(stichtag, "strftime") else stichtag}'
+    lauf = LastschriftLauf.objects.create(
+        objekt=objekt,
+        hausgeld_sollstellungslauf=sollstellungslauf,
+        bezeichnung=bezeichnung,
+        faelligkeitsdatum=stichtag,
+        erstellt_von=user,
+        anzahl_positionen=len(positionen),
+        gesamt_summe=gesamt,
+        positionen=positionen,
+        lauf_quelle=lauf_quelle,
+    )
+    return lauf
+
+
+def generiere_pain008(lastschriftlauf) -> str:
+    """
+    Generiert pain.008 XML-String aus einem LastschriftLauf.
+    Gibt einen UTF-8 dekodierten String zurück.
+    """
+    from decimal import Decimal
+    from datetime import date as date_type
+    from apps.objekte.models import Bankkonto
+
+    bankkonto = Bankkonto.objects.filter(
+        objekt=lastschriftlauf.objekt,
+        zahlungsverkehr=True,
+        aktiv=True,
+    ).first()
+    if not bankkonto:
+        raise ValueError(
+            f'Kein aktives Zahlungsverkehr-Bankkonto für Objekt {lastschriftlauf.objekt}'
+        )
+
+    glaeubiger = {
+        'name': bankkonto.kontoinhaber or lastschriftlauf.objekt.bezeichnung,
+        'iban': bankkonto.iban,
+        'bic': bankkonto.bic or 'NOTPROVIDED',
+        'glaeubiger_id': lastschriftlauf.objekt.glaeubiger_id or '',
+    }
+
+    lastschriften = []
+    for pos in lastschriftlauf.positionen:
+        p = dict(pos)
+        p['betrag'] = Decimal(p['betrag'])
+        p['faelligkeitsdatum'] = date_type.fromisoformat(p['faelligkeitsdatum'])
+        p['mandat_datum'] = date_type.fromisoformat(p['mandat_datum'])
+        lastschriften.append(p)
+
+    xml_bytes = exportiere_lastschrift(lastschriften, glaeubiger)
+    return xml_bytes.decode('utf-8')
+
+
+def baue_verwendungszweck(ss, suffix: str) -> str:
+    """
+    Menschenlesbarer Verwendungszweck ohne OPOS-Nr.
+    Format: {Zweck} {MM/YYYY} - {Einheit_Nr} - Objekt {Kurzbez}
+    """
+    einheit_nr = ss.eigentumsverhaeltnis.einheit.einheit_nr
+    objekt_kurz = ss.objekt.kurzbezeichnung or ss.objekt.bezeichnung
+    periode_str = ss.periode.strftime('%m/%Y')
+
+    if ss.sollstellungs_typ == 'hausgeld':
+        zweck = 'Rücklage' if suffix.startswith('R') else 'Hausgeld'
+    elif ss.sollstellungs_typ == 'sonderumlage':
+        bezeichnung = getattr(ss, 'bezeichnung', '') or ''
+        zweck = f'Sonderumlage {bezeichnung}'.strip()
+    else:
+        zweck = f'Abrechnung {ss.periode.year}'
+
+    return f"{zweck} {periode_str} - {einheit_nr} - Objekt {objekt_kurz}"

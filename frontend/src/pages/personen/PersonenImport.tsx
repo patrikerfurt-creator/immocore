@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { personenApi, type CsvVorschauRow } from '../../api/personen'
+import { personenApi, type CsvVorschauRow, type CsvImportAktion } from '../../api/personen'
 import { Button } from '../../components/ui/Button'
 import { Badge } from '../../components/ui/Badge'
 
@@ -14,9 +14,10 @@ const TYP_LABEL: Record<string, string> = {
 type Phase = 'upload' | 'vorschau' | 'ergebnis'
 
 interface ErgebnisState {
-  importiert: number
-  abgelehnt: number
-  errors: string[]
+  angelegt: number
+  uebersprungen: number
+  fehler: number
+  ergebnisDateiname: string
 }
 
 // ------------------------------------------------------------------
@@ -62,6 +63,7 @@ export function PersonenImport() {
   const [fatalErrors, setFatalErrors] = useState<string[]>([])
   const [rows, setRows] = useState<CsvVorschauRow[]>([])
   const [ergebnis, setErgebnis] = useState<ErgebnisState | null>(null)
+  const [csvFile, setCsvFile] = useState<File | null>(null)
 
   // ------------------------------------------------------------------
   // Vorlage herunterladen
@@ -82,6 +84,7 @@ export function PersonenImport() {
   const handleFile = async (file: File) => {
     setIsLoading(true)
     setFatalErrors([])
+    setCsvFile(file)
     try {
       const result = await personenApi.csvVorschau(file)
       if (result.errors.length > 0 && result.rows.length === 0) {
@@ -126,11 +129,36 @@ export function PersonenImport() {
   // Import starten
   // ------------------------------------------------------------------
   const handleImport = async () => {
+    if (!csvFile) return
     setIsLoading(true)
     try {
-      const payload = rows.map(r => ({ zeile: r.zeile, csv_data: r.csv_data, aktion: r.aktion }))
-      const result = await personenApi.csvImport(payload)
-      setErgebnis(result)
+      const aktionen: Record<number, CsvImportAktion> = {}
+      for (const r of rows) {
+        aktionen[r.zeile] = {
+          aktion: r.aktion,
+          preview_status: r.status,
+          duplikat_personennummer: r.duplikat?.personennummer ?? null,
+          duplikat_grund: r.duplikat?.grund ?? null,
+          fehler_meldungen: r.fehler,
+        }
+      }
+
+      const { blob, filename } = await personenApi.csvImport(csvFile, aktionen)
+
+      // Trigger browser download
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      a.click()
+      URL.revokeObjectURL(url)
+
+      setErgebnis({
+        angelegt:      rows.filter(r => r.aktion === 'importieren').length,
+        uebersprungen: rows.filter(r => r.aktion === 'ablehnen' && r.status === 'duplikat').length,
+        fehler:        rows.filter(r => r.status === 'fehler').length,
+        ergebnisDateiname: filename,
+      })
       setPhase('ergebnis')
     } catch {
       setFatalErrors(['Fehler beim Import. Bitte erneut versuchen.'])
@@ -363,7 +391,7 @@ export function PersonenImport() {
           <div className="flex items-center justify-between pt-2">
             <button
               type="button"
-              onClick={() => { setPhase('upload'); setRows([]); setFatalErrors([]) }}
+              onClick={() => { setPhase('upload'); setRows([]); setFatalErrors([]); setCsvFile(null) }}
               className="text-sm text-gray-500 hover:text-gray-700"
             >
               ← Andere Datei wählen
@@ -390,25 +418,26 @@ export function PersonenImport() {
 
             <div className="grid grid-cols-3 gap-4">
               <div className="text-center rounded-lg bg-green-50 border border-green-100 p-4">
-                <p className="text-3xl font-bold text-green-600">{ergebnis.importiert}</p>
-                <p className="text-sm text-green-700 mt-1">Importiert</p>
+                <p className="text-3xl font-bold text-green-600">{ergebnis.angelegt}</p>
+                <p className="text-sm text-green-700 mt-1">Angelegt</p>
               </div>
               <div className="text-center rounded-lg bg-gray-50 border border-gray-100 p-4">
-                <p className="text-3xl font-bold text-gray-500">{ergebnis.abgelehnt}</p>
-                <p className="text-sm text-gray-600 mt-1">Abgelehnt</p>
+                <p className="text-3xl font-bold text-gray-500">{ergebnis.uebersprungen}</p>
+                <p className="text-sm text-gray-600 mt-1">Übersprungen</p>
               </div>
               <div className="text-center rounded-lg bg-red-50 border border-red-100 p-4">
-                <p className="text-3xl font-bold text-red-500">{ergebnis.errors.length}</p>
+                <p className="text-3xl font-bold text-red-500">{ergebnis.fehler}</p>
                 <p className="text-sm text-red-600 mt-1">Fehler</p>
               </div>
             </div>
 
-            {ergebnis.errors.length > 0 && (
-              <div className="rounded-md bg-red-50 border border-red-200 p-3 space-y-1">
-                <p className="text-sm font-medium text-red-700">Fehler beim Import:</p>
-                {ergebnis.errors.map((e, i) => <p key={i} className="text-sm text-red-600">{e}</p>)}
-              </div>
-            )}
+            <div className="rounded-md bg-blue-50 border border-blue-200 p-3 flex items-start gap-2">
+              <span className="text-blue-500 mt-0.5 shrink-0">↓</span>
+              <p className="text-sm text-blue-700">
+                Ergebnisdatei wurde heruntergeladen:{' '}
+                <span className="font-medium">{ergebnis.ergebnisDateiname}</span>
+              </p>
+            </div>
           </div>
 
           <div className="flex gap-3">
@@ -417,7 +446,7 @@ export function PersonenImport() {
             </Button>
             <button
               type="button"
-              onClick={() => { setPhase('upload'); setRows([]); setFatalErrors([]); setErgebnis(null) }}
+              onClick={() => { setPhase('upload'); setRows([]); setFatalErrors([]); setErgebnis(null); setCsvFile(null) }}
               className="text-sm text-gray-500 hover:text-gray-700 px-3 py-2"
             >
               Weiteren Import durchführen

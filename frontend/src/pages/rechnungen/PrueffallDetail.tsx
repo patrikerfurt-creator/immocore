@@ -3,9 +3,10 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { rechnungenApi } from '../../api/rechnungen'
 import { objekteApi } from '../../api/objekte'
+import { wirtschaftsjahreApi } from '../../api/wirtschaftsjahre'
 import client from '../../api/client'
 import { Button } from '../../components/ui/Button'
-import type { Rechnung, Kreditor, Konto, DublettKandidat } from '../../types'
+import type { Rechnung, Kreditor, Konto, DublettKandidat, Wirtschaftsjahr } from '../../types'
 
 const EUR = (v: string | number | null) =>
   v == null ? '—' : Number(v).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })
@@ -26,9 +27,11 @@ export default function PrueffallDetail() {
 
   const [kreditorId, setKreditorId]                   = useState('')
   const [objektId, setObjektId]                       = useState('')
+  const [wirtschaftsjahrId, setWirtschaftsjahrId]     = useState('')
   const [aufwandskontoId, setAufwandskontoId]         = useState('')
   const [aufwandskontoAendern, setAufwandskontoAendern] = useState(false)
   const [lernen, setLernen]                           = useState(true)
+  const [sepaLastschrift, setSepaLastschrift]         = useState(false)
 
   // Stufe 3: neuer Kreditor-Workflow
   const [zeigeNeuForm, setZeigeNeuForm] = useState(false)
@@ -41,6 +44,7 @@ export default function PrueffallDetail() {
     setKreditorId(prev => prev || rechnung.kreditor || '')
     setObjektId(prev => prev || rechnung.objekt || '')
     setAufwandskontoId(prev => prev || rechnung.aufwandskonto_id || '')
+    setSepaLastschrift(rechnung.sepa_lastschrift ?? false)
     if (rechnung.erkennungs_stufe === '3') {
       setNeuName(prev => prev || rechnung.lieferant_name || '')
       setNeuIban(prev => prev || rechnung.lieferant_iban || '')
@@ -55,10 +59,30 @@ export default function PrueffallDetail() {
     queryKey: ['objekte'],
     queryFn: () => objekteApi.list(),
   })
+  const effektivObjektId = objektId || rechnung?.objekt
+
+  const { data: wirtschaftsjahre } = useQuery<Wirtschaftsjahr[]>({
+    queryKey: ['wirtschaftsjahre', effektivObjektId],
+    queryFn: () => wirtschaftsjahreApi.list({ objekt: effektivObjektId! }),
+    enabled: !!effektivObjektId,
+  })
+
+  // Neuestes WJ vorauswählen (sobald Liste geladen)
+  useEffect(() => {
+    if (!wirtschaftsjahre?.length || wirtschaftsjahrId) return
+    const latest = [...wirtschaftsjahre].sort((a, b) => b.jahr - a.jahr)[0]
+    setWirtschaftsjahrId(latest.id)
+  }, [wirtschaftsjahre])
+
   const { data: konten } = useQuery<Konto[]>({
-    queryKey: ['konten-alle', objektId || rechnung?.objekt],
-    queryFn: () => client.get<Konto[]>('/konten/', { params: { objekt: objektId || rechnung?.objekt } }).then(r => r.data),
-    enabled: !!(objektId || rechnung?.objekt),
+    queryKey: ['konten-alle', wirtschaftsjahrId, effektivObjektId],
+    queryFn: () => {
+      const params = wirtschaftsjahrId
+        ? { wirtschaftsjahr: wirtschaftsjahrId }
+        : { objekt: effektivObjektId }
+      return client.get<Konto[]>('/konten/', { params }).then(r => r.data)
+    },
+    enabled: !!(wirtschaftsjahrId || effektivObjektId),
   })
 
   // Duplikat-Prüfung bei Stufe 3
@@ -117,6 +141,11 @@ export default function PrueffallDetail() {
   const mutNeuerKreditor = useMutation({
     mutationFn: (data: { name: string; iban?: string }) => rechnungenApi.createKreditor(data),
     onSuccess: (k) => { setKreditorId(k.id); setZeigeNeuForm(false); setDubWarn([]) },
+  })
+
+  const mutSepa = useMutation({
+    mutationFn: (val: boolean) => rechnungenApi.update(id!, { sepa_lastschrift: val } as never),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['rechnung', id] }),
   })
 
   const handleNeuKreditorAnlegen = async () => {
@@ -292,6 +321,11 @@ export default function PrueffallDetail() {
                   </button>
                 ) : (
                   <>
+                    <WjSelektor
+                      wirtschaftsjahre={wirtschaftsjahre}
+                      wirtschaftsjahrId={wirtschaftsjahrId}
+                      onChange={id => { setWirtschaftsjahrId(id); setAufwandskontoId('') }}
+                    />
                     <select
                       value={aufwandskontoId}
                       onChange={e => setAufwandskontoId(e.target.value)}
@@ -324,6 +358,19 @@ export default function PrueffallDetail() {
                   <p className="text-sm text-red-700">{mutErrorMsg}</p>
                 </div>
               )}
+
+              {/* SEPA-Lastschrift */}
+              <label className="flex items-center gap-2 cursor-pointer select-none pt-1">
+                <input
+                  type="checkbox"
+                  checked={sepaLastschrift}
+                  onChange={e => { setSepaLastschrift(e.target.checked); mutSepa.mutate(e.target.checked) }}
+                  disabled={mutSepa.isPending}
+                  className="w-4 h-4 accent-blue-600"
+                />
+                <span className="text-sm text-gray-700">SEPA-Lastschrift</span>
+                {mutSepa.isPending && <span className="text-xs text-gray-400">…</span>}
+              </label>
 
               {/* Freigabe-Aktionen */}
               <div className="flex gap-3 pt-2">
@@ -431,7 +478,7 @@ export default function PrueffallDetail() {
               >
                 <select
                   value={objektId}
-                  onChange={e => { setObjektId(e.target.value); setAufwandskontoId(''); setAufwandskontoAendern(false) }}
+                  onChange={e => { setObjektId(e.target.value); setWirtschaftsjahrId(''); setAufwandskontoId(''); setAufwandskontoAendern(false) }}
                   className="border rounded px-2 py-1.5 text-sm w-full"
                 >
                   <option value="">— Objekt wählen —</option>
@@ -457,6 +504,13 @@ export default function PrueffallDetail() {
                   </button>
                 ) : (
                   <>
+                    {(objektId || rechnung.objekt) && (
+                      <WjSelektor
+                        wirtschaftsjahre={wirtschaftsjahre}
+                        wirtschaftsjahrId={wirtschaftsjahrId}
+                        onChange={id => { setWirtschaftsjahrId(id); setAufwandskontoId('') }}
+                      />
+                    )}
                     <select
                       value={aufwandskontoId}
                       onChange={e => setAufwandskontoId(e.target.value)}
@@ -491,6 +545,19 @@ export default function PrueffallDetail() {
               <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
                 <input type="checkbox" checked={!lernen} onChange={e => setLernen(!e.target.checked)} className="rounded" />
                 Einzelfall — keine Regel speichern
+              </label>
+
+              {/* SEPA-Lastschrift */}
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={sepaLastschrift}
+                  onChange={e => { setSepaLastschrift(e.target.checked); mutSepa.mutate(e.target.checked) }}
+                  disabled={mutSepa.isPending}
+                  className="w-4 h-4 accent-blue-600"
+                />
+                <span className="text-sm text-gray-700">SEPA-Lastschrift</span>
+                {mutSepa.isPending && <span className="text-xs text-gray-400">…</span>}
               </label>
 
               {/* Fehleranzeige */}
@@ -546,6 +613,35 @@ function Row({ label, value }: { label: string; value: string | null | undefined
     <div className="flex gap-2">
       <span className="text-gray-500 w-36 shrink-0">{label}</span>
       <span className="text-gray-800 break-all">{value || '—'}</span>
+    </div>
+  )
+}
+
+function WjSelektor({
+  wirtschaftsjahre,
+  wirtschaftsjahrId,
+  onChange,
+}: {
+  wirtschaftsjahre: Wirtschaftsjahr[] | undefined
+  wirtschaftsjahrId: string
+  onChange: (id: string) => void
+}) {
+  if (!wirtschaftsjahre?.length) return null
+  const sorted = [...wirtschaftsjahre].sort((a, b) => b.jahr - a.jahr)
+  return (
+    <div className="mb-2">
+      <label className="text-xs text-gray-500 mb-0.5 block">Wirtschaftsjahr</label>
+      <select
+        value={wirtschaftsjahrId}
+        onChange={e => onChange(e.target.value)}
+        className="border rounded px-2 py-1 text-sm w-full bg-white"
+      >
+        {sorted.map(wj => (
+          <option key={wj.id} value={wj.id}>
+            {wj.jahr}{wj.status === 'abgeschlossen' ? ' (abgeschlossen)' : ' (offen)'}
+          </option>
+        ))}
+      </select>
     </div>
   )
 }

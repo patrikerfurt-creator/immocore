@@ -420,9 +420,9 @@ export function MitarbeiterPage() {
         </div>
       )}
 
-      {(modal === 'neu' || (modal && modal !== 'neu')) && (
+      {modal !== null && (
         <MitarbeiterModal
-          editItem={modal !== 'neu' ? modal as Mitarbeiter : null}
+          editItem={modal !== 'neu' ? modal : null}
           onClose={() => setModal(null)}
         />
       )}

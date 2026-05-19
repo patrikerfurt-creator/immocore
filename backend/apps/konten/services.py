@@ -62,10 +62,32 @@ def personenkonto_anlegen(ev, objekt) -> tuple:
     return pk, True
 
 
-def kontenrahmen_anlegen(objekt_id: str) -> dict:
-    """Legt alle 70 Muster-Sachkonten für ein WEG-Objekt an. Idempotent."""
-    from apps.objekte.models import Objekt
-    objekt = Objekt.objects.get(pk=objekt_id)
+def kontenrahmen_anlegen(wirtschaftsjahr_id: str | None = None, objekt_id: str | None = None) -> dict:
+    """Legt alle 70 Muster-Sachkonten für ein WEG-WJ an. Idempotent.
+
+    Entweder wirtschaftsjahr_id oder objekt_id angeben. Bei objekt_id wird das
+    neueste offene WJ des Objekts verwendet.
+    """
+    from apps.objekte.models import Objekt, Wirtschaftsjahr
+
+    if wirtschaftsjahr_id:
+        wj = Wirtschaftsjahr.objects.select_related('objekt').get(pk=wirtschaftsjahr_id)
+        objekt = wj.objekt
+    elif objekt_id:
+        objekt = Objekt.objects.get(pk=objekt_id)
+        wj = (
+            Wirtschaftsjahr.objects
+            .filter(objekt=objekt, status='offen')
+            .order_by('-jahr')
+            .first()
+        )
+        if wj is None:
+            wj = Wirtschaftsjahr.objects.filter(objekt=objekt).order_by('-jahr').first()
+        if wj is None:
+            raise ValueError('Kein Wirtschaftsjahr für dieses Objekt vorhanden.')
+    else:
+        raise ValueError('wirtschaftsjahr_id oder objekt_id erforderlich.')
+
     if objekt.objekt_typ != 'WEG':
         raise ValueError('Musterkontenrahmen gilt nur für WEG-Objekte.')
 
@@ -74,17 +96,17 @@ def kontenrahmen_anlegen(objekt_id: str) -> dict:
         reader = csv.DictReader(f, delimiter=';')
         for row in reader:
             _, created = Konto.objects.get_or_create(
-                objekt=objekt,
+                wirtschaftsjahr=wj,
                 kontonummer=row['kontonummer'],
                 defaults={
-                    'kontoname':          row['kontoname'],
-                    'abrechnungsart':     row['abrechnungsart'] or None,
-                    'direktes_buchen':    row['direktes_buchen'] == 'ja',
+                    'kontoname':           row['kontoname'],
+                    'abrechnungsart':      row['abrechnungsart'] or None,
+                    'direktes_buchen':     row['direktes_buchen'] == 'ja',
                     'verteilerschluessel': row['verteilerschluessel'] or None,
-                    'kontoart':           row['kontoart'],
-                    'arge_konto':         row['arge_konto'] == 'ja',
-                    'arge_kostenart':     row['arge_kostenart'] or None,
-                    'aktiv':              True,
+                    'kontoart':            row['kontoart'],
+                    'arge_konto':          row['arge_konto'] == 'ja',
+                    'arge_kostenart':      row['arge_kostenart'] or None,
+                    'aktiv':               True,
                 },
             )
             if created:
@@ -198,18 +220,38 @@ def verteilerschluessel_anlegen(objekt_id: str) -> int:
     return angelegt
 
 
-def ruecklagen_konten_anlegen(objekt_id: str, ruecklagen: list) -> int:
+def ruecklagen_konten_anlegen(
+    ruecklagen: list,
+    wirtschaftsjahr_id: str | None = None,
+    objekt_id: str | None = None,
+) -> int:
     """Legt Sachkonten für Rücklage II+ an (3 Konten je Rücklage).
-    ruecklagen: list of dicts mit 'reihenfolge' und 'bezeichnung'.
+    ruecklagen: list of dicts mit 'reihenfolge'.
     Rücklage I (reihenfolge=1) ist bereits im Musterkontenrahmen.
     """
-    from apps.objekte.models import Objekt
-    objekt = Objekt.objects.get(pk=objekt_id)
+    from apps.objekte.models import Wirtschaftsjahr
+
+    if wirtschaftsjahr_id:
+        wj = Wirtschaftsjahr.objects.get(pk=wirtschaftsjahr_id)
+    elif objekt_id:
+        wj = (
+            Wirtschaftsjahr.objects
+            .filter(objekt_id=objekt_id, status='offen')
+            .order_by('-jahr')
+            .first()
+        )
+        if wj is None:
+            wj = Wirtschaftsjahr.objects.filter(objekt_id=objekt_id).order_by('-jahr').first()
+        if wj is None:
+            raise ValueError('Kein Wirtschaftsjahr für dieses Objekt vorhanden.')
+    else:
+        raise ValueError('wirtschaftsjahr_id oder objekt_id erforderlich.')
+
     angelegt = 0
     for r in ruecklagen:
         reihenfolge = int(r['reihenfolge'])
         if reihenfolge <= 1:
-            continue  # Rücklage I ist im Musterkontenrahmen
+            continue
         n = 910 + reihenfolge
         assert n != 910, 'Suffix .910 darf niemals vergeben werden'
         abr = str(n)
@@ -226,7 +268,7 @@ def ruecklagen_konten_anlegen(objekt_id: str, ruecklagen: list) -> int:
         ]
         for kd in konten_defs:
             _, created = Konto.objects.get_or_create(
-                objekt=objekt, kontonummer=kd['kontonummer'],
+                wirtschaftsjahr=wj, kontonummer=kd['kontonummer'],
                 defaults={**kd, 'arge_kostenart': None, 'aktiv': True},
             )
             if created:

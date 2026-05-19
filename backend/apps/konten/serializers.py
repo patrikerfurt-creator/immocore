@@ -10,6 +10,8 @@ class AbrechnungsartSerializer(serializers.ModelSerializer):
 
 
 class KontoSerializer(serializers.ModelSerializer):
+    wirtschaftsjahr_jahr = serializers.IntegerField(source='wirtschaftsjahr.jahr', read_only=True, default=None)
+
     class Meta:
         model  = Konto
         fields = '__all__'

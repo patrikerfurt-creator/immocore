@@ -2,7 +2,7 @@
 OP-Buchung Phase 1 – Rechnungsfreigabe (§28 WEG).
 
 Phase 1 (Freigabe):  Soll 15900 (Schwebende ER) / Haben Kreditorenkonto (70xxx)
-                     + KreditorOP mit fortlaufender Nummer ab 100000
+                     + KreditorOP mit Nummer JJNNNNNN (z.B. 26000001)
 
 Phase 2 (Zahlung):   → rechnung_zahlung_service
 """
@@ -35,22 +35,32 @@ def _naechste_belegnr(buchungsdatum: date) -> str:
 
 
 def _naechste_op_nummer() -> int:
+    jahr_kurz = date.today().year % 100          # 26 für 2026
+    basis     = jahr_kurz * 1_000_000            # 26_000_000
     last = (
         KreditorOP.objects
         .select_for_update()
+        .filter(op_nummer__gte=basis, op_nummer__lt=basis + 1_000_000)
         .order_by("-op_nummer")
         .values_list("op_nummer", flat=True)
         .first()
     )
-    return (last + 1) if last else 100000
+    return (last + 1) if last else (basis + 1)
 
 
 def get_or_create_kreditor_konto(kreditor, objekt) -> Konto:
     """Liefert das Sachkonto (70xxx) für diesen Kreditor im Objekt, legt es bei Bedarf an."""
     if not kreditor.kreditorennummer:
         raise ValidationError(f"Kreditor '{kreditor.name}' hat noch keine Kreditorennummer.")
+    from apps.objekte.models import Wirtschaftsjahr
+    wj = (
+        Wirtschaftsjahr.objects.filter(objekt=objekt, status='offen').order_by('-jahr').first()
+        or Wirtschaftsjahr.objects.filter(objekt=objekt).order_by('-jahr').first()
+    )
+    if wj is None:
+        raise ValidationError(f"Kein Wirtschaftsjahr für Objekt '{objekt}' vorhanden.")
     konto, _ = Konto.objects.get_or_create(
-        objekt=objekt,
+        wirtschaftsjahr=wj,
         kontonummer=kreditor.kreditorennummer,
         defaults={
             "kontoname": f"Kreditor {kreditor.name}",
@@ -76,17 +86,20 @@ def _validiere_aufwandskonto(konto: Konto, objekt_id) -> None:
         raise ValidationError(
             f"Aufwandskonto {nr} ist als 'Direktes Buchen' markiert und nicht für den OP-Workflow zulässig."
         )
-    if str(konto.objekt_id) != str(objekt_id):
+    konto_objekt_id = konto.wirtschaftsjahr.objekt_id if konto.wirtschaftsjahr_id else None
+    if str(konto_objekt_id) != str(objekt_id):
         raise ValidationError("Aufwandskonto gehört nicht zum Objekt der Rechnung.")
 
 
 @transaction.atomic
-def rechnung_freigeben(rechnung, aufwandskonto: Konto, freigegeben_von):
+def rechnung_freigeben(rechnung, aufwandskonto: Konto, freigegeben_von=None):
     """
     Phase 1: OP-Buchung anlegen und KreditorOP erstellen.
 
     Buchungssatz: Soll 15900 (Schwebende ER) / Haben Kreditorenkonto (70xxx)
-    KreditorOP:   fortlaufende Nummer ab 100000
+    KreditorOP:   fortlaufende Nummer JJNNNNNN (z.B. 26000001)
+
+    freigegeben_von darf None sein (System-Auto-Buchung via Erkennungs-Pipeline).
     """
     if rechnung.op_buchung_id:
         raise ValidationError("OP-Buchung existiert bereits.")
@@ -106,8 +119,8 @@ def rechnung_freigeben(rechnung, aufwandskonto: Konto, freigegeben_von):
 
     _validiere_aufwandskonto(aufwandskonto, rechnung.objekt_id)
 
-    konto_15900 = Konto.objects.filter(
-        objekt_id=rechnung.objekt_id, kontonummer=KONTO_SCHWEBENDE_ER
+    konto_15900 = Konto.objects.select_related('wirtschaftsjahr').filter(
+        wirtschaftsjahr__objekt_id=rechnung.objekt_id, kontonummer=KONTO_SCHWEBENDE_ER
     ).first()
     if not konto_15900:
         raise ValidationError(
@@ -118,6 +131,7 @@ def rechnung_freigeben(rechnung, aufwandskonto: Konto, freigegeben_von):
 
     kreditor_str = rechnung.kreditor.name
     heute = date.today()
+    wj = konto_15900.wirtschaftsjahr
 
     buchung = Buchung.objects.create(
         objekt=rechnung.objekt,
@@ -131,7 +145,8 @@ def rechnung_freigeben(rechnung, aufwandskonto: Konto, freigegeben_von):
         ),
         belegnr=_naechste_belegnr(heute),
         beleg_referenz=rechnung.rechnungsnummer or str(rechnung.id),
-        wirtschaftsjahr=heute.year,
+        wirtschaftsjahr=wj,
+        wirtschaftsjahr_nr=wj.jahr if wj else heute.year,
         status="entwurf",
         erstellt_von=freigegeben_von,
     )

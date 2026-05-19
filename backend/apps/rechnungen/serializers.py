@@ -63,6 +63,7 @@ class RechnungSerializer(serializers.ModelSerializer):
     aufwandskonto_id       = serializers.UUIDField(source='aufwandskonto.id', read_only=True)
     aufwandskonto_label    = serializers.SerializerMethodField()
     darf_direkt_freigeben  = serializers.SerializerMethodField()
+    op_nummer              = serializers.SerializerMethodField()
 
     class Meta:
         model = Rechnung
@@ -81,6 +82,12 @@ class RechnungSerializer(serializers.ModelSerializer):
         from .recognition import darf_betreuer_direkt_freigeben
         return darf_betreuer_direkt_freigeben(obj, request.user)
 
+    def get_op_nummer(self, obj):
+        try:
+            return obj.kreditor_op.op_nummer
+        except Exception:
+            return None
+
 
 class RechnungListSerializer(serializers.ModelSerializer):
     kreditor_name = serializers.SerializerMethodField()
@@ -96,6 +103,7 @@ class RechnungListSerializer(serializers.ModelSerializer):
     zugewiesen_an_id = serializers.UUIDField(source='zugewiesen_an.id', read_only=True)
     zugewiesen_an_name = serializers.CharField(source='zugewiesen_an.get_full_name', read_only=True)
     lock_user = serializers.SerializerMethodField()
+    op_nummer = serializers.SerializerMethodField()
 
     class Meta:
         model = Rechnung
@@ -111,7 +119,8 @@ class RechnungListSerializer(serializers.ModelSerializer):
             'aufwandskonto_id', 'aufwandskonto_label',
             'zugewiesen_an_id', 'zugewiesen_an_name',
             'routing_ziel', 'leistungstext',
-            'lock_user',
+            'lock_user', 'op_nummer',
+            'sepa_lastschrift',
         ]
 
     def get_kreditor_name(self, obj):
@@ -147,3 +156,9 @@ class RechnungListSerializer(serializers.ModelSerializer):
         except Exception:
             pass
         return None
+
+    def get_op_nummer(self, obj):
+        try:
+            return obj.kreditor_op.op_nummer
+        except Exception:
+            return None
