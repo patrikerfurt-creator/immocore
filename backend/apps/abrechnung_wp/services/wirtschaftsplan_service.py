@@ -234,17 +234,19 @@ def commite_beschluss(wp: Wirtschaftsplan, beschluss_data: dict, user) -> dict:
         except EigentumsVerhaeltnis.DoesNotExist:
             continue
 
-        HausgeldHistorie.objects.create(
+        HausgeldHistorie.objects.update_or_create(
             eigentumsverhaeltnis_id=ev_id,
-            ba=ba_obj,
             abrechnungsart=abr_obj,
-            betrag=monatsbetrag,
             gueltig_ab=wp.wirkung_ab,
-            quelle='wirtschaftsplan',
-            quelle_wp=wp,
-            import_referenz=None,
-            beschluss=None,
-            erstellt_von=user,
+            defaults={
+                'ba': ba_obj,
+                'betrag': monatsbetrag,
+                'quelle': 'wirtschaftsplan',
+                'quelle_wp': wp,
+                'import_referenz': None,
+                'beschluss': None,
+                'erstellt_von': user,
+            },
         )
 
     # 4) Rückwirkende Differenz-Mechanik
