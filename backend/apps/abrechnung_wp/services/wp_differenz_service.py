@@ -30,11 +30,13 @@ def _monatsersten_zwischen(von: date, bis_exkl: date):
 def _altes_monatssoll(ev_id: str, ba_code: str, vor_datum: date) -> Decimal:
     """
     Gibt den zuletzt gültigen HausgeldHistorie-Betrag für (ev, ba) VOR dem WP-Wirkungsdatum zurück.
+    Sucht über abrechnungsart__code, da ba-FK bei Import-Einträgen oft None ist.
     """
     hist = HausgeldHistorie.objects.filter(
         eigentumsverhaeltnis_id=ev_id,
-        ba__nr=ba_code,
         gueltig_ab__lt=vor_datum,
+    ).filter(
+        Q(abrechnungsart__code=ba_code) | Q(ba__nr=ba_code)
     ).order_by('-gueltig_ab').first()
     return hist.betrag if hist else Decimal('0')
 
@@ -67,7 +69,7 @@ def ermittle_differenz_perioden(wp: Wirtschaftsplan, ba_je_ev: dict) -> dict:
     # Aggregiere neues Soll je EV je BA
     neues_soll = defaultdict(lambda: defaultdict(lambda: Decimal('0')))
     for (ev_id, ba_code), betrag in ba_je_ev.items():
-        neues_soll[ev_id][ba_code] = betrag
+        neues_soll[str(ev_id)][ba_code] = betrag
 
     # Pro Periode: finde den aktiven EV
     # Gruppen: {(ev_id, ba_code): diff_je_periode_liste}
