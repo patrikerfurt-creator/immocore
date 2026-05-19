@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { wirtschaftsplanApi, type Wirtschaftsplan, type WirtschaftsplanPosition } from '../../../api/wirtschaftsplan'
 
@@ -73,9 +73,8 @@ export function Schritt3_Verteilung({ wp, onWeiter, onZurueck }: Props) {
               const showFreigabe = !isOk && !isFreigegeben && diff > 0.10
 
               return (
-                <>
+                <Fragment key={pos.id}>
                   <tr
-                    key={pos.id}
                     className={`border-t border-gray-100 cursor-pointer hover:bg-gray-50 ${isExpanded ? 'bg-gray-50' : ''}`}
                     onClick={() => setExpandedPos(isExpanded ? null : pos.id)}
                   >
@@ -96,7 +95,7 @@ export function Schritt3_Verteilung({ wp, onWeiter, onZurueck }: Props) {
                     <td className="px-2 py-2.5 text-gray-400 text-xs">{isExpanded ? '▲' : '▼'}</td>
                   </tr>
                   {isExpanded && (
-                    <tr key={`${pos.id}-detail`} className="bg-gray-50">
+                    <tr className="bg-gray-50">
                       <td colSpan={7} className="px-4 py-3 border-t border-gray-100">
                         {pos.anteile.length === 0 ? (
                           <p className="text-xs text-gray-400">Keine Anteile berechnet.</p>
@@ -145,7 +144,7 @@ export function Schritt3_Verteilung({ wp, onWeiter, onZurueck }: Props) {
                       </td>
                     </tr>
                   )}
-                </>
+                </Fragment>
               )
             })}
           </tbody>

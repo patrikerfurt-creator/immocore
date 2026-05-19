@@ -52,7 +52,7 @@ export function WirtschaftsplanListe() {
     queryKey: ['wirtschaftsjahre', objektId],
     queryFn: () =>
       fetch(`/api/v1/wirtschaftsjahre/?objekt=${objektId}`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem('access')}` },
+        headers: { Authorization: `Bearer ${localStorage.getItem('access_token')}` },
       }).then(r => r.json()),
     enabled: !!objektId,
   })
