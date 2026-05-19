@@ -204,6 +204,67 @@ class WirtschaftsplanViewSet(viewsets.ModelViewSet):
         return Response(serializer.data, status=201)
 
     # -----------------------------------------------------------------------
+    # PDF-Ausgaben
+    # -----------------------------------------------------------------------
+
+    @action(detail=True, methods=['get'], url_path='pdf/gesamt')
+    def pdf_gesamt(self, request, pk=None):
+        wp = get_object_or_404(Wirtschaftsplan, pk=pk)
+        from apps.abrechnung_wp.services.wp_pdf_service import render_gesamt_pdf
+        try:
+            pdf_bytes = render_gesamt_pdf(wp)
+        except Exception as e:
+            import traceback, logging
+            logging.getLogger(__name__).error('pdf_gesamt: %s', traceback.format_exc())
+            return Response({'errors': [str(e)]}, status=500)
+        from django.http import HttpResponse
+        wj_jahr = wp.wirtschaftsjahr.jahr
+        filename = f"Wirtschaftsplan_{wj_jahr}.pdf"
+        resp = HttpResponse(pdf_bytes, content_type='application/pdf')
+        resp['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return resp
+
+    @action(detail=True, methods=['get'], url_path='pdf/einzeln')
+    def pdf_einzeln(self, request, pk=None):
+        wp = get_object_or_404(Wirtschaftsplan, pk=pk)
+        from apps.abrechnung_wp.services.wp_pdf_service import render_einzel_pdf, render_einzel_bulk_zip
+        bulk = request.query_params.get('bulk') == '1'
+        einheit_id = request.query_params.get('einheit_id')
+
+        if bulk:
+            try:
+                zip_bytes = render_einzel_bulk_zip(wp)
+            except Exception as e:
+                import traceback, logging
+                logging.getLogger(__name__).error('pdf_einzeln bulk: %s', traceback.format_exc())
+                return Response({'errors': [str(e)]}, status=500)
+            from django.http import HttpResponse
+            wj_jahr = wp.wirtschaftsjahr.jahr
+            objekt_nr = wp.wirtschaftsjahr.objekt.kurzbezeichnung or str(wp.wirtschaftsjahr.objekt_id)[:8]
+            filename = f"Einzelwirtschaftsplaene_{objekt_nr}_{wj_jahr}.zip"
+            resp = HttpResponse(zip_bytes, content_type='application/zip')
+            resp['Content-Disposition'] = f'attachment; filename="{filename}"'
+            return resp
+
+        if not einheit_id:
+            return Response({'errors': ['einheit_id oder bulk=1 erforderlich.']}, status=400)
+
+        from apps.objekte.models import Einheit
+        einheit = get_object_or_404(Einheit, pk=einheit_id)
+        try:
+            pdf_bytes = render_einzel_pdf(wp, einheit)
+        except Exception as e:
+            import traceback, logging
+            logging.getLogger(__name__).error('pdf_einzeln: %s', traceback.format_exc())
+            return Response({'errors': [str(e)]}, status=500)
+        from django.http import HttpResponse
+        wj_jahr = wp.wirtschaftsjahr.jahr
+        filename = f"EWP_{einheit.einheit_nr}_{wj_jahr}.pdf"
+        resp = HttpResponse(pdf_bytes, content_type='application/pdf')
+        resp['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return resp
+
+    # -----------------------------------------------------------------------
     # Verfügbare Konten für WP
     # -----------------------------------------------------------------------
 

@@ -1,0 +1,95 @@
+{% extends "wirtschaftsplan/base_letterhead.html" %}
+{% block content %}
+
+<h1>Einzelwirtschaftsplan {{ wj.jahr }}</h1>
+<div class="meta-grid">
+  <div class="meta-row">
+    <span class="meta-label">Objekt:</span>
+    <span class="meta-value">{{ objekt.bezeichnung }}</span>
+  </div>
+  <div class="meta-row">
+    <span class="meta-label">Einheit:</span>
+    <span class="meta-value">{{ einheit.einheit_nr }} — {{ einheit.lage }}</span>
+  </div>
+  <div class="meta-row">
+    <span class="meta-label">Eigentümer:</span>
+    <span class="meta-value">{{ eigentuemer_name }}</span>
+  </div>
+  {% if einheit.miteigentumsanteil %}
+  <div class="meta-row">
+    <span class="meta-label">MEA:</span>
+    <span class="meta-value">{{ einheit.miteigentumsanteil }} / 1.000</span>
+  </div>
+  {% endif %}
+  <div class="meta-row">
+    <span class="meta-label">Wirkung ab:</span>
+    <span class="meta-value">{{ wp.wirkung_ab|date:"d.m.Y" }}</span>
+  </div>
+  {% if wp.beschluss_datum %}
+  <div class="meta-row">
+    <span class="meta-label">Beschluss vom:</span>
+    <span class="meta-value">{{ wp.beschluss_datum|date:"d.m.Y" }}{% if wp.beschluss_tagesordnungspunkt %} ({{ wp.beschluss_tagesordnungspunkt }}){% endif %}</span>
+  </div>
+  {% endif %}
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th style="width:8%">Kto</th>
+      <th style="width:22%">Bezeichnung</th>
+      <th style="width:15%">VS gesamt</th>
+      <th style="width:13%">VS Ihr Anteil</th>
+      <th class="num" style="width:16%">Gesamt (€)</th>
+      <th class="num" style="width:16%">Ihr Anteil (€)</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for pos in positionen %}
+    <tr>
+      <td>{{ pos.konto.kontonummer }}</td>
+      <td>{{ pos.konto.kontoname }}</td>
+      <td>{{ pos.vs_gesamt_text }}</td>
+      <td>{{ pos.vs_anteil_text }}</td>
+      <td class="num">{{ pos.betrag|floatformat:2 }}</td>
+      <td class="num">{{ pos.betrag_anteil|floatformat:2 }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+  <tfoot>
+    <tr class="tfoot">
+      <td colspan="4">GESAMT JAHRESANTEIL</td>
+      <td class="num">{{ gesamt_jahresbetrag|floatformat:2 }}</td>
+      <td class="num">{{ gesamt_anteil|floatformat:2 }}</td>
+    </tr>
+  </tfoot>
+</table>
+
+<div class="summary-box">
+  {% for ba_code, werte in ba_splits.items %}
+  <div class="summary-row">
+    <span>davon {{ werte.bezeichnung }} (BA .{{ ba_code }})</span>
+    <span>{{ werte.jahresanteil|floatformat:2 }} € / Jahr</span>
+  </div>
+  {% endfor %}
+  <div class="summary-row summary-total">
+    <span>Monatliches Soll ab {{ wp.wirkung_ab|date:"d.m.Y" }}</span>
+    <span>{{ monatssoll_gesamt|floatformat:2 }} €</span>
+  </div>
+  {% for ba_code, werte in ba_splits.items %}
+  <div class="summary-row" style="font-size:8.5pt; color:#555; padding-left:12pt;">
+    <span>BA .{{ ba_code }} {{ werte.bezeichnung }}</span>
+    <span>{{ werte.monatsbetrag|floatformat:2 }} €/Monat</span>
+  </div>
+  {% endfor %}
+</div>
+
+{% if bewirtschaftung_iban %}
+<div style="margin-top:16pt; font-size:9pt; color:#374151; border-top:1pt solid #e5e7eb; padding-top:8pt;">
+  Bitte stellen Sie Ihren Dauerauftrag ab {{ wp.wirkung_ab|date:"d.m.Y" }} entsprechend um.<br>
+  <strong>Empfänger-IBAN:</strong> {{ bewirtschaftung_iban }}<br>
+  <strong>Verwendungszweck:</strong> Hausgeld {{ einheit.einheit_nr }} {{ objekt.bezeichnung }}
+</div>
+{% endif %}
+
+{% endblock %}

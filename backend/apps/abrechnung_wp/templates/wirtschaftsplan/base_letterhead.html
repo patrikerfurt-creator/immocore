@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<style>
+  @page {
+    size: A4;
+    margin: 20mm 20mm 25mm 20mm;
+    @bottom-center {
+      content: "Seite " counter(page) " von " counter(pages);
+      font-size: 9pt;
+      color: #666;
+    }
+    @bottom-right {
+      content: "Erstellt am {{ heute }}{% if entwurf %} — Vorbehaltlich Beschlussfassung in der Eigentümerversammlung{% endif %}";
+      font-size: 8pt;
+      color: #888;
+      white-space: nowrap;
+    }
+  }
+  body {
+    font-family: Arial, sans-serif;
+    font-size: 10pt;
+    color: #222;
+    line-height: 1.4;
+  }
+  .letterhead {
+    border-bottom: 2px solid #2563eb;
+    padding-bottom: 8pt;
+    margin-bottom: 14pt;
+  }
+  .letterhead-firma {
+    font-size: 13pt;
+    font-weight: bold;
+    color: #1e40af;
+  }
+  .letterhead-adresse {
+    font-size: 8.5pt;
+    color: #555;
+  }
+  h1 {
+    font-size: 14pt;
+    font-weight: bold;
+    color: #1e3a8a;
+    margin-top: 14pt;
+    margin-bottom: 4pt;
+  }
+  h2 {
+    font-size: 10.5pt;
+    font-weight: bold;
+    color: #374151;
+    margin-top: 12pt;
+    margin-bottom: 4pt;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 9.5pt;
+  }
+  th {
+    background: #e8f0fe;
+    padding: 5pt 7pt;
+    text-align: left;
+    font-weight: bold;
+    border-bottom: 1pt solid #93c5fd;
+  }
+  td {
+    padding: 4pt 7pt;
+    border-bottom: 1pt solid #e5e7eb;
+  }
+  .num { text-align: right; }
+  .tfoot td {
+    border-top: 2pt solid #374151;
+    font-weight: bold;
+    background: #f3f4f6;
+  }
+  .entwurf-banner {
+    background: #fef9c3;
+    border: 1pt solid #ca8a04;
+    color: #78350f;
+    font-size: 8.5pt;
+    padding: 5pt 10pt;
+    margin-bottom: 10pt;
+    border-radius: 3pt;
+  }
+  .meta-grid {
+    display: table;
+    width: 100%;
+    margin-bottom: 14pt;
+  }
+  .meta-row {
+    display: table-row;
+  }
+  .meta-label {
+    display: table-cell;
+    font-weight: bold;
+    width: 40%;
+    padding: 2pt 0;
+    font-size: 9.5pt;
+  }
+  .meta-value {
+    display: table-cell;
+    padding: 2pt 0;
+    font-size: 9.5pt;
+  }
+  .summary-box {
+    border: 1pt solid #93c5fd;
+    background: #eff6ff;
+    padding: 8pt 12pt;
+    margin-top: 12pt;
+    font-size: 9.5pt;
+  }
+  .summary-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 2pt 0;
+  }
+  .summary-total {
+    font-weight: bold;
+    font-size: 10.5pt;
+    border-top: 1pt solid #374151;
+    margin-top: 4pt;
+    padding-top: 4pt;
+  }
+</style>
+</head>
+<body>
+<div class="letterhead">
+  <div class="letterhead-firma">Demme Immobilien Verwaltung GmbH</div>
+  <div class="letterhead-adresse">Coventrystraße 32 · 65934 Frankfurt am Main</div>
+</div>
+
+{% if entwurf %}
+<div class="entwurf-banner">
+  ⚠ ENTWURF — Vorbehaltlich Beschlussfassung in der Eigentümerversammlung
+</div>
+{% endif %}
+
+{% block content %}{% endblock %}
+</body>
+</html>

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { wirtschaftsplanApi, type Wirtschaftsplan, type WirtschaftsplanPosition } from '../../api/wirtschaftsplan'
@@ -42,6 +43,28 @@ export function WirtschaftsplanDetail() {
     enabled: !!wpId,
   })
 
+  const [pdfLoading, setPdfLoading] = useState<string | null>(null)
+
+  const handlePdfGesamt = async () => {
+    if (!wp) return
+    setPdfLoading('gesamt')
+    try {
+      await wirtschaftsplanApi.downloadGesamtPdf(wp.id, `Wirtschaftsplan_WJ${wp.wj_jahr}.pdf`)
+    } finally {
+      setPdfLoading(null)
+    }
+  }
+
+  const handlePdfBulk = async () => {
+    if (!wp) return
+    setPdfLoading('bulk')
+    try {
+      await wirtschaftsplanApi.downloadBulkZip(wp.id, `Einzelwirtschaftsplaene_WJ${wp.wj_jahr}.zip`)
+    } finally {
+      setPdfLoading(null)
+    }
+  }
+
   const korrekturbeschlussMut = useMutation({
     mutationFn: () => wirtschaftsplanApi.korrekturbeschluss(wpId!),
     onSuccess: (neuerWp: Wirtschaftsplan) => {
@@ -85,6 +108,24 @@ export function WirtschaftsplanDetail() {
             >
               Korrekturbeschluss erstellen
             </button>
+          )}
+          {(wp.positionen?.length ?? 0) > 0 && (
+            <>
+              <button
+                onClick={handlePdfGesamt}
+                disabled={pdfLoading !== null}
+                className="border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+              >
+                {pdfLoading === 'gesamt' ? '…' : 'Gesamt-PDF'}
+              </button>
+              <button
+                onClick={handlePdfBulk}
+                disabled={pdfLoading !== null}
+                className="border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+              >
+                {pdfLoading === 'bulk' ? '…' : 'Einzelpläne (ZIP)'}
+              </button>
+            </>
           )}
         </div>
       </div>

@@ -103,4 +103,34 @@ export const wirtschaftsplanApi = {
 
   verfuegbareKonten: (wpId: string) =>
     client.get<VerfuegbaresKonto[]>(`/wirtschaftsplaene/${wpId}/verfuegbare-konten/`).then(r => r.data),
+
+  downloadGesamtPdf: async (wpId: string, dateiname: string) => {
+    const resp = await client.get(`/wirtschaftsplaene/${wpId}/pdf/gesamt/`, { responseType: 'blob' })
+    _triggerDownload(resp.data, dateiname)
+  },
+
+  downloadEinzelPdf: async (wpId: string, einheitId: string, dateiname: string) => {
+    const resp = await client.get(`/wirtschaftsplaene/${wpId}/pdf/einzeln/`, {
+      params: { einheit_id: einheitId },
+      responseType: 'blob',
+    })
+    _triggerDownload(resp.data, dateiname)
+  },
+
+  downloadBulkZip: async (wpId: string, dateiname: string) => {
+    const resp = await client.get(`/wirtschaftsplaene/${wpId}/pdf/einzeln/`, {
+      params: { bulk: '1' },
+      responseType: 'blob',
+    })
+    _triggerDownload(resp.data, dateiname)
+  },
+}
+
+function _triggerDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
 }

@@ -1,0 +1,77 @@
+{% extends "wirtschaftsplan/base_letterhead.html" %}
+{% block content %}
+
+<h1>Wirtschaftsplan {{ wj.jahr }}</h1>
+<div class="meta-grid">
+  <div class="meta-row">
+    <span class="meta-label">Objekt:</span>
+    <span class="meta-value">{{ objekt.bezeichnung }}</span>
+  </div>
+  <div class="meta-row">
+    <span class="meta-label">Adresse:</span>
+    <span class="meta-value">{{ objekt.strasse }}, {{ objekt.plz }} {{ objekt.ort }}</span>
+  </div>
+  <div class="meta-row">
+    <span class="meta-label">Wirtschaftsjahr:</span>
+    <span class="meta-value">{{ wj.jahr }} ({{ wj.beginn_datum|date:"d.m.Y" }} – {{ wj.ende_datum|date:"d.m.Y" }})</span>
+  </div>
+  <div class="meta-row">
+    <span class="meta-label">Wirkung ab:</span>
+    <span class="meta-value">{{ wp.wirkung_ab|date:"d.m.Y" }}</span>
+  </div>
+  {% if wp.beschluss_datum %}
+  <div class="meta-row">
+    <span class="meta-label">Beschluss vom:</span>
+    <span class="meta-value">{{ wp.beschluss_datum|date:"d.m.Y" }}{% if wp.beschluss_tagesordnungspunkt %} ({{ wp.beschluss_tagesordnungspunkt }}){% endif %}</span>
+  </div>
+  {% endif %}
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th style="width:12%">Konto-Nr.</th>
+      <th>Bezeichnung</th>
+      <th style="width:12%">VS</th>
+      <th class="num" style="width:18%">Jahresbetrag (€)</th>
+      <th class="num" style="width:16%">Monatlich (€)</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for pos in positionen %}
+    <tr>
+      <td>{{ pos.konto.kontonummer }}</td>
+      <td>{{ pos.konto.kontoname }}</td>
+      <td>{{ pos.vs_code }}{% if pos.vs_bezeichnung %} {{ pos.vs_bezeichnung }}{% endif %}</td>
+      <td class="num">{{ pos.betrag|floatformat:2 }}</td>
+      <td class="num">{{ pos.monatlich|floatformat:2 }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+  <tfoot>
+    <tr class="tfoot">
+      <td colspan="3">GESAMT</td>
+      <td class="num">{{ gesamt|floatformat:2 }}</td>
+      <td class="num">{{ gesamt_monatlich|floatformat:2 }}</td>
+    </tr>
+  </tfoot>
+</table>
+
+<div class="summary-box">
+  <div class="summary-row">
+    <span>davon Hausgeld laufende Bewirtschaftung</span>
+    <span>{{ hausgeld|floatformat:2 }} € / Jahr &nbsp;·&nbsp; {{ hausgeld_monatlich|floatformat:2 }} €/Monat</span>
+  </div>
+  {% for rl in ruecklagen %}
+  <div class="summary-row">
+    <span>davon Rücklagenzuführung (BA .{{ rl.ba_code }})</span>
+    <span>{{ rl.jahresbetrag|floatformat:2 }} € / Jahr &nbsp;·&nbsp; {{ rl.monatsbetrag|floatformat:2 }} €/Monat</span>
+  </div>
+  {% endfor %}
+  <div class="summary-row summary-total">
+    <span>Monatliches Gesamt-Soll der WEG</span>
+    <span>{{ gesamt_monatlich|floatformat:2 }} €</span>
+  </div>
+</div>
+
+{% endblock %}
