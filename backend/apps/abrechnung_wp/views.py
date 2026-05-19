@@ -82,11 +82,12 @@ class WirtschaftsplanViewSet(viewsets.ModelViewSet):
                 status=400,
             )
 
-        # VS-Code ermitteln
+        # VS-Code ermitteln — erst KontoVerteilerSchluessel, dann Konto.verteilerschluessel
         kvs = KontoVerteilerSchluessel.objects.filter(konto=konto).order_by('-gueltig_ab').first()
-        if not kvs:
+        vs_code = kvs.vs_code if kvs else (konto.verteilerschluessel or '')
+        if not vs_code:
             return Response(
-                {'errors': [f'Konto {nr} hat keinen aktiven Verteilerschlüssel.']},
+                {'errors': [f'Konto {nr} hat keinen Verteilerschlüssel.']},
                 status=400,
             )
 
@@ -94,11 +95,11 @@ class WirtschaftsplanViewSet(viewsets.ModelViewSet):
         pos, created = WirtschaftsplanPosition.objects.get_or_create(
             wirtschaftsplan=wp,
             konto=konto,
-            defaults={'vs_code': kvs.vs_code, 'betrag': betrag},
+            defaults={'vs_code': vs_code, 'betrag': betrag},
         )
         if not created:
             pos.betrag = betrag
-            pos.vs_code = kvs.vs_code
+            pos.vs_code = vs_code
             pos.save(update_fields=['betrag', 'vs_code'])
 
         berechne_verteilung(pos)
@@ -226,6 +227,7 @@ class WirtschaftsplanViewSet(viewsets.ModelViewSet):
         result = []
         for k in konten:
             kvs = KontoVerteilerSchluessel.objects.filter(konto=k).order_by('-gueltig_ab').first()
+            vs_code = kvs.vs_code if kvs else (k.verteilerschluessel or None)
             hat_position = wp.positionen.filter(konto=k).exists()
             result.append({
                 'id': str(k.id),
@@ -233,8 +235,8 @@ class WirtschaftsplanViewSet(viewsets.ModelViewSet):
                 'kontoname': k.kontoname,
                 'kontoart': k.kontoart,
                 'abrechnungsart': k.abrechnungsart,
-                'vs_code': kvs.vs_code if kvs else None,
-                'hat_vs': bool(kvs),
+                'vs_code': vs_code,
+                'hat_vs': bool(vs_code),
                 'hat_position': hat_position,
             })
 

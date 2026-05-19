@@ -34,7 +34,7 @@ export function Schritt2_Konten({ wp, onWeiter, onZurueck }: Props) {
     },
     onError: (err: any, vars) => {
       setSaving(s => ({ ...s, [vars.konto]: false }))
-      const msg = err.response?.data?.detail ?? err.response?.data?.betrag?.[0] ?? 'Fehler beim Speichern'
+      const msg = err.response?.data?.errors?.[0] ?? err.response?.data?.detail ?? 'Fehler beim Speichern'
       setErrors(e => ({ ...e, [vars.konto]: msg }))
     },
   })
