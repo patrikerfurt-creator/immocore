@@ -208,8 +208,9 @@ class EigentumsVerhaeltnis(models.Model):
 
 class HausgeldHistorie(models.Model):
     QUELLE_CHOICES = [
-        ('beschluss', 'Beschluss'),
-        ('import',    'Import (Massenimport / Erstanlage)'),
+        ('beschluss',      'Beschluss'),
+        ('import',         'Import (Massenimport / Erstanlage)'),
+        ('wirtschaftsplan', 'Wirtschaftsplan-Beschluss'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
@@ -252,6 +253,12 @@ class HausgeldHistorie(models.Model):
         null=True, blank=True,
         related_name='hausgeld_historien',
     )
+    quelle_wp = models.ForeignKey(
+        'abrechnung_wp.Wirtschaftsplan',
+        on_delete=models.PROTECT,
+        null=True, blank=True,
+        related_name='hausgeld_historien',
+    )
     import_referenz = models.CharField(
         max_length=100, null=True, blank=True,
         help_text='Pflicht wenn quelle=import. Identifiziert den Import-Lauf.',
@@ -275,8 +282,9 @@ class HausgeldHistorie(models.Model):
             models.CheckConstraint(
                 name='hausgeld_historie_quelle_consistency',
                 check=(
-                    (Q(quelle='beschluss') & Q(beschluss__isnull=False) & Q(import_referenz__isnull=True))
-                    | (Q(quelle='import') & Q(beschluss__isnull=True) & Q(import_referenz__isnull=False))
+                    (Q(quelle='beschluss') & Q(beschluss__isnull=False) & Q(import_referenz__isnull=True) & Q(quelle_wp__isnull=True))
+                    | (Q(quelle='import') & Q(beschluss__isnull=True) & Q(import_referenz__isnull=False) & Q(quelle_wp__isnull=True))
+                    | (Q(quelle='wirtschaftsplan') & Q(beschluss__isnull=True) & Q(import_referenz__isnull=True) & Q(quelle_wp__isnull=False))
                 ),
             ),
         ]

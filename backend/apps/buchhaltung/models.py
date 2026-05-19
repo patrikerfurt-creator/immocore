@@ -1132,6 +1132,12 @@ class HausgeldSollstellung(models.Model):
     neutralisiert_opos_nr = models.ForeignKey(
         'self', on_delete=models.PROTECT, null=True, blank=True, related_name='+',
     )
+    nachhol_aus_wp_beschluss = models.ForeignKey(
+        'abrechnung_wp.Wirtschaftsplan',
+        null=True, blank=True,
+        on_delete=models.PROTECT,
+        related_name='nachhol_sollstellungen',
+    )
 
     @property
     def status(self) -> str:
@@ -1505,3 +1511,56 @@ class WirtschaftsplanKorrekturPaar(models.Model):
 
     def __str__(self):
         return f"WP-Paar {self.periode} — {self.beschluss}"
+
+
+# ---------------------------------------------------------------------------
+# Auszahlungslauf — Gutschriften / Auszahlungen an Eigentümer
+# ---------------------------------------------------------------------------
+
+class Auszahlungslauf(models.Model):
+    TYP_CHOICES = [
+        ('abrechnungsguthaben', 'Abrechnungsguthaben'),
+        ('ruecklage_entnahme',  'Rücklagen-Entnahme'),
+        ('wp_gutschrift',       'WP-Gutschrift'),
+    ]
+    STATUS_CHOICES = [
+        ('erstellt',    'Erstellt'),
+        ('freigegeben', 'Freigegeben'),
+        ('exportiert',  'Exportiert (XML heruntergeladen)'),
+        ('eingereicht', 'Eingereicht'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    objekt = models.ForeignKey(
+        Objekt, on_delete=models.PROTECT, related_name='auszahlungslaeufe'
+    )
+    typ = models.CharField(max_length=25, choices=TYP_CHOICES)
+    bezeichnung = models.CharField(max_length=255, blank=True)
+    faelligkeitsdatum = models.DateField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='erstellt')
+    wirtschaftsplan = models.ForeignKey(
+        'abrechnung_wp.Wirtschaftsplan',
+        null=True, blank=True,
+        on_delete=models.PROTECT,
+        related_name='auszahlungslaeufe',
+    )
+    erstellt_am = models.DateTimeField(auto_now_add=True)
+    erstellt_von = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        related_name='auszahlungslaeufe'
+    )
+    anzahl_positionen = models.IntegerField(default=0)
+    gesamt_summe = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    positionen = models.JSONField(default=list, blank=True)
+    datei_pfad = models.CharField(max_length=500, null=True, blank=True)
+
+    class Meta:
+        verbose_name = 'Auszahlungslauf'
+        verbose_name_plural = 'Auszahlungsläufe'
+        ordering = ['-erstellt_am']
+
+    def __str__(self):
+        return (
+            f"Auszahlung {self.bezeichnung or self.faelligkeitsdatum} "
+            f"| {self.objekt.bezeichnung} [{self.status}]"
+        )

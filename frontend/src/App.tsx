@@ -38,6 +38,9 @@ import { MassenimportWEG } from './pages/massenimport/MassenimportWEG'
 import { Lastschrift } from './pages/zahlungsverkehr/Lastschrift'
 import { Zahlungen } from './pages/zahlungsverkehr/Zahlungen'
 import { MitarbeiterPage } from './pages/mitarbeiter/MitarbeiterPage'
+import { WirtschaftsplanListe } from './pages/abrechnung-wp/WirtschaftsplanListe'
+import { WirtschaftsplanDetail } from './pages/abrechnung-wp/WirtschaftsplanDetail'
+import { WirtschaftsplanWizard } from './pages/abrechnung-wp/WirtschaftsplanWizard'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -95,6 +98,9 @@ export default function App() {
             <Route path="zahlungsverkehr/lastschrift" element={<Lastschrift />} />
             <Route path="zahlungsverkehr/zahlungen" element={<Zahlungen />} />
             <Route path="mitarbeiter" element={<MitarbeiterPage />} />
+            <Route path="abrechnung-wp/wirtschaftsplan" element={<WirtschaftsplanListe />} />
+            <Route path="abrechnung-wp/wirtschaftsplan/:wpId" element={<WirtschaftsplanDetail />} />
+            <Route path="abrechnung-wp/wirtschaftsplan/:wpId/wizard" element={<WirtschaftsplanWizard />} />
             <Route path="einstellungen" element={<Einstellungen />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
