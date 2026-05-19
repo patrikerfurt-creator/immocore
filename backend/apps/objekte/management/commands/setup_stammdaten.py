@@ -73,7 +73,7 @@ class Command(BaseCommand):
             fehlend_vs     = 0
 
             if dry_run:
-                hat_konten = Konto.objects.filter(objekt=objekt).exists()
+                hat_konten = Konto.objects.filter(wirtschaftsjahr__objekt=objekt).exists()
                 hat_abr    = Abrechnungsart.objects.filter(objekt=objekt).exists()
                 hat_vs     = Verteilerschluessel.objects.filter(objekt=objekt).exists()
                 self.stdout.write(
@@ -95,20 +95,26 @@ class Command(BaseCommand):
 
             # 1. Kontenrahmen (nur WEG)
             if objekt.objekt_typ == 'WEG':
-                r = kontenrahmen_anlegen(str(objekt.id))
+                r = kontenrahmen_anlegen(objekt_id=str(objekt.id))
                 fehlend_konten += r.get('angelegt', 0)
 
                 # Rucklage II+ Konten
-                for n in range(1, anz_rl + 1):
-                    from apps.konten.models import Konto as _Konto
-                    for kd in _ruecklage_konten_defs(n):
-                        _, created = _Konto.objects.get_or_create(
-                            objekt=objekt,
-                            kontonummer=kd['kontonummer'],
-                            defaults={**kd, 'arge_kostenart': None, 'aktiv': True},
-                        )
-                        if created:
-                            fehlend_konten += 1
+                from apps.konten.models import Konto as _Konto
+                from apps.objekte.models import Wirtschaftsjahr as _WJ
+                _wj = (
+                    _WJ.objects.filter(objekt=objekt, status='offen').order_by('-jahr').first()
+                    or _WJ.objects.filter(objekt=objekt).order_by('-jahr').first()
+                )
+                if _wj:
+                    for n in range(1, anz_rl + 1):
+                        for kd in _ruecklage_konten_defs(n):
+                            _, created = _Konto.objects.get_or_create(
+                                wirtschaftsjahr=_wj,
+                                kontonummer=kd['kontonummer'],
+                                defaults={**kd, 'arge_kostenart': None, 'aktiv': True},
+                            )
+                            if created:
+                                fehlend_konten += 1
 
             # 2. Abrechnungsarten
             ruecklagen_list = [

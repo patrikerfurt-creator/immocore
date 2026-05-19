@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { massenimportApi } from '../../api/massenimport'
-import type { CommitErgebnis, CommitResponse, PreviewResponse, ZeileVorschau } from '../../api/massenimport'
+import type { CommitResponse, PreviewResponse, ZeileVorschau } from '../../api/massenimport'
 import { Button } from '../../components/ui/Button'
 
 // ---------------------------------------------------------------------------
@@ -285,7 +285,7 @@ function Schritt3({
       </div>
 
       <div className="flex justify-between">
-        <Button variant="outline" onClick={onZurueck}>← Zurück</Button>
+        <Button variant="secondary" onClick={onZurueck}>← Zurück</Button>
         <Button onClick={onWeiter} disabled={!kannImportieren}>
           Weiter zur Bestätigung →
         </Button>
@@ -335,7 +335,7 @@ function Schritt4({
       </div>
 
       <div className="flex justify-between">
-        <Button variant="outline" onClick={onZurueck}>← Zurück</Button>
+        <Button variant="secondary" onClick={onZurueck}>← Zurück</Button>
         <Button onClick={onWeiter} disabled={loading}>
           {loading ? 'Wird importiert…' : `${summary.objekte} Objekte jetzt importieren`}
         </Button>
@@ -460,7 +460,7 @@ function Schritt5({ result }: { result: CommitResponse }) {
           <Button>Zur Objektliste →</Button>
         </Link>
         <Link to="/massenimport/weg">
-          <Button variant="outline">Neuen Import starten</Button>
+          <Button variant="secondary">Neuen Import starten</Button>
         </Link>
       </div>
     </div>
@@ -508,10 +508,6 @@ export function MassenimportWEG() {
     } finally {
       setCommitting(false)
     }
-  }
-
-  const reset = () => {
-    setSchritt(1); setPreview(null); setResult(null); setUploadError(null)
   }
 
   return (

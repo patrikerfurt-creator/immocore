@@ -1,7 +1,7 @@
 """
 Pflichttests für den 3-Phasen OP-Buchung-Workflow (§28 WEG).
 
-Phase 1 – Freigabe:   Soll 15900 / Haben Kreditorenkonto (70xxx) + KreditorOP ab 100000
+Phase 1 – Freigabe:   Soll 15900 / Haben Kreditorenkonto (70xxx) + KreditorOP JJNNNNNN
 Phase 2 – Zahlung:    Soll Aufwand / Haben 15900  +  Soll Kreditor / Haben 13600
 Phase 3 – Bank:       Soll 13600 / Haben Bank
 """
@@ -11,7 +11,7 @@ from django.test import TestCase
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 
-from apps.objekte.models import Objekt
+from apps.objekte.models import Objekt, Wirtschaftsjahr
 from apps.konten.models import Konto
 from apps.buchhaltung.models import KreditorOP
 from apps.rechnungen.models import Rechnung, Kreditor
@@ -29,20 +29,21 @@ def _objekt_und_konten():
         ort="Teststadt",
         verwaltung_seit=date(2020, 1, 1),
     )
+    wj = Wirtschaftsjahr.objects.create(objekt=objekt, jahr=2025, beginn_monat=1)
     aufwand = Konto.objects.create(
-        objekt=objekt, kontonummer="50100", kontoname="Hauswartkosten",
+        wirtschaftsjahr=wj, kontonummer="50100", kontoname="Hauswartkosten",
         kontoart="standard", direktes_buchen=False,
     )
     bank = Konto.objects.create(
-        objekt=objekt, kontonummer="18000", kontoname="Bank",
+        wirtschaftsjahr=wj, kontonummer="18000", kontoname="Bank",
         kontoart="standard", direktes_buchen=True,
     )
     konto_15900, _ = Konto.objects.get_or_create(
-        objekt=objekt, kontonummer="15900",
+        wirtschaftsjahr=wj, kontonummer="15900",
         defaults={"kontoname": "Schwebende Eingangsrechnungen", "kontoart": "standard", "direktes_buchen": False},
     )
     konto_13600, _ = Konto.objects.get_or_create(
-        objekt=objekt, kontonummer="13600",
+        wirtschaftsjahr=wj, kontonummer="13600",
         defaults={"kontoname": "Schwebender Zahlungsausgang", "kontoart": "standard", "direktes_buchen": False},
     )
     return objekt, aufwand, bank, konto_15900, konto_13600
@@ -79,14 +80,17 @@ class FreigebenTest(TestCase):
         self.assertIsNotNone(r.op_buchung_id)
         # Soll: 15900 / Haben: Kreditorenkonto
         self.assertEqual(r.op_buchung.soll_konto_id, self.konto_15900.id)
-        kreditor_konto = Konto.objects.get(objekt=self.objekt, kontonummer=self.kreditor.kreditorennummer)
+        kreditor_konto = Konto.objects.get(wirtschaftsjahr__objekt=self.objekt, kontonummer=self.kreditor.kreditorennummer)
         self.assertEqual(r.op_buchung.haben_konto_id, kreditor_konto.id)
 
-    def test_2_freigabe_erstellt_kreditor_op_ab_100000(self):
+    def test_2_freigabe_erstellt_kreditor_op_jjnnnnnn(self):
+        from datetime import date
         r = _rechnung(self.objekt, self.kreditor)
         rechnung_freigeben(r, self.aufwand, self.user)
         op = KreditorOP.objects.get(rechnung=r)
-        self.assertGreaterEqual(op.op_nummer, 100000)
+        jahr_kurz = date.today().year % 100
+        self.assertGreaterEqual(op.op_nummer, jahr_kurz * 1_000_000 + 1)
+        self.assertLess(op.op_nummer, (jahr_kurz + 1) * 1_000_000)
         self.assertEqual(op.betrag_ursprung, Decimal("1000.00"))
         self.assertEqual(op.betrag_offen, Decimal("1000.00"))
         self.assertEqual(op.status, "offen")
@@ -94,10 +98,10 @@ class FreigebenTest(TestCase):
 
     def test_3_kreditorenkonto_wird_automatisch_angelegt(self):
         # Kein Konto 70001 vorhanden vor der Freigabe
-        Konto.objects.filter(objekt=self.objekt, kontonummer="70001").delete()
+        Konto.objects.filter(wirtschaftsjahr__objekt=self.objekt, kontonummer="70001").delete()
         r = _rechnung(self.objekt, self.kreditor)
         rechnung_freigeben(r, self.aufwand, self.user)
-        self.assertTrue(Konto.objects.filter(objekt=self.objekt, kontonummer="70001").exists())
+        self.assertTrue(Konto.objects.filter(wirtschaftsjahr__objekt=self.objekt, kontonummer="70001").exists())
 
     def test_4_zahlungslauf_erzeugt_zwei_buchungen(self):
         r = _rechnung(self.objekt, self.kreditor)
@@ -107,7 +111,7 @@ class FreigebenTest(TestCase):
         self.assertEqual(bu1.soll_konto_id, self.aufwand.id)
         self.assertEqual(bu1.haben_konto_id, self.konto_15900.id)
         # Buchung 2: Soll Kreditor / Haben 13600
-        kreditor_konto = Konto.objects.get(objekt=self.objekt, kontonummer=self.kreditor.kreditorennummer)
+        kreditor_konto = Konto.objects.get(wirtschaftsjahr__objekt=self.objekt, kontonummer=self.kreditor.kreditorennummer)
         self.assertEqual(bu2.soll_konto_id, kreditor_konto.id)
         self.assertEqual(bu2.haben_konto_id, self.konto_13600.id)
         self.assertEqual(bu1.betrag, Decimal("1000.00"))
@@ -133,8 +137,9 @@ class FreigebenTest(TestCase):
         self.assertEqual(buchung.betrag, Decimal("1000.00"))
 
     def test_7_aufwandskonto_nicht_in_5xxxx_wirft_fehler(self):
+        wj = Wirtschaftsjahr.objects.get(objekt=self.objekt)
         falsches_konto = Konto.objects.create(
-            objekt=self.objekt, kontonummer="41900", kontoname="Erlöse",
+            wirtschaftsjahr=wj, kontonummer="41900", kontoname="Erlöse",
             kontoart="standard", direktes_buchen=False,
         )
         r = _rechnung(self.objekt, self.kreditor)
@@ -142,8 +147,9 @@ class FreigebenTest(TestCase):
             rechnung_freigeben(r, falsches_konto, self.user)
 
     def test_8_aufwandskonto_summierungskonto_wirft_fehler(self):
+        wj = Wirtschaftsjahr.objects.get(objekt=self.objekt)
         summierung = Konto.objects.create(
-            objekt=self.objekt, kontonummer="50299", kontoname="Summe BK",
+            wirtschaftsjahr=wj, kontonummer="50299", kontoname="Summe BK",
             kontoart="summierung", direktes_buchen=False,
         )
         r = _rechnung(self.objekt, self.kreditor)

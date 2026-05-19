@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { buchhaltungApi } from '../api/buchhaltung'
 import { rechnungenApi, type FreigabeLimit } from '../api/rechnungen'
+import { objekteApi } from '../api/objekte'
 import { Button } from '../components/ui/Button'
 import type { CamtImportEinstellung, CamtImportLog } from '../types'
 
@@ -140,6 +141,11 @@ function EBankingEinstellungen() {
     queryFn: () => buchhaltungApi.camtEinstellung(),
   })
 
+  const { data: objekte } = useQuery({
+    queryKey: ['objekte'],
+    queryFn: () => objekteApi.list(),
+  })
+
   const speichernMut = useMutation({
     mutationFn: (data: Partial<CamtImportEinstellung>) =>
       buchhaltungApi.camtEinstellungSpeichern(einstellung?.id ?? null, data),
@@ -193,6 +199,25 @@ function EBankingEinstellungen() {
           />
         </div>
       ))}
+
+      <div>
+        <label className="block text-sm text-gray-600 mb-1">Fallback-Objekt</label>
+        <select
+          value={aktuelleEinst.objekt ?? ''}
+          onChange={e => setEinst(prev => ({ ...prev, objekt: e.target.value || null }))}
+          className="border rounded px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          <option value="">— kein Fallback —</option>
+          {(objekte ?? []).map(o => (
+            <option key={o.id} value={o.id}>
+              {o.objektnummer} · {o.bezeichnung}
+            </option>
+          ))}
+        </select>
+        <p className="text-xs text-gray-400 mt-1">
+          Wird verwendet, wenn die Empfänger-IBAN keinem Bankkonto zugeordnet werden kann.
+        </p>
+      </div>
 
       <div className="grid grid-cols-2 gap-4">
         <div>

@@ -4,13 +4,8 @@ import { useObjektStore } from '../../stores/objekt'
 import { zahlungsverkehrApi } from '../../api/zahlungsverkehr'
 import { Badge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
-import type { LastschriftLauf, SollstellungsLauf } from '../../types'
+import type { LastschriftLauf, HausgeldSollstellungslauf } from '../../types'
 
-const STATUS_FARBE: Record<string, 'blue' | 'green' | 'gray'> = {
-  erstellt: 'blue',
-  exportiert: 'green',
-  eingereicht: 'green',
-}
 
 function formatEuro(val: string | number | null | undefined) {
   if (val == null) return '—'
@@ -27,7 +22,7 @@ export function Lastschrift() {
   const objektId = useObjektStore(s => s.selectedId)
   const qc = useQueryClient()
   const [showForm, setShowForm] = useState(false)
-  const [sollLaufId, setSollLaufId] = useState('')
+  const [hgLaufId, setHgLaufId] = useState('')
   const [faelligkeitsdatum, setFaelligkeitsdatum] = useState('')
   const [bezeichnung, setBezeichnung] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -38,9 +33,9 @@ export function Lastschrift() {
     enabled: !!objektId,
   })
 
-  const { data: sollLaeufe } = useQuery({
-    queryKey: ['sollstellungslaeufe', objektId],
-    queryFn: () => zahlungsverkehrApi.sollstellungslaeufe(objektId ? { objekt: objektId } : {}),
+  const { data: hgLaeufe } = useQuery({
+    queryKey: ['hg-laeufe', objektId, 'commited'],
+    queryFn: () => zahlungsverkehrApi.hausgeldLaeufe(objektId ? { objekt: objektId, status: 'commited' } : {}),
     enabled: !!objektId && showForm,
   })
 
@@ -48,7 +43,7 @@ export function Lastschrift() {
     mutationFn: zahlungsverkehrApi.createLastschriftLauf,
     onSuccess: () => {
       setShowForm(false)
-      setSollLaufId('')
+      setHgLaufId('')
       setFaelligkeitsdatum('')
       setBezeichnung('')
       setError(null)
@@ -71,15 +66,13 @@ export function Lastschrift() {
     setError(null)
     erstellenMut.mutate({
       objekt_id: objektId,
-      sollstellungs_lauf_id: sollLaufId || undefined,
+      hg_lauf_id: hgLaufId || undefined,
       faelligkeitsdatum,
       bezeichnung,
     })
   }
 
-  const freigegebeneLaeufe = sollLaeufe?.filter(
-    (l: SollstellungsLauf) => l.status === 'ausgefuehrt' || l.status === 'freigegeben'
-  ) ?? []
+  const commitedHgLaeufe = hgLaeufe ?? []
 
   if (!objektId) {
     return (
@@ -103,23 +96,23 @@ export function Lastschrift() {
           <div className="grid grid-cols-2 gap-4 mb-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Sollstellungslauf (optional)
+                Hausgeld-Lauf (optional, nur commited)
               </label>
               <select
                 className="w-full border rounded px-3 py-2 text-sm"
-                value={sollLaufId}
-                onChange={e => setSollLaufId(e.target.value)}
+                value={hgLaufId}
+                onChange={e => setHgLaufId(e.target.value)}
               >
                 <option value="">— keiner —</option>
-                {freigegebeneLaeufe.map((l: SollstellungsLauf) => (
+                {commitedHgLaeufe.map((l: HausgeldSollstellungslauf) => (
                   <option key={l.id} value={l.id}>
-                    {formatDatum(l.periode_von)} – {formatDatum(l.periode_bis)} |{' '}
-                    {formatEuro(l.gesamt_summe)} | {l.status}
+                    {l.periode ? new Date(l.periode + 'T12:00:00').toLocaleDateString('de-DE', { month: '2-digit', year: 'numeric' }) : l.periode} |{' '}
+                    {formatEuro(l.summe)} | {l.anzahl_sollstellungen} EV
                   </option>
                 ))}
               </select>
-              {freigegebeneLaeufe.length === 0 && (
-                <p className="text-xs text-gray-400 mt-1">Kein ausgeführter Sollstellungslauf vorhanden</p>
+              {commitedHgLaeufe.length === 0 && (
+                <p className="text-xs text-gray-400 mt-1">Kein committeter Hausgeld-Lauf vorhanden</p>
               )}
             </div>
 
@@ -228,9 +221,7 @@ function LaufZeile({
         <td className="px-4 py-3 text-right">{lauf.anzahl_positionen}</td>
         <td className="px-4 py-3 text-right font-mono">{formatEuro(lauf.gesamt_summe)}</td>
         <td className="px-4 py-3">
-          <Badge color={STATUS_FARBE[lauf.status] ?? 'gray'}>
-            {lauf.status}
-          </Badge>
+          <Badge value={lauf.status} />
         </td>
         <td className="px-4 py-3 text-gray-500">
           {new Date(lauf.erstellt_am).toLocaleDateString('de-DE')}
@@ -297,10 +288,12 @@ function DetailBlock({ lauf }: { lauf: LastschriftLauf }) {
             )}
           </div>
         </div>
-        {lauf.sollstellungs_lauf_info && (
+        {lauf.hausgeld_lauf_info && (
           <div className="mt-3 pt-3 border-t text-xs text-gray-500">
-            Basis: Sollstellungslauf {formatDatum(lauf.sollstellungs_lauf_info.periode_von)} –{' '}
-            {formatDatum(lauf.sollstellungs_lauf_info.periode_bis)}
+            Basis: Hausgeld-Lauf {lauf.hausgeld_lauf_info.periode
+              ? new Date(lauf.hausgeld_lauf_info.periode + 'T12:00:00').toLocaleDateString('de-DE', { month: '2-digit', year: 'numeric' })
+              : lauf.hausgeld_lauf_info.id}
+            {' '}({lauf.hausgeld_lauf_info.anzahl_sollstellungen} Sollstellungen)
           </div>
         )}
       </div>

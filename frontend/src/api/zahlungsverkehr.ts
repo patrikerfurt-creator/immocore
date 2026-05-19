@@ -1,5 +1,5 @@
 import client from './client'
-import type { LastschriftLauf, SollstellungsLauf } from '../types'
+import type { LastschriftLauf, HausgeldSollstellungslauf } from '../types'
 
 export const zahlungsverkehrApi = {
   // Lastschrift-Läufe
@@ -8,7 +8,7 @@ export const zahlungsverkehrApi = {
 
   createLastschriftLauf: (data: {
     objekt_id: string
-    sollstellungs_lauf_id?: string
+    hg_lauf_id?: string
     faelligkeitsdatum: string
     bezeichnung?: string
   }) =>
@@ -27,14 +27,13 @@ export const zahlungsverkehrApi = {
     URL.revokeObjectURL(url)
   },
 
-  // Sollstellungsläufe für Lastschrift-Auswahl
-  sollstellungslaeufe: (params?: Record<string, string>) =>
-    client.get<SollstellungsLauf[]>('/sollstellungslaeufe/', { params }).then(r => r.data),
+  // Hausgeld-Läufe für Lastschrift-Auswahl (nur commited)
+  hausgeldLaeufe: (params?: Record<string, string>) =>
+    client.get<HausgeldSollstellungslauf[]>('/hg-laeufe/', { params }).then(r => r.data),
 
   // SEPA Ausgangsüberweisungen (pain.001)
   exportRechnungenSepa: async (data: {
     rechnung_ids: string[]
-    haben_konto_id: string
     faelligkeitsdatum: string
   }) => {
     const response = await client.post('/rechnungen/sepa-export/', data, { responseType: 'blob' })

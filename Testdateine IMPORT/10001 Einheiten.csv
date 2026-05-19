@@ -1,0 +1,9 @@
+﻿# Einheit-Typ: 100=Wohnung | 200=Gewerbe | 300=Stellplatz | 400=Sonstiges;;;;;
+Objektnummer;Eingang;Flächennummer;Bez. Einheit;Einheit-Typ;Lage
+10001;Theresenstraße 4;100001;Wohnung 2;100;EG rechts
+10001;Theresenstraße 4;100002;Wohnung 3;100;EG links
+10001;Theresenstraße 4;100101;Wohnung 4;100;1. OG rechts
+10001;Theresenstraße 4;100102;Wohnung 5;100;1. OG links
+10001;Theresenstraße 4;100201;Wohnung 6;100;2. OG rechts
+10001;Theresenstraße 4;100202;Wohnung 7;100;2. OG links
+10001;Theresenstraße 4;109901;Wohnung 1;100;Untergeschoss

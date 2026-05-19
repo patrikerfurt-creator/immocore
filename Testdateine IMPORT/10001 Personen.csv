@@ -1,0 +1,9 @@
+﻿# person_typ: 100=Eigentümer | 200=Mieter | 300=Kreditor | 400=Sonstiges;;;;;;;;;;;;;;;
+﻿# Anrede-Werte: Herr | Frau | Eheleute | Herren | Damen | Herr und Frau | Firma;;;;;;;;;;;;;;;
+﻿person_typ;ist_firma;Firma;Anrede;Anrede1;Vorname1;Nachname1;Anrede2;Vorname2;Nachname2;Anschrift;PLZ;Ort;Email1;Email2;IBAN
+﻿100;FALSE;;Eheleute;Frau;Martina;Schwunk-Pape;Herr ;Siegfried;Pape;Kreuztaler Straße 45;57250;Netphen; info@wpo-int.de;;DE17500400000373564400
+﻿100;FALSE;;Frau;Frau;Ella;Petrovic;;;;Theresenstraße 4;61462;Königstein;fam_petrovic@web.de;;DE58512500000013492182 
+﻿100;FALSE;;Frau;Frau;Simone;Rittgen;;;;Theresenstraße 4;61462;Königstein;srittgen@aol.com;;DE44500333002820155002  
+﻿100;FALSE;;Frau;Frau;Anja;Schneider;;;;Am Berg 29;35091;Cölbe;anja.schneider2017@gmail.com;;DE59500800004609606200    
+﻿100;FALSE;;Herr;Herr; Jan;Leopold;;;;Hainer Weg 307;60599;Frankfurt am Main;jan.leopold@web.de;;DE98512500000013525315       
+﻿100;FALSE;;Frau ;Frau;Julia;Methling;;;;Im Brühl 21;65529;Waldems;methling.julia@googlemail.com;;DE78500105175421341595

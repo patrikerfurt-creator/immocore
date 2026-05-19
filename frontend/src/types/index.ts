@@ -63,6 +63,7 @@ export interface Bankkonto {
   kontoinhaber: string
   reihenfolge: number
   aktiv: boolean
+  zahlungsverkehr: boolean
 }
 
 export interface Einheit {
@@ -77,16 +78,59 @@ export interface Einheit {
   umsatzsteuer_abrechnungsart: 'brutto' | 'netto' | null
 }
 
-export interface Objekt extends ObjektList {
+export interface Objekt extends Omit<ObjektList, 'eingaenge'> {
   baujahr: number | null
   verwaltung_seit: string
   wirtschaftsjahr_start: number
   zahlungsfreigabe_grenzen: Array<{ bis: number | null; rolle: string; frist_tage: number; beschreibung: string }>
   umsatzsteuer_pflichtig: boolean
   glaeubiger_id: string
+  kurzbezeichnung: string
+  auto_pipeline_aktiv: boolean
+  bundesland: string
   eingaenge: Eingang[]
   bankkonten: Bankkonto[]
   einheiten: Einheit[]
+}
+
+// ── Auto-Pipeline ─────────────────────────────────────────────────────
+export type AutoLaufStatus = 'erfolg' | 'teilweise_erfolg' | 'fehler' | 'uebersprungen'
+
+export interface AutoPipelineWarnung {
+  ev_id?: string
+  name?: string
+  einheit?: string
+  warnung_typ: string
+  nachricht: string
+}
+
+export interface AutoLaufProtokoll {
+  id: string
+  objekt: string
+  objekt_bezeichnung: string
+  objekt_nummer: string
+  ausgefuehrt_am: string
+  periode: string
+  status: AutoLaufStatus
+  sollstellungslauf: string | null
+  lastschriftlauf: string | null
+  anzahl_evs_geplant: number
+  anzahl_evs_erfolgreich: number
+  anzahl_evs_uebersprungen: number
+  summe_sollstellungen: string
+  summe_lastschrift: string
+  datei_pfad: string | null
+  warnungen: AutoPipelineWarnung[]
+  fehler: string | null
+}
+
+export interface AutoPipelineEinstellungen {
+  aktiv: boolean
+  stichtag: number
+  naechster_lauf: string
+  aktive_objekte: number
+  sepa_output_dir: string
+  vorlauf_bd: number
 }
 
 // ── Personen ──────────────────────────────────────────────────────────
@@ -103,15 +147,16 @@ export interface PersonList {
 }
 
 export interface Person extends PersonList {
+  anrede: string
   vorname: string
   nachname: string
   vorname2: string
   nachname2: string
   firmenname: string
-  strasse: string
-  plz: string
-  ort: string
+  adresse: string
   ibans: string[]
+  briefanrede: string
+  briefanrede2: string
 }
 
 export interface HausgeldHistorie {
@@ -119,7 +164,8 @@ export interface HausgeldHistorie {
   eigentumsverhaeltnis: string
   betrag: string
   gueltig_ab: string
-  kontoart: string
+  abrechnungsart_code: string
+  wirtschaftsplan_jahr: number | null
   erstellt_von: number
 }
 
@@ -133,7 +179,7 @@ export interface EigentumsVerhaeltnis {
   ende: string | null
   hausgeld_soll: string | null
   ist_aktiv: boolean
-  hausgeld_historie: HausgeldHistorie[]
+  hausgeld_eintraege: HausgeldHistorie[]
 }
 
 export interface VerteilerschluesselWert {
@@ -286,6 +332,7 @@ export interface PersonenkontoSaldo {
 
 export interface KontoauszugPosition {
   id: string
+  opos_nr: string | null
   bu_nr: string
   buchungsdatum: string
   buchungstext: string
@@ -293,6 +340,9 @@ export interface KontoauszugPosition {
   haben: number | null
   saldo: number
   hat_detail: boolean
+  typ?: string
+  status?: string | null
+  ist_betrag?: number | null
 }
 
 export interface BuchungDetailPosition {
@@ -352,36 +402,6 @@ export interface SachkontoAuszug {
   positionen: SachkontoAuszugPosition[]
 }
 
-export interface SollstellungsLauf {
-  id: string
-  objekt: string
-  periode_von: string
-  periode_bis: string
-  trigger: 'automatisch' | 'manuell'
-  status: 'simulation' | 'ausstehend' | 'freigegeben' | 'ausgefuehrt' | 'fehler'
-  ba_filter: string[]
-  anzahl_buchungen: number
-  gesamt_summe: string
-  freigabe_user: number | null
-  freigabe_am: string | null
-  ausgefuehrt_von: number
-  erstellt_am: string
-  fehler_log: unknown[]
-}
-
-export interface Sollstellung {
-  id: string
-  lauf: string
-  personenkonto: string
-  buchungsart: string
-  buchungsart_kuerzel: string
-  eigentuemer_name: string
-  buchung: string | null
-  betrag: string
-  periode_monat: number
-  periode_jahr: number
-  status: 'vorschau' | 'gebucht' | 'fehler' | 'storniert'
-}
 
 export interface CamtImportEinstellung {
   id: string
@@ -391,6 +411,7 @@ export interface CamtImportEinstellung {
   poll_intervall_sek: number
   datei_muster: string
   aktiv: boolean
+  objekt: string | null
   zuletzt_geprueft_am: string | null
   letzter_import_am: string | null
   letzter_import_datei: string
@@ -424,6 +445,104 @@ export interface Kontoumsatz {
   buchung: string | null
   ki_vorschlag: Record<string, unknown> | null
   importiert_am: string
+}
+
+export type BankBuchungStatus =
+  | 'importiert' | 'erkannt' | 'vorschlag' | 'unklar'
+  | 'verbucht' | 'storniert'
+  // legacy (Altdaten)
+  | 'manuell' | 'gebucht' | 'ignoriert' | 'unbekannt'
+
+export interface BankBuchungKontoDetail {
+  id: string
+  kontonummer: string
+  kontoname: string
+}
+
+export interface BankBuchungPersonDetail {
+  id: string
+  name: string
+}
+
+export interface BankBuchungEVDetail {
+  id: string
+  einheit_nr: string
+  eigentuemer: string
+}
+
+export interface BankErkennungsLog {
+  id: string
+  stufe_erreicht: string
+  quelle: string
+  konfidenz: string | null
+  auto_verbucht: boolean
+  details_json: Record<string, unknown> | null
+  erstellt_am: string
+}
+
+export interface BankBuchung {
+  id: string
+  objekt: string
+  bankkonto: string | null
+  sha256_hash: string
+  betrag: string
+  buchungsdatum: string
+  wertstellungsdatum: string | null
+  auftraggeber_name: string
+  auftraggeber_iban: string
+  empfaenger_iban: string
+  verwendungszweck: string
+  end_to_end_id: string
+  status: BankBuchungStatus
+  erkannt_gegenkonto: string | null
+  erkannt_gegenkonto_detail: BankBuchungKontoDetail | null
+  erkannt_eigentumsverhaeltnis: string | null
+  erkannt_eigentumsverh_detail: BankBuchungEVDetail | null
+  erkannt_kreditor: string | null
+  erkannt_kreditor_detail: BankBuchungPersonDetail | null
+  erkennungs_quelle: string
+  erkennungs_konfidenz: string | null
+  erkennungs_begruendung: string
+  match_regel: string | null
+  buchung: string | null
+  verbucht_am: string | null
+  verbucht_von: number | null
+  verbucht_von_username: string | null
+  notiz: string
+  importiert_am: string
+  import_datei: string
+  erkennungs_log: BankErkennungsLog[]
+}
+
+export interface KreditorOP {
+  id: string
+  op_nummer: number
+  betrag_ursprung: string
+  betrag_offen: string
+  faellig_ab: string
+  status: 'offen' | 'teilbezahlt' | 'bezahlt' | 'storniert'
+  kreditor_name: string
+  rechnung_nr: string
+  betreff: string
+}
+
+export interface BankMatchRegel {
+  id: string
+  bankkonto: string
+  bankkonto_iban: string
+  kontrahent_iban: string
+  verwendungszweck_hash: string
+  gegenkonto: string
+  gegenkonto_detail: BankBuchungKontoDetail | null
+  kreditor: string | null
+  eigentumsverhaeltnis: string | null
+  status: 'aktiv' | 'veraltet'
+  erstellt_aus: 'bestaetigung' | 'korrektur' | 'manuell'
+  trefferzahl: number
+  letzte_anwendung: string | null
+  erstellt_am: string
+  erstellt_von: number
+  erstellt_von_username: string
 }
 
 export interface Mahnlauf {
@@ -527,7 +646,8 @@ export interface Abrechnungsart {
 
 export interface Konto {
   id: string
-  objekt: string
+  wirtschaftsjahr: string | null
+  wirtschaftsjahr_jahr: number | null
   kontonummer: string
   kontoname: string
   abrechnungsart: string | null
@@ -604,6 +724,8 @@ export interface RechnungList {
   routing_ziel: 'limit_workflow' | 'objektbetreuer' | 'frontoffice' | null
   leistungstext: string
   lock_user: string | null
+  op_nummer: number | null
+  sepa_lastschrift: boolean
 }
 
 export interface Freigabe {
@@ -751,12 +873,12 @@ export interface LastschriftLauf {
   id: string
   objekt: string
   objekt_bezeichnung: string
-  sollstellungs_lauf: string | null
-  sollstellungs_lauf_info: {
+  hausgeld_sollstellungslauf: string | null
+  hausgeld_lauf_info: {
     id: string
-    periode_von: string
-    periode_bis: string
+    periode: string
     status: string
+    anzahl_sollstellungen: number
   } | null
   bezeichnung: string
   faelligkeitsdatum: string
@@ -770,4 +892,158 @@ export interface LastschriftLauf {
   ohne_mandat: OhneMandat[]
   buchungen_erstellt: boolean
   buchungen_datum: string | null
+}
+
+// ── Hausgeld-Nebenbuch ────────────────────────────────────────────────
+export interface HausgeldSollstellung {
+  id: string
+  objekt: string
+  eigentumsverhaeltnis: string
+  ev_person_name: string | null
+  ev_einheit_nr: string | null
+  personenkonto_id: string | null
+  personenkonto_nr: string | null
+  sollstellungs_typ: string
+  ba: string | null
+  ba_nr: string | null
+  periode: string
+  faellig_am: string
+  opos_nr: string
+  soll_betrag: string
+  ist_betrag: string
+  status: string
+  status_cached: string
+  storniert_am: string | null
+  erstellt_am: string
+}
+
+export interface HausgeldSollstellungslauf {
+  id: string
+  objekt: string
+  objekt_bezeichnung: string
+  typ: 'hausgeld_monat' | 'sonderumlage' | 'abrechnungsergebnis_jahr'
+  periode: string
+  status: 'vorschau' | 'freigegeben' | 'commited' | 'storniert'
+  anzahl_sollstellungen: number
+  summe: string
+  erstellt_am: string
+  erstellt_von: number
+  erstellt_von_name: string | null
+  freigabe_user: number | null
+  freigabe_user_name: string | null
+  freigegeben_am: string | null
+  commited_am: string | null
+  storniert_am: string | null
+  storniert_grund: string
+}
+
+export interface HausgeldSimulationsPosition {
+  eigentumsverhaeltnis_id: string
+  eigentuemer_name: string
+  einheit_nr: string
+  splits: { ba_code: string; betrag: string }[]
+  summe: string
+  opos_nr_neu: string
+}
+
+export interface HausgeldSimulationVorschau {
+  objekt_id: string
+  periode: string
+  anzahl_evs: number
+  gesamtsumme: string
+  positionen: HausgeldSimulationsPosition[]
+  warnungen: string[]
+}
+
+// ── Wirtschaftsjahre ──────────────────────────────────────────────────
+export type WirtschaftsjahrStatus = 'offen' | 'abgeschlossen'
+
+export interface Wirtschaftsjahr {
+  id: string
+  objekt: string
+  objekt_nr: string
+  objekt_bezeichnung: string
+  jahr: number
+  beginn_monat: number
+  status: WirtschaftsjahrStatus
+  vorjahr: string | null
+  eroeffnet_am: string
+  eroeffnet_von: number | null
+  abgeschlossen_am: string | null
+  beginn_datum: string
+  ende_datum: string
+}
+
+export interface EinheitVerbrauch {
+  id: string
+  wirtschaftsjahr: string
+  einheit: string
+  vs_code: string
+  wert: string | null
+  einheit_text: string
+  quelle: 'manuell' | 'ablese' | 'rechnung'
+}
+
+export interface KontoVerteilerSchluessel {
+  id: string
+  konto: string
+  vs_code: string
+  gueltig_ab: string
+}
+
+export interface FolgejahrPreviewEintrag {
+  objekt_id: string
+  objekt_nr: string
+  bezeichnung: string
+  letztes_wj: { jahr: number; status: string } | null
+  folgejahr: number | null
+  status: 'ok' | 'fehler'
+  fehler: string | null
+}
+
+export interface FolgejahrPreviewResponse {
+  ergebnisse: FolgejahrPreviewEintrag[]
+}
+
+export interface FolgejahrCommitEintrag {
+  objekt_id: string
+  bezeichnung?: string
+  status: 'ok' | 'fehler'
+  wj_id?: string
+  wj_jahr?: number
+  fehler?: string | null
+}
+
+export interface FolgejahrCommitResponse {
+  ergebnisse: FolgejahrCommitEintrag[]
+}
+
+export interface WechselAnalyseSollstellung {
+  sollstellung_id: string
+  opos_nr: string
+  periode: string
+  soll_betrag: string
+  ist_betrag: string
+  bucket: 'stornieren' | 'erstatten'
+  lastschrift_juenger_56_tage: boolean
+}
+
+export interface WechselAnalyse {
+  einheit_id: string
+  verkaeufer_ev_id: string
+  wirkungs_periode: string
+  art: 'zukuenftig' | 'rueckwirkend'
+  stornieren: WechselAnalyseSollstellung[]
+  erstatten: WechselAnalyseSollstellung[]
+  verkaeufer_iban: string | null
+  warnung_keine_iban: boolean
+  erstattung_summe: string
+}
+
+export interface EWAbschlussErgebnis {
+  wechsel_id: string
+  kaeufer_ev_id: string
+  auszahlungslauf_id: string | null
+  nachhol_count: number
+  storniert_count: number
 }

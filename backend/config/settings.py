@@ -152,6 +152,32 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
 
+# Vier-Augen-Prinzip für Hausgeld-Sollstellungsläufe.
+# Auf False setzen wenn nur ein Benutzer aktiv ist (Demo/Einzelbetrieb).
+HAUSGELD_VIER_AUGEN_PFLICHT = os.environ.get('HAUSGELD_VIER_AUGEN_PFLICHT', 'False') == 'True'
+
+# ---------------------------------------------------------------------------
+# Auto-Pipeline Hausgeld-Sollstellung & SEPA-Lastschrift
+# ---------------------------------------------------------------------------
+# Master-Switch: auf 'false' setzen zum Deaktivieren (Notausschalter)
+SEPA_AUTOPILOT_AKTIV = os.environ.get('SEPA_AUTOPILOT_AKTIV', 'true').lower() == 'true'
+# Tag im Monat, an dem die Pipeline läuft (25 = genug Puffer für SEPA-Frist RCUR)
+SEPA_AUTOPILOT_STICHTAG = int(os.environ.get('SEPA_AUTOPILOT_STICHTAG', '25'))
+# Ablageordner für erzeugte pain.008-Dateien (UNC-Pfad wird unterstützt)
+SEPA_OUTPUT_DIR = os.environ.get('SEPA_OUTPUT_DIR', str(BASE_DIR / 'sepa_output'))
+SEPA_OUTPUT_ARCHIVE_DIR = os.environ.get('SEPA_OUTPUT_ARCHIVE_DIR', str(BASE_DIR / 'sepa_archive'))
+# Vorlauf in Bankarbeitstagen vor Fälligkeit (RCUR-Mindest: 2 BD; empfohlen: 5)
+SEPA_AUTOPILOT_VORLAUF_BD = int(os.environ.get('SEPA_AUTOPILOT_VORLAUF_BD', '5'))
+
+# ---------------------------------------------------------------------------
+# Wirtschaftsplan-Beschluss — Hausgeld-Import Feature-Flag
+# ---------------------------------------------------------------------------
+# Vor Go-Live: True (Massenimport darf quelle='import' setzen).
+# Nach Initialimport: Admin schaltet auf False.
+HAUSGELD_IMPORT_QUELLE_ERLAUBT = os.environ.get('HAUSGELD_IMPORT_QUELLE_ERLAUBT', 'True') == 'True'
+
+from celery.schedules import crontab  # noqa: E402
+
 CELERY_BEAT_SCHEDULE = {
     'camt-ordner-scan-alle-2h': {
         'task': 'buchhaltung.camt_ordner_scan',
@@ -164,5 +190,13 @@ CELERY_BEAT_SCHEDULE = {
     'dokumente-ordner-scan-alle-5min': {
         'task': 'dokumente.ordner_scan',
         'schedule': 300,
+    },
+    'auto-hausgeld-pipeline': {
+        'task': 'buchhaltung.auto_hausgeld_pipeline',
+        'schedule': crontab(hour=2, minute=0),
+    },
+    'archiviere-alte-pain-dateien': {
+        'task': 'buchhaltung.archiviere_alte_pain_dateien',
+        'schedule': crontab(day_of_week=1, hour=3, minute=0),
     },
 }

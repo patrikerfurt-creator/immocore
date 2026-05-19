@@ -12,7 +12,8 @@ class ImportJob(models.Model):
         ('partial',   'Teilweise übernommen'),
     ]
     TYP_CHOICES = [
-        ('weg_objekt', 'WEG-Objekte'),
+        ('weg_objekt',      'WEG-Objekte'),
+        ('personen_import', 'Personen-Import'),
     ]
 
     id             = models.UUIDField(primary_key=True, default=uuid4, editable=False)

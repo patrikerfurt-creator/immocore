@@ -4,11 +4,163 @@ import { useParams, Link } from 'react-router-dom'
 import { objekteApi } from '../../api/objekte'
 import { personenApi } from '../../api/personen'
 import { mitarbeiterApi, zuordnungApi } from '../../api/mitarbeiter'
+import { buchhaltungApi } from '../../api/buchhaltung'
 import { Badge } from '../../components/ui/Badge'
 import { IbanInput } from '../../components/ui/IbanInput'
 import { useObjektStore } from '../../stores/objekt'
-import type { Objekt, Bankkonto } from '../../types'
+import type { Objekt, Bankkonto, AutoLaufStatus } from '../../types'
 import { ABTEILUNG_LABELS } from '../../types'
+
+const AUTO_LAUF_STATUS_COLOR: Record<AutoLaufStatus, string> = {
+  erfolg:          'bg-green-100 text-green-800',
+  teilweise_erfolg:'bg-yellow-100 text-yellow-800',
+  fehler:          'bg-red-100 text-red-800',
+  uebersprungen:   'bg-gray-100 text-gray-600',
+}
+const AUTO_LAUF_STATUS_LABEL: Record<AutoLaufStatus, string> = {
+  erfolg:          'Erfolg',
+  teilweise_erfolg:'Teilw. Erfolg',
+  fehler:          'Fehler',
+  uebersprungen:   'Übersprungen',
+}
+
+const BUNDESLAND_OPTIONEN = [
+  { code: 'BB', name: 'Brandenburg' },
+  { code: 'BE', name: 'Berlin' },
+  { code: 'BW', name: 'Baden-Württemberg' },
+  { code: 'BY', name: 'Bayern' },
+  { code: 'HB', name: 'Bremen' },
+  { code: 'HE', name: 'Hessen' },
+  { code: 'HH', name: 'Hamburg' },
+  { code: 'MV', name: 'Mecklenburg-Vorpommern' },
+  { code: 'NI', name: 'Niedersachsen' },
+  { code: 'NW', name: 'Nordrhein-Westfalen' },
+  { code: 'RP', name: 'Rheinland-Pfalz' },
+  { code: 'SH', name: 'Schleswig-Holstein' },
+  { code: 'SL', name: 'Saarland' },
+  { code: 'SN', name: 'Sachsen' },
+  { code: 'ST', name: 'Sachsen-Anhalt' },
+  { code: 'TH', name: 'Thüringen' },
+]
+
+function AutoPipelineSection({
+  objektId, data, isEditing, formData, set, inputCls,
+}: {
+  objektId: string
+  data: Objekt
+  isEditing: boolean
+  formData: Partial<Objekt>
+  set: (field: keyof Objekt, value: unknown) => void
+  inputCls: string
+}) {
+  const { data: protokolle = [] } = useQuery({
+    queryKey: ['auto-pipeline-protokolle', objektId],
+    queryFn: () => buchhaltungApi.autoPipelineProtokolle({ objekt: objektId }),
+    enabled: !!objektId,
+  })
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 p-5 mb-4">
+      <h2 className="font-semibold text-gray-700 mb-3">Auto-Pipeline</h2>
+
+      {isEditing ? (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Auto-Pipeline aktiv</label>
+            <select
+              className={inputCls}
+              value={(formData.auto_pipeline_aktiv ?? data.auto_pipeline_aktiv) ? 'ja' : 'nein'}
+              onChange={e => set('auto_pipeline_aktiv', e.target.value === 'ja')}
+            >
+              <option value="ja">Ja — automatisch einziehen</option>
+              <option value="nein">Nein — manuell</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Bundesland (Bankfeiertage)</label>
+            <select
+              className={inputCls}
+              value={formData.bundesland ?? data.bundesland ?? 'HE'}
+              onChange={e => set('bundesland', e.target.value)}
+            >
+              {BUNDESLAND_OPTIONEN.map(bl => (
+                <option key={bl.code} value={bl.code}>{bl.code} — {bl.name}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      ) : (
+        <div className="flex gap-6 mb-4">
+          <div>
+            <p className="text-xs text-gray-500">Auto-Pipeline</p>
+            <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium mt-1 ${
+              data.auto_pipeline_aktiv ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-500'
+            }`}>
+              {data.auto_pipeline_aktiv ? 'Aktiv' : 'Deaktiviert'}
+            </span>
+          </div>
+          <div>
+            <p className="text-xs text-gray-500">Bundesland</p>
+            <p className="text-sm font-medium text-gray-800 mt-1">
+              {BUNDESLAND_OPTIONEN.find(b => b.code === data.bundesland)?.name ?? data.bundesland ?? 'HE'}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {protokolle.length > 0 && (
+        <>
+          <p className="text-xs text-gray-500 mb-2">Letzte Läufe</p>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-100">
+                <th className="text-left py-1 text-xs font-medium text-gray-500">Datum</th>
+                <th className="text-left py-1 text-xs font-medium text-gray-500">Periode</th>
+                <th className="text-left py-1 text-xs font-medium text-gray-500">Status</th>
+                <th className="text-right py-1 text-xs font-medium text-gray-500">EVs</th>
+                <th className="text-right py-1 text-xs font-medium text-gray-500">LS-Summe</th>
+                <th className="py-1"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {protokolle.slice(0, 5).map(p => (
+                <tr key={p.id} className="border-b border-gray-50">
+                  <td className="py-1 text-gray-600 text-xs">
+                    {new Date(p.ausgefuehrt_am).toLocaleDateString('de-DE')}
+                  </td>
+                  <td className="py-1 font-mono text-xs text-gray-600">
+                    {new Date(p.periode).toLocaleDateString('de-DE', { month: '2-digit', year: 'numeric' })}
+                  </td>
+                  <td className="py-1">
+                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${AUTO_LAUF_STATUS_COLOR[p.status]}`}>
+                      {AUTO_LAUF_STATUS_LABEL[p.status]}
+                    </span>
+                  </td>
+                  <td className="py-1 text-right text-xs text-gray-500">
+                    {p.anzahl_evs_erfolgreich}/{p.anzahl_evs_geplant}
+                  </td>
+                  <td className="py-1 text-right text-xs font-mono text-gray-600">
+                    {parseFloat(p.summe_lastschrift) > 0
+                      ? `${parseFloat(p.summe_lastschrift).toLocaleString('de-DE', { minimumFractionDigits: 2 })} €`
+                      : '–'}
+                  </td>
+                  <td className="py-1 text-right">
+                    <Link to={`/buchhaltung/auto-pipeline/protokoll/${p.id}`} className="text-primary-600 hover:underline text-xs">
+                      →
+                    </Link>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <Link to="/buchhaltung/auto-pipeline" className="text-xs text-primary-600 hover:underline mt-2 block">
+            Alle Läufe ansehen →
+          </Link>
+        </>
+      )}
+    </div>
+  )
+}
 
 function MitarbeiterZuordnungSection({ objektId }: { objektId: string }) {
   const qc = useQueryClient()
@@ -501,7 +653,10 @@ export function ObjektDetail() {
       wirtschaftsjahr_start: data.wirtschaftsjahr_start,
       umsatzsteuer_pflichtig: data.umsatzsteuer_pflichtig,
       glaeubiger_id: data.glaeubiger_id,
+      kurzbezeichnung: data.kurzbezeichnung ?? '',
       status: data.status,
+      auto_pipeline_aktiv: data.auto_pipeline_aktiv ?? true,
+      bundesland: data.bundesland ?? 'HE',
     })
     setBankkontenEdits(data.bankkonten ?? [])
     setBankkontenDeleted([])
@@ -515,6 +670,9 @@ export function ObjektDetail() {
   const setBk = (idx: number, field: keyof Bankkonto, value: unknown) =>
     setBankkontenEdits(prev => prev.map((b, i) => i === idx ? { ...b, [field]: value } : b))
 
+  const setBkZahlungsverkehr = (idx: number) =>
+    setBankkontenEdits(prev => prev.map((b, i) => ({ ...b, zahlungsverkehr: i === idx })))
+
   const addBankkonto = () =>
     setBankkontenEdits(prev => [...prev, {
       id: `new-${Date.now()}`,
@@ -526,6 +684,7 @@ export function ObjektDetail() {
       kontoinhaber: '',
       reihenfolge: prev.length + 1,
       aktiv: true,
+      zahlungsverkehr: false,
     }])
 
   const removeBankkonto = (idx: number) => {
@@ -688,6 +847,15 @@ export function ObjektDetail() {
                   placeholder="z.B. DE98ZZZ09999999999"
                 />
               </EditField>
+              <EditField label="Kurzbezeichnung (SEPA-Verwendungszweck)">
+                <input
+                  className={inputCls}
+                  value={formData.kurzbezeichnung ?? ''}
+                  onChange={e => set('kurzbezeichnung', e.target.value)}
+                  placeholder="z.B. Coventrystr. 32"
+                  maxLength={40}
+                />
+              </EditField>
             </div>
 
             {saveError && (
@@ -722,6 +890,7 @@ export function ObjektDetail() {
             <Field label="WJ-Start" value={`Monat ${data.wirtschaftsjahr_start}`} />
             <Field label="USt-pflichtig" value={data.umsatzsteuer_pflichtig ? 'Ja' : 'Nein'} />
             <Field label="Gläubiger-ID (SEPA)" value={data.glaeubiger_id || '–'} />
+            <Field label="Kurzbezeichnung" value={data.kurzbezeichnung || '–'} />
           </div>
         )}
       </div>
@@ -808,7 +977,18 @@ export function ObjektDetail() {
                     </select>
                   </EditField>
                 </div>
-                <div className="flex justify-end">
+                <div className="flex items-center justify-between mt-1">
+                  <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-gray-700">
+                    <input
+                      type="radio"
+                      name="zahlungsverkehr"
+                      checked={!!bk.zahlungsverkehr}
+                      onChange={() => setBkZahlungsverkehr(idx)}
+                      className="accent-teal-600"
+                    />
+                    <span>Für Zahlungsverkehr verwenden</span>
+                    {bk.zahlungsverkehr && <span className="text-xs text-teal-600 font-medium">(aktiv)</span>}
+                  </label>
                   <button type="button" onClick={() => removeBankkonto(idx)} className="text-xs text-red-500 hover:text-red-700">
                     Bankkonto entfernen
                   </button>
@@ -829,7 +1009,12 @@ export function ObjektDetail() {
                   <p className="text-sm font-medium text-gray-800">{b.bezeichnung}</p>
                   <p className="text-xs text-gray-500 font-mono">{b.iban}</p>
                 </div>
-                <Badge value={b.konto_typ} label={b.konto_typ === 'bewirtschaftung' ? 'Bewirtschaftung' : 'Rücklage'} />
+                <div className="flex items-center gap-2">
+                  {b.zahlungsverkehr && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-teal-100 text-teal-700 font-medium">Zahlungsverkehr</span>
+                  )}
+                  <Badge value={b.konto_typ} label={b.konto_typ === 'bewirtschaftung' ? 'Bewirtschaftung' : 'Rücklage'} />
+                </div>
               </div>
             ))}
           </div>
@@ -841,6 +1026,16 @@ export function ObjektDetail() {
 
       {/* ── Mitarbeiter-Zuordnung ─────────────────────────────────── */}
       <MitarbeiterZuordnungSection objektId={id!} />
+
+      {/* ── Auto-Pipeline ────────────────────────────────────────── */}
+      <AutoPipelineSection
+        objektId={id!}
+        data={data}
+        isEditing={isEditing}
+        formData={formData}
+        set={set}
+        inputCls="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-primary-500"
+      />
 
       <div className="flex gap-3 mt-4 flex-wrap">
         <Link to={`/buchhaltung?objekt=${id}`} className="text-sm text-primary-600 hover:underline">Buchungsjournal →</Link>

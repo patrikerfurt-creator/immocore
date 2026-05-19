@@ -17,17 +17,31 @@ def erkenne_buchung(bank_import) -> dict | None:
     Versucht einen BankImport-Eintrag einer Buchung zuzuordnen.
     Gibt ein ki_vorschlag-Dict zurück oder None.
 
-    Vorschlag-Format:
+    Vorschlag-Format (CRDT):
     {
         "stufe": 1 oder 2,
         "konfidenz": "hoch" | "mittel" | "niedrig",
         "personenkonto_id": "...",
         "unterkonto_id": "...",
-        "soll_konto_id": "...",
-        "haben_konto_id": "...",
+        "begruendung": "..."
+    }
+
+    Vorschlag-Format (DBIT — KreditorOP):
+    {
+        "typ": "kreditor_op",
+        "stufe": 1,
+        "konfidenz": "hoch",
+        "kreditor_op_id": "...",
+        "rechnung_id": "...",
         "begruendung": "..."
     }
     """
+    # DBIT (Ausgang): KreditorOP-Matching oder Eigentümer-Erstattung
+    if bank_import.betrag < 0:
+        from apps.buchhaltung.services.camt_matching_service import erkenne_dbit
+        return erkenne_dbit(bank_import)
+
+    # CRDT (Eingang): Hausgeld-Eigentümer-Erkennung
     vorschlag = _stufe1_regelbasiert(bank_import)
     if vorschlag:
         return vorschlag
@@ -122,7 +136,7 @@ def _stufe2_claude(bank_import) -> dict | None:
     # Sachkonten des Objekts für den Prompt aufbereiten
     from apps.konten.models import Konto, Personenkonto
     konten = list(
-        Konto.objects.filter(objekt=bank_import.objekt, aktiv=True)
+        Konto.objects.filter(wirtschaftsjahr__objekt=bank_import.objekt, aktiv=True)
         .values('id', 'kontonummer', 'kontoname', 'kontoart')
         .order_by('kontonummer')
     )
@@ -195,15 +209,15 @@ Antworte NUR mit einem JSON-Objekt (kein Markdown) in diesem Format:
 
     if soll_nr:
         k = KontoModel.objects.filter(
-            objekt=bank_import.objekt, kontonummer=soll_nr
-        ).first()
+            wirtschaftsjahr__objekt=bank_import.objekt, kontonummer=soll_nr
+        ).order_by('-wirtschaftsjahr__jahr').first()
         if k:
             result['soll_konto_id'] = str(k.id)
 
     if haben_nr:
         k = KontoModel.objects.filter(
-            objekt=bank_import.objekt, kontonummer=haben_nr
-        ).first()
+            wirtschaftsjahr__objekt=bank_import.objekt, kontonummer=haben_nr
+        ).order_by('-wirtschaftsjahr__jahr').first()
         if k:
             result['haben_konto_id'] = str(k.id)
 

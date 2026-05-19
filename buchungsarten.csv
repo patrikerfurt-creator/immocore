@@ -1,30 +1,34 @@
-﻿Nr;Kuerzel;Bezeichnung;Einzelabrechnung;Gesamtabrechnung;Ruecklagen_relevant;Umlage;Beleg_pflicht;Beschluss_pflicht;Vier_Augen_Schwelle;Sperre_nach_JA;System_Buchungsart
-001;SAVO-S;Saldenvortrag Sachkonten;nein;False;False;gesperrt;False;False;;True;False
-002;SAVO-P;Saldenvortrag Personenkonten;nein;False;False;gesperrt;False;False;;True;False
-003;SAVO-K;Saldenvortrag Kreditoren;nein;False;False;gesperrt;False;False;;True;False
-004;SAVO-B;Saldenvortrag Bankkonten;nein;False;False;gesperrt;False;False;;True;False
-010;S-HGV;Sollstellung Hausgeldvorauszahlung;ja;True;False;gesperrt;False;False;;True;False
-011;S-RLZ;Sollstellung Rücklagenzuführung;nein;False;True;gesperrt;False;False;;True;False
-012;S-SU;Sonderumlage;ja;True;False;pflicht;True;True;;True;False
-013;S-JA;Sollstellung Jahresabrechung;nein;False;False;gesperrt;False;False;;True;False
-015;S-MIETE;Miete (ZH/SEV);nein;False;False;gesperrt;False;False;;True;False
-016;S-NKVZ;Nebenkostenvorauszahlung (ZH/SEV);nein;False;False;gesperrt;False;False;;True;False
-020;EING-P;Eingang Personenkonto (Zahlung);nein;False;False;gesperrt;False;False;;True;False
-021;AUSG-P;Ausgang Personenkonto (Erstattung);nein;False;False;gesperrt;False;False;;True;False
-022;UMB-P;Umbuchung Personenkonto;nein;False;False;gesperrt;False;False;;True;False
-023;MAHNG;Mahngebühr;nein;False;False;gesperrt;False;False;;True;False
-024;VERZZ;Verzugszinsen (§ 288 BGB);nein;False;False;gesperrt;False;False;;True;False
-040;SACH;Sachkontenbuchung Aufwand (Bewirtschaftung);ja;True;False;pflicht;True;False;;True;False
-041;SACH-AR;Sachkontenbuchung Aufwand (Rücklage);nein;False;True;gesperrt;True;True;;True;False
-050;EING-K;Eingang Kreditor (Rechnungseingang);ja;True;False;optional;True;False;;True;False
-051;AUSG-K;Ausgang Kreditor (Zahlung);nein;False;False;gesperrt;False;False;;True;False
-052;GS-K;Kreditoren-Gutschrift;nein;False;False;gesperrt;True;False;;True;False
-053;SKT-K;Skonto / Rabatt Kreditor;nein;False;False;gesperrt;False;False;;True;False
-080;ARAP-B;ARAP-Bildung;nein;False;False;gesperrt;True;False;;True;False
-081;ARAP-A;ARAP-Auflösung;ja;True;False;optional;False;False;;True;False
-082;PRAP-B;PRAP-Bildung;nein;False;False;gesperrt;True;False;;True;False
-083;PRAP-A;PRAP-Auflösung;ja;True;False;optional;False;False;;True;False
-090;JA-ABS;Jahresabschluss-Buchung;nein;False;False;gesperrt;True;False;;True;False
-091;RL-ENT;Rücklagenentwicklung (Jahresbuchung);nein;False;True;gesperrt;True;False;;True;False
-098;STO;Storno (spiegelt Original-BA);nein;False;False;gesperrt;True;False;;True;False
-099;KOR;Korrekturbuchung (spiegelt Original-BA);nein;False;False;gesperrt;True;False;;True;False
+nr;kuerzel;bezeichnung;einzelabrechnung;gesamtabrechnung;ruecklagen_relevant;umlage;beleg_pflicht;beschluss_pflicht;vier_augen_schwelle;sperre_nach_jahresabschluss;system_buchungsart;default_konto_soll_pattern;default_konto_haben_pattern;aktiv;tilgungs_prioritaet;erloeskonto_default_nr;bankkonto_typ;buchungstyp
+001;SAVO-S;Saldenvortrag Sachkonten;nein;False;False;gesperrt;False;False;;True;True;;;True;;;;sachkonto
+002;SAVO-P;Saldenvortrag Personenkonten;nein;False;False;gesperrt;False;False;;True;True;;;True;;;;personenkonto
+003;SAVO-K;Saldenvortrag Kreditoren;nein;False;False;gesperrt;False;False;;True;True;;;True;;;;kreditor
+004;SAVO-B;Saldenvortrag Bankkonten;nein;False;False;gesperrt;False;False;;True;True;;;True;;;;sachkonto
+010;HGV;Sollstellung Hausgeldvorauszahlung;ja;True;False;gesperrt;False;False;;True;True;;;True;;;;personenkonto
+011;RLZ;Sollstellung Rücklagenzuführung;nein;False;True;gesperrt;False;False;;True;True;.911;;True;;;;personenkonto
+012;SU;Sollstellung Sonderumlage;ja;True;False;pflicht;True;True;5000;True;True;;;True;;;;personenkonto
+013;NZJA;Nachzahlung aus Jahresabrechnung;nein;False;False;gesperrt;False;False;;True;True;;;True;;;;personenkonto
+014;GJA;Guthaben aus Jahresabrechnung;nein;False;False;gesperrt;False;False;;True;True;;;True;;;;personenkonto
+015;MIETE;Miete (ZH/SEV);nein;False;False;gesperrt;False;False;;True;True;;;True;;;;personenkonto
+016;NKVZ;Nebenkostenvorauszahlung (ZH/SEV);nein;False;False;gesperrt;False;False;;True;True;;;True;;;;personenkonto
+020;EING-P;Eingang Personenkonto (Zahlung);nein;False;False;gesperrt;False;False;;True;False;;;True;;;;personenkonto
+021;AUSG-P;Ausgang Personenkonto (Erstattung);nein;False;False;gesperrt;False;False;;True;False;;;True;;;;personenkonto
+022;UMB-P;Umbuchung Personenkonto;nein;False;False;gesperrt;False;False;;True;False;;;True;;;;personenkonto
+023;MAHNG;Mahngebühr;nein;False;False;gesperrt;False;False;;True;True;;;True;;;;personenkonto
+024;VERZZ;Verzugszinsen (§ 288 BGB);nein;False;False;gesperrt;False;False;;True;True;;;True;;;;
+040;SACH-A;Sachkontenbuchung Aufwand (Bewirtschaftung);ja;True;False;pflicht;True;False;10000;True;False;;;True;;;;sachkonto
+041;SACH-AR;Sachkontenbuchung Aufwand (Rücklage);nein;False;True;gesperrt;True;True;5000;True;False;;.911;True;;;;sachkonto
+042;SACH-E;Sachkontenbuchung Ertrag (Bewirtschaftung);ja;True;False;optional;True;False;;True;False;;;True;;;;sachkonto
+043;SACH-ER;Sachkontenbuchung Ertrag (Rücklage / Zinsen);nein;False;True;gesperrt;True;False;;True;False;;.911;True;;;;sachkonto
+044;SACH-U;Sachkonten-Umbuchung (nicht abr.-relevant);nein;False;False;gesperrt;False;False;;True;False;;;True;;;;sachkonto
+050;EING-K;Eingang Kreditor (Rechnungseingang);ja;True;False;optional;True;False;;True;False;;;True;;;;kreditor
+051;AUSG-K;Ausgang Kreditor (Zahlung);nein;False;False;gesperrt;False;False;;True;False;;;True;;;;kreditor
+052;GS-K;Kreditoren-Gutschrift;nein;False;False;gesperrt;True;False;;True;False;;;True;;;;kreditor
+053;SKT-K;Skonto / Rabatt Kreditor;nein;False;False;gesperrt;False;False;;True;False;;;True;;;;kreditor
+080;ARAP-B;ARAP-Bildung;nein;False;False;gesperrt;True;False;;True;False;;;True;;;;sachkonto
+081;ARAP-A;ARAP-Auflösung;ja;True;False;optional;False;False;;True;False;;;True;;;;sachkonto
+082;PRAP-B;PRAP-Bildung;nein;False;False;gesperrt;True;False;;True;False;;;True;;;;sachkonto
+083;PRAP-A;PRAP-Auflösung;ja;True;False;optional;False;False;;True;False;;;True;;;;sachkonto
+090;JA-ABS;Jahresabschluss-Buchung;nein;False;False;gesperrt;True;False;;True;True;;;True;;;;sachkonto
+091;RL-ENT;Rücklagenentwicklung (Jahresbuchung);nein;False;True;gesperrt;True;False;;True;True;;.911;True;;;;sachkonto
+098;STO;Storno (spiegelt Original-BA);nein;False;False;gesperrt;True;False;;True;False;;;True;;;;
+099;KOR;Korrekturbuchung (spiegelt Original-BA);nein;False;False;gesperrt;True;False;;True;False;;;True;;;;

@@ -1,6 +1,6 @@
 from uuid import uuid4
 from django.db import models
-from apps.objekte.models import Objekt, Bankkonto
+from apps.objekte.models import Objekt, Bankkonto, Wirtschaftsjahr
 from apps.personen.models import Person, EigentumsVerhaeltnis
 
 
@@ -10,8 +10,11 @@ class Konto(models.Model):
         SUMMIERUNG = 'summierung', 'Summierungskonto'
         UNTERKONTO = 'unterkonto', 'Unterkonto'
 
-    id                  = models.UUIDField(primary_key=True, default=uuid4, editable=False)
-    objekt              = models.ForeignKey(Objekt, on_delete=models.CASCADE, related_name='konten')
+    id              = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    wirtschaftsjahr = models.ForeignKey(
+        Wirtschaftsjahr, on_delete=models.CASCADE,
+        related_name='konten', null=True, blank=True,
+    )
     kontonummer         = models.CharField(max_length=6)
     kontoname           = models.CharField(max_length=120)
     abrechnungsart      = models.CharField(max_length=3, null=True, blank=True)
@@ -26,7 +29,19 @@ class Konto(models.Model):
         verbose_name        = 'Konto (Sachkonto)'
         verbose_name_plural = 'Konten (Sachkonten)'
         ordering            = ['kontonummer']
-        unique_together     = [['objekt', 'kontonummer']]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['wirtschaftsjahr', 'kontonummer'],
+                name='unique_wj_kontonummer',
+                condition=models.Q(wirtschaftsjahr__isnull=False),
+            ),
+        ]
+
+    @property
+    def objekt(self):
+        if self.wirtschaftsjahr_id:
+            return self.wirtschaftsjahr.objekt
+        return None
 
     def save(self, *args, **kwargs):
         if self.kontoart == self.Kontoart.SUMMIERUNG:
@@ -36,7 +51,28 @@ class Konto(models.Model):
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.kontonummer} — {self.kontoname} ({self.objekt.bezeichnung})"
+        wj = self.wirtschaftsjahr
+        objekt_str = wj.objekt.bezeichnung if wj else '?'
+        return f"{self.kontonummer} — {self.kontoname} ({objekt_str})"
+
+
+# ---------------------------------------------------------------------------
+# KontoVerteilerSchluessel — VS-Zuordnung je Konto (Spec v1.0 Kap. 3.3)
+# ---------------------------------------------------------------------------
+
+class KontoVerteilerSchluessel(models.Model):
+    id         = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    konto      = models.ForeignKey(Konto, on_delete=models.CASCADE, related_name='vs_zuordnungen')
+    vs_code    = models.CharField(max_length=3)
+    gueltig_ab = models.DateField()
+
+    class Meta:
+        verbose_name        = 'Konto-Verteilerschlüssel'
+        verbose_name_plural = 'Konto-Verteilerschlüssel'
+        ordering            = ['konto', 'gueltig_ab']
+
+    def __str__(self):
+        return f"VS {self.vs_code} → {self.konto.kontonummer} ab {self.gueltig_ab}"
 
 
 class Personenkonto(models.Model):
