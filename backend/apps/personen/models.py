@@ -276,8 +276,8 @@ class HausgeldHistorie(models.Model):
         ordering = ['eigentumsverhaeltnis', 'abrechnungsart', '-gueltig_ab']
         constraints = [
             models.UniqueConstraint(
-                fields=['eigentumsverhaeltnis', 'abrechnungsart', 'gueltig_ab'],
-                name='uniq_historie_je_vertrag_abrart_datum',
+                fields=['eigentumsverhaeltnis', 'abrechnungsart', 'quelle', 'gueltig_ab'],
+                name='uniq_historie_je_vertrag_abrart_quelle_datum',
             ),
             models.CheckConstraint(
                 name='hausgeld_historie_quelle_consistency',

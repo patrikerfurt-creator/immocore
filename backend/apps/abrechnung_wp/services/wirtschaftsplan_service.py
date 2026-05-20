@@ -116,18 +116,21 @@ def _aktives_ev_an_stichtag(einheit, stichtag: date):
     ).first()
 
 
-def aggregiere_ba_je_ev(wp: Wirtschaftsplan) -> dict:
+def aggregiere_ba_je_ev(wp: Wirtschaftsplan, stichtag: date = None) -> dict:
     """
     Aggregiert monatliche Anteile pro EigentumsVerhaeltnis pro BA-Code.
     Gibt {(ev_id, ba_code): Decimal} zurück.
+    stichtag: Datum für die EV-Ermittlung, Standard = wp.wirkung_ab.
     """
+    if stichtag is None:
+        stichtag = wp.wirkung_ab
     ergebnis = defaultdict(lambda: Decimal('0.00'))
     for position in wp.positionen.select_related('konto').prefetch_related('anteile__einheit').all():
         ba_code = _ba_aus_abrechnungsart(position.konto.abrechnungsart)
         if not ba_code:
             continue
         for anteil in position.anteile.all():
-            ev = _aktives_ev_an_stichtag(anteil.einheit, wp.wirkung_ab)
+            ev = _aktives_ev_an_stichtag(anteil.einheit, stichtag)
             if ev is None:
                 continue
             ergebnis[(ev.id, ba_code)] += anteil.monatsbetrag_anteil
@@ -223,31 +226,46 @@ def commite_beschluss(wp: Wirtschaftsplan, beschluss_data: dict, user) -> dict:
 
     # 3) HausgeldHistorie fortschreiben
     ba_je_ev = aggregiere_ba_je_ev(wp)
-    for (ev_id, ba_code), monatsbetrag in ba_je_ev.items():
+
+    def _schreibe_hausgeld_historie(ev_id, ba_code, monatsbetrag, gueltig_ab):
         ba_obj = Buchungsart.objects.filter(nr=ba_code).first()
-        abr_obj = None
         try:
             ev = EigentumsVerhaeltnis.objects.select_related('einheit__objekt').get(pk=ev_id)
             abr_obj = Abrechnungsart.objects.filter(
                 objekt=ev.einheit.objekt, code=ba_code
             ).first()
         except EigentumsVerhaeltnis.DoesNotExist:
-            continue
-
+            return
         HausgeldHistorie.objects.update_or_create(
             eigentumsverhaeltnis_id=ev_id,
             abrechnungsart=abr_obj,
-            gueltig_ab=wp.wirkung_ab,
+            quelle='wirtschaftsplan',
+            gueltig_ab=gueltig_ab,
             defaults={
                 'ba': ba_obj,
                 'betrag': monatsbetrag,
-                'quelle': 'wirtschaftsplan',
                 'quelle_wp': wp,
                 'import_referenz': None,
                 'beschluss': None,
                 'erstellt_von': user,
             },
         )
+
+    for (ev_id, ba_code), monatsbetrag in ba_je_ev.items():
+        _schreibe_hausgeld_historie(ev_id, ba_code, monatsbetrag, wp.wirkung_ab)
+
+    # Eigentümerwechsel nach wirkung_ab: aktuelle EV ebenfalls versorgen
+    if wp.wirkung_ab < heute:
+        ba_je_ev_aktuell = aggregiere_ba_je_ev(wp, stichtag=heute)
+        for (ev_id, ba_code), monatsbetrag in ba_je_ev_aktuell.items():
+            if (ev_id, ba_code) in ba_je_ev:
+                continue  # Bereits zum wirkung_ab-Zeitpunkt erfasst
+            try:
+                ev_aktuell = EigentumsVerhaeltnis.objects.get(pk=ev_id)
+            except EigentumsVerhaeltnis.DoesNotExist:
+                continue
+            gueltig_ab_aktuell = max(wp.wirkung_ab, ev_aktuell.beginn)
+            _schreibe_hausgeld_historie(ev_id, ba_code, monatsbetrag, gueltig_ab_aktuell)
 
     # 4) Rückwirkende Differenz-Mechanik
     nachhol_ids = []

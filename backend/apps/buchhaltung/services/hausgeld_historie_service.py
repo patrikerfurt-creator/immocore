@@ -27,6 +27,7 @@ def setze_neue_saetze(
     Returns: Liste der neu angelegten HausgeldHistorie-Einträge.
     """
     from apps.personen.models import HausgeldHistorie
+    from apps.konten.models import Abrechnungsart
 
     if quelle == 'import' and not settings.HAUSGELD_IMPORT_QUELLE_ERLAUBT:
         raise ValidationError(
@@ -41,6 +42,11 @@ def setze_neue_saetze(
     vortag = gueltig_ab - timedelta(days=1)
 
     for ba, betrag in saetze_je_ba:
+        abr_obj = Abrechnungsart.objects.filter(
+            objekt=ev.einheit.objekt,
+            code=ba.nr,
+        ).first()
+
         HausgeldHistorie.objects.filter(
             eigentumsverhaeltnis=ev,
             ba=ba,
@@ -56,6 +62,7 @@ def setze_neue_saetze(
         neuer_eintrag = HausgeldHistorie.objects.create(
             eigentumsverhaeltnis=ev,
             ba=ba,
+            abrechnungsart=abr_obj,
             gueltig_ab=gueltig_ab,
             gueltig_bis=None,
             betrag=betrag,

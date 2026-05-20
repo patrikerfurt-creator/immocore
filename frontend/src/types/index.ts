@@ -164,9 +164,13 @@ export interface HausgeldHistorie {
   eigentumsverhaeltnis: string
   betrag: string
   gueltig_ab: string
-  abrechnungsart_code: string
+  abrechnungsart_code: string | null
+  abrechnungsart_bezeichnung: string | null
   wirtschaftsplan_jahr: number | null
-  erstellt_von: number
+  quelle: 'import' | 'wirtschaftsplan' | 'beschluss'
+  bemerkung: string
+  erstellt_am: string | null
+  beschluss_datum: string | null
 }
 
 export interface EigentumsVerhaeltnis {

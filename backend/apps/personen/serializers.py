@@ -32,13 +32,19 @@ class HausgeldHistorieSerializer(serializers.ModelSerializer):
     abrechnungsart_bezeichnung = serializers.CharField(
         source='abrechnungsart.bezeichnung', read_only=True
     )
+    beschluss_datum = serializers.SerializerMethodField()
+
+    def get_beschluss_datum(self, obj):
+        if obj.beschluss:
+            return str(obj.beschluss.beschluss_datum)
+        return None
 
     class Meta:
         model = HausgeldHistorie
         fields = [
             'id', 'eigentumsverhaeltnis', 'abrechnungsart', 'abrechnungsart_code',
             'abrechnungsart_bezeichnung', 'betrag', 'gueltig_ab', 'wirtschaftsplan_jahr',
-            'quelle', 'bemerkung', 'erstellt_von', 'erstellt_am',
+            'quelle', 'bemerkung', 'erstellt_von', 'erstellt_am', 'beschluss_datum',
         ]
         read_only_fields = ['id', 'erstellt_am']
 

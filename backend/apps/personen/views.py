@@ -524,7 +524,7 @@ class HausgeldHistorieViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = HausgeldHistorie.objects.select_related(
-            'eigentumsverhaeltnis', 'abrechnungsart', 'erstellt_von'
+            'eigentumsverhaeltnis', 'abrechnungsart', 'erstellt_von', 'beschluss'
         )
         ev_id = self.request.query_params.get('eigentumsverhaeltnis')
         if ev_id:

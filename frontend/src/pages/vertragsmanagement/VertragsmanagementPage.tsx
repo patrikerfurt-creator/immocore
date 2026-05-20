@@ -626,10 +626,20 @@ function EigentumsZuweisungModal({
 // ────────────────────────────────────────────────────────────────────────────
 type HausgeldZeile = { abrechnungsartId: string; code: string; betrag: string; gueltigAb: string }
 
+const QUELLE_LABEL: Record<string, string> = {
+  import: 'Import',
+  wirtschaftsplan: 'WP-Beschluss',
+  beschluss: 'Beschluss',
+}
+
 function latestHistorie(eintraege: HausgeldHistorie[], code: string) {
   return eintraege
     .filter(h => h.abrechnungsart_code === code)
-    .sort((a, b) => b.gueltig_ab.localeCompare(a.gueltig_ab))[0] ?? null
+    .sort((a, b) => {
+      const d = b.gueltig_ab.localeCompare(a.gueltig_ab)
+      if (d !== 0) return d
+      return (b.erstellt_am ?? '').localeCompare(a.erstellt_am ?? '')
+    })[0] ?? null
 }
 
 function initZeilen(arts: Abrechnungsart[], eintraege: HausgeldHistorie[]): HausgeldZeile[] {
@@ -718,11 +728,14 @@ function HausgeldModal({
     }
   }
 
-  // History sorted by code ASC, then gueltig_ab DESC
+  // History: Code ASC, gueltig_ab DESC, dann erstellt_am DESC (WP-Beschluss nach Import)
   const historieSorted = useMemo(
     () => [...eintraege].sort((a, b) => {
       const c = (a.abrechnungsart_code ?? '').localeCompare(b.abrechnungsart_code ?? '', 'de', { numeric: true })
-      return c !== 0 ? c : b.gueltig_ab.localeCompare(a.gueltig_ab)
+      if (c !== 0) return c
+      const d = b.gueltig_ab.localeCompare(a.gueltig_ab)
+      if (d !== 0) return d
+      return (b.erstellt_am ?? '').localeCompare(a.erstellt_am ?? '')
     }),
     [eintraege],
   )
@@ -750,19 +763,28 @@ function HausgeldModal({
                   <th className="text-right px-3 py-1.5 font-medium text-gray-600 w-24">Betrag</th>
                   <th className="text-left px-3 py-1.5 font-medium text-gray-600 w-24">Gültig ab</th>
                   <th className="text-left px-3 py-1.5 font-medium text-gray-600 w-16">WP-Jahr</th>
+                  <th className="text-left px-3 py-1.5 font-medium text-gray-600 w-24">Quelle</th>
+                  <th className="text-left px-3 py-1.5 font-medium text-gray-600 w-24">Erfasst am</th>
                 </tr>
               </thead>
               <tbody>
-                {historieSorted.map(h => (
-                  <tr key={h.id} className="border-t border-gray-100">
-                    <td className="px-3 py-1.5 font-mono text-gray-700">{h.abrechnungsart_code ?? '–'}</td>
-                    <td className="px-3 py-1.5 text-right text-gray-700">
-                      {parseFloat(h.betrag).toLocaleString('de-DE', { minimumFractionDigits: 2 })} €
-                    </td>
-                    <td className="px-3 py-1.5 text-gray-600">{h.gueltig_ab}</td>
-                    <td className="px-3 py-1.5 text-gray-400">{h.wirtschaftsplan_jahr ?? '–'}</td>
-                  </tr>
-                ))}
+                {historieSorted.map(h => {
+                  const erfasstAm = h.erstellt_am
+                    ? new Date(h.erstellt_am).toLocaleDateString('de-DE')
+                    : '–'
+                  return (
+                    <tr key={h.id} className="border-t border-gray-100">
+                      <td className="px-3 py-1.5 font-mono text-gray-700">{h.abrechnungsart_code ?? '–'}</td>
+                      <td className="px-3 py-1.5 text-right text-gray-700">
+                        {parseFloat(h.betrag).toLocaleString('de-DE', { minimumFractionDigits: 2 })} €
+                      </td>
+                      <td className="px-3 py-1.5 text-gray-600">{h.gueltig_ab}</td>
+                      <td className="px-3 py-1.5 text-gray-400">{h.wirtschaftsplan_jahr ?? '–'}</td>
+                      <td className="px-3 py-1.5 text-gray-500 text-xs">{QUELLE_LABEL[h.quelle] ?? h.quelle}</td>
+                      <td className="px-3 py-1.5 text-gray-400 text-xs">{erfasstAm}</td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
