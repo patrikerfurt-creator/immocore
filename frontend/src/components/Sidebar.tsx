@@ -22,6 +22,7 @@ const buchhaltungItems: NavItemDef[] = [
   { to: '/buchhaltung/debitoren',      label: 'Debitoren',         icon: '👥', objektAware: true },
   { to: '/buchhaltung/dialog',         label: 'Dialogbuchhaltung', icon: '✏️', objektAware: true },
   { to: '/buchhaltung/sollstellungen', label: 'Sollstellung',      icon: '📬', objektAware: true },
+  { to: '/buchhaltung/auto-pipeline', label: 'Auto-Pipeline',     icon: '🤖' },
   { to: '/buchhaltung/kontoauszug',    label: 'Kontoauszug',       icon: '📋', objektAware: true },
   { to: '/buchhaltung/ebanking',       label: 'E-Banking',         icon: '🏦', objektAware: true },
   { to: '/rechnungen',                        label: 'Rechnungen',        icon: '🧾', objektAware: true },

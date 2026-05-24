@@ -1,0 +1,683 @@
+IMMOCORE
+Webbasiertes Immobilienverwaltungssystem
+Claude Code Implementierungsprompt
+Modul: 3-stufige Rechnungserkennung mit lernender Buchungslogik
+Routing nach Erkennungs-Dimension — Objektbetreuer, Frontoffice, Limit-Workflow
+Demme Immobilien Verwaltung GmbH
+Coventrystraße 32, 65934 Frankfurt am Main
+Version 1.2  |  Stand: Mai 2026
+Änderungen ggu. v1.1: Stufe 2 differenziert nach erkannter Dimension (Objekt erkannt → Objektbetreuer; nur Kreditor erkannt → Frontoffice). Stufe 3 → Frontoffice. Neue Rolle Frontoffice. Auto-Buchung benötigt zusätzlich erkennungs_konfidenz ≥ 95%.
+1. Zweck dieses Dokuments
+Dieses Dokument ist der vollständige Claude Code Implementierungsprompt für das Modul „Rechnungserkennung mit Lernlogik“. Es löst die Versionen 1.0 und 1.1 ab. Erweitert werden:
+drei klar getrennte Erkennungsstufen mit dimensions-spezifischem Routing
+ein lernendes Regelwerk für die automatische Buchungskonto-Zuordnung
+Pflichtfeld Objekt.betreuer als Routing-Ziel für objektbezogene Prüffälle
+neue Rolle Frontoffice für ungeklärte Eingänge ohne erkennbares Objekt
+zusätzliche 95%-Konfidenz-Schwelle als Voraussetzung für automatische Buchung
+Das Modul ist additiv. Bestehende Status (in_pruefung, freigegeben, gebucht, bezahlt, abgelehnt) und der Mechanismus zahlungsfreigabe_grenzen bleiben unverändert.
+Voraussetzung
+Phasen 1–3 abgeschlossen. Models Rechnung, Freigabe, Konto, Person (mit Rolle Dienstleister), Objekt vorhanden. KI-OCR-Endpunkt und ZUGFeRD/XRechnung-Parser funktional. Bezug: IMMOCORE_Ausgangsspezifikation v1.1 Kap. 7 + 7.3. KI-Modell: claude-sonnet-4-6.
+2. Workflow im Überblick
+2.1 Drei Phasen
+Erkennung und Freigabe sind sauber getrennt. Zwischen den beiden Phasen entscheidet ein Routing-Schritt anhand der erkannten Dimensionen, wer die Rechnung bearbeitet.
+Phase A — Erkennung: automatisch, technisch, ohne Nutzerinteraktion.
+Phase B — Routing: technisch, weist Rechnung dem richtigen Bearbeiter zu (Limit-Workflow / Objektbetreuer / Frontoffice).
+Phase C — Bearbeitung: Auto-Buchung ODER manuelle Identifikation/Freigabe.
+2.2 Erkennungsstufen
+Stufe
+Bedingung
+Status
+Routing-Ziel
+1 — Erkannt
+Kreditor + Objekt + Konto eindeutig
+erkannt
+Limit-Workflow (zahlungsfreigabe_grenzen)
+2a — Prüffall Objekt
+Objekt erkannt; Kreditor und/oder Konto offen
+pruefung_match
+Objektbetreuer (Objekt.betreuer)
+2b — Prüffall Kreditor
+NUR Kreditor erkannt; Objekt offen
+pruefung_match
+Frontoffice-Inbox
+3 — Nicht erkannt
+Keine Dimension eindeutig
+nicht_erkannt
+Frontoffice-Inbox
+Routing-Schlüssel
+Das Vorhandensein eines erkannten Objekts entscheidet über das Routing in Stufe 2. Ohne Objekt kann kein Objektbetreuer ermittelt werden — die Rechnung geht ins Frontoffice. Sobald das Frontoffice das Objekt zugeordnet hat, läuft die Rechnung in den Limit-Workflow weiter (NICHT zurück zum Objektbetreuer).
+2.3 Bearbeitungspfade
+Bearbeiter
+Aktion
+Folge
+Auto
+Rechnung erfüllt: Stufe 1 + Betrag < Auto-Limit + erkennungs_konfidenz ≥ 95% in allen drei Dimensionen
+→ gebucht (sofort, ohne Nutzer)
+Limit-Workflow
+Stufe 1, aber NICHT auto-fähig (Betrag ≥ Limit ODER Konfidenz < 95%)
+→ in_pruefung mit zugewiesen_an = Sachbearbeiter/GF gemäß Limit
+Objektbetreuer
+Stufe 2a (Objekt erkannt). Doppelfunktion: identifizieren + ggf. freigeben
+Nach Identifikation → Limit-Workflow
+Frontoffice
+Stufe 2b (nur Kreditor) ODER Stufe 3 (nichts). Doppelfunktion: identifizieren + ggf. freigeben
+Nach Identifikation → Limit-Workflow
+2.4 Entscheidungsbaum
+Rechnungseingang
+|
+v
+[ Erkennungs-Pipeline ] (Phase A)
+|
+v
+[ Routing ] (Phase B)
+|
++-- Stufe 1 (alle 3 erkannt) ----------------------+
+|                                                  v
+|                                  Konfidenz ≥ 95% & Betrag < Limit?
+|                                       /                \
+|                                      ja                nein
+|                                       |                  |
+|                                       v                  v
+|                                    AUTO            Limit-Workflow
+|                                  (gebucht)       (Sachbearb./GF)
+|
++-- Stufe 2a (Objekt erkannt) ---> Objektbetreuer-Inbox
+|                                       |
+|                                       v (nach Identifikation)
+|                                    Limit-Workflow
+|
++-- Stufe 2b (nur Kreditor) ---+
+|                              |
++-- Stufe 3 (nichts) ----------+
+v
+Frontoffice-Inbox
+|
+v (nach Identifikation)
+Limit-Workflow
+3. Datenmodell-Erweiterungen
+3.1 Objekt — neues Pflichtfeld
+Wird im WEG-Anlage-Wizard (v1.2) als Pflichtfeld in Schritt 8 ergänzt. Für Bestandsobjekte erfolgt eine Daten-Migration mit Pflicht-Nachpflege.
+Feld
+Typ
+Anmerkung
+betreuer
+FK → User (PROTECT)
+NEU. Pflichtfeld. Für Stufe 2a Routing.
+betreuer_vertretung
+FK → User (SET_NULL)
+Optional. Bei Abwesenheit (User.abwesend) fällt Routing auf Vertretung.
+3.2 Rolle Frontoffice (NEU)
+Neue Rolle in Group oder im Rollensystem (gemäß Ausgangsspezifikation Kap. 10). Inbox sehen alle User mit dieser Rolle. Mehrere User können die Rolle gleichzeitig haben — die Inbox ist eine geteilte Queue.
+Aspekt
+Wert
+Anmerkung
+Rolle
+Frontoffice
+Permission-Gruppe; Mehrfachzuweisung erlaubt
+Inbox-Sichtbarkeit
+Alle User mit Rolle Frontoffice
+Gefiltert: zugewiesen_an = NULL UND status ∈ {pruefung_match, nicht_erkannt} UND Routing-Ziel = frontoffice
+Lock-Mechanismus
+RechnungsBearbeitungsLock
+Beim Öffnen einer Frontoffice-Rechnung wird ein Soft-Lock auf 5 Minuten gesetzt (verlängert sich beim Tippen). Andere Frontoffice-Mitarbeiter sehen die Sperre.
+Default-Limit
+Sachbearbeiter-Stufe
+Frontoffice darf wie ein Sachbearbeiter freigeben — GF-Stufe nur wenn explizit zugewiesen
+Designentscheidung Frontoffice
+Geteilte Inbox statt einzelner User vermeidet Engpässe bei Urlaub/Krankheit. Soft-Lock verhindert Doppelbearbeitung. Inbox-Sicht NUR für Frontoffice-Routing-Ziel — Stufe 2a (Objekt erkannt) sieht das Frontoffice nicht.
+3.3 Rechnung — neue Felder
+Feld
+Typ
+Anmerkung
+status
+Enum (erweitert)
+Neue Werte: erkannt, pruefung_match, nicht_erkannt
+erkennungs_stufe
+Enum: 1 | 2a | 2b | 3
+Resultat der Erkennungs-Pipeline. 2a: Objekt erkannt; 2b: nur Kreditor erkannt
+erkennungs_konfidenz
+JSONField
+{ kreditor: 0.95, objekt: 0.80, konto: 0.0 } — je Dimension
+routing_ziel
+Enum: limit_workflow | objektbetreuer | frontoffice
+Ergebnis Phase B. Wird beim Routing gesetzt und bleibt erhalten
+zugewiesen_an
+FK → User (SET_NULL)
+Bei objektbetreuer: konkreter User; bei frontoffice: NULL (Queue) bis Lock; bei limit_workflow: Freigabe-Verantwortlicher
+match_regel
+FK → RechnungsMatchRegel (SET_NULL)
+Welche Regel wurde angewendet
+leistungstext
+TextField
+Aus OCR/XRechnung oder manuell
+leistungstext_hash
+CharField(64)
+SHA-256 über normalisierten Leistungstext
+kreditor
+FK → Person (SET_NULL)
+Pflicht ab Status erkannt
+objekt
+FK → Objekt (SET_NULL)
+Pflicht ab Status erkannt
+buchungskonto
+FK → Konto (SET_NULL)
+Pflicht ab Status erkannt; konto.objekt = rechnung.objekt
+3.4 RechnungsMatchRegel (NEU)
+Feld
+Typ
+Anmerkung
+id
+UUID (PK)
+kreditor
+FK → Person (CASCADE)
+objekt
+FK → Objekt (CASCADE)
+Regel ist objektspezifisch
+leistungstext_hash
+CharField(64)
+leistungstext_sample
+TextField
+Original der ersten Bestätigung
+buchungskonto
+FK → Konto
+Muss zu objekt gehören
+status
+Enum: aktiv | veraltet
+trefferzahl
+PositiveIntegerField
+erstellt_durch
+FK → User
+erstellt_aus
+Enum: pruefung | freigabe_korrektur | manuell
+Lernpfad
+erstellt_am, aktualisiert_am, letzte_anwendung
+DateTimeField
+auto
+Constraint
+unique_together
+(kreditor, objekt, leistungstext_hash, status='aktiv')
+3.5 RechnungsErkennungsLog (NEU)
+Audit-Tabelle: jeder Erkennungs- und Routing-Lauf wird vollständig protokolliert.
+Feld
+Typ
+Anmerkung
+id
+UUID (PK)
+rechnung
+FK → Rechnung (CASCADE)
+zeitpunkt
+DateTimeField
+auto
+stufe
+Enum: 1 | 2a | 2b | 3
+dimensionen
+JSONField
+{ kreditor: {match_typ, kandidat_id, konfidenz}, objekt: {...}, konto: {...} }
+regel_treffer
+FK → RechnungsMatchRegel (NULL)
+routing_ziel
+Enum
+Welches Ziel wurde gewählt
+auto_gebucht
+Boolean
+True nur wenn Stufe 1 + Konfidenz ≥ 95% + Betrag < Auto-Limit
+ki_aufruf
+Boolean
+ki_kosten_token
+PositiveIntegerField
+ergebnis_status
+CharField
+3.6 RechnungsBearbeitungsLock (NEU)
+Verhindert Doppelbearbeitung in der geteilten Frontoffice-Inbox.
+Feld
+Typ
+Anmerkung
+rechnung
+OneToOneField → Rechnung (CASCADE)
+PK
+user
+FK → User
+Wer hält den Lock
+gültig_bis
+DateTimeField
+5 Minuten ab Beginn; verlängert sich bei Heartbeat
+erstellt_am
+DateTimeField
+auto
+3.7 Leistungstext-Normalisierung
+def normalisiere_leistungstext(text: str) -> str:
+text = text.lower()
+text = re.sub(r'\d{1,2}[./]\d{1,2}[./]\d{2,4}', '', text)  # Datum
+text = re.sub(r'\b(q[1-4]|kw\s?\d{1,2})\b', '', text)     # Quartal/KW
+text = re.sub(r'(rg|re|rechnung|beleg)[-.\s]?\d+', '', text)  # Belegnr
+text = re.sub(r'[^a-z0-9\u00e4\u00f6\u00fc\u00df ]+', ' ', text)
+text = re.sub(r'\s+', ' ', text).strip()
+text = ' '.join(t for t in text.split() if t not in DE_STOPWORDS)
+return text
+def leistungstext_hash(text: str) -> str:
+return hashlib.sha256(
+normalisiere_leistungstext(text).encode('utf-8')
+).hexdigest()
+4. Erweiterter Rechnungs-Lifecycle
+Status
+Bedeutung
+Übergang
+erfasst
+Initialer Eingang vor Erkennungslauf.
+→ Erkennungs-Pipeline
+erkannt (NEU)
+Stufe 1: alle 3 Dimensionen eindeutig.
+Auto-Buchung (95% & < Limit) ODER Limit-Workflow
+pruefung_match (NEU)
+Stufe 2a/2b: Teil-Match.
+Identifikation → erkannt → Limit-Workflow
+nicht_erkannt (NEU)
+Stufe 3: keine Dimension sicher.
+Manuelle Erfassung → erkannt → Limit-Workflow
+in_pruefung
+Bestehender Freigabe-Workflow.
+→ freigegeben | abgelehnt
+freigegeben
+Zur Buchung freigegeben.
+→ gebucht
+gebucht
+Im Buchungsjournal.
+→ bezahlt
+bezahlt
+Zahlung bestätigt.
+→ archiviert
+abgelehnt
+Zurückgewiesen.
+Zurück an Erfasser
+5. Erkennungs-Pipeline (Phase A)
+5.1 Erkennungsdimensionen
+Dimension
+Quelle
+Match-Logik
+Kreditor
+Person mit Rolle Dienstleister
+Primär: IBAN-Match (= 1.0). Sekundär: Name + USt-IdNr. Tertiar: Fuzzy-Name (max 0.85).
+Objekt
+Objekt
+Primär: Buchungsreferenz im Verwendungszweck. Sekundär: Anschrift. Tertiar: Historie (gleicher Kreditor).
+Buchungskonto
+Konto je Objekt
+Primär: aktive RechnungsMatchRegel. Kein Fallback gilt als eindeutig.
+5.2 Eindeutigkeits-Schwellen (Erkennung)
+Dimension
+Schwelle (eindeutig)
+Begründung
+Kreditor
+≥ 0.90
+IBAN-Treffer = 1.0; Fuzzy-Name allein reicht nicht
+Objekt
+≥ 0.85
+Verwendungszweck = 1.0; Anschrift = 0.9
+Konto
+= 1.0
+Nur RechnungsMatchRegel-Treffer ist eindeutig. Historie bleibt Vorschlag.
+Zwei Schwellen-Schichten
+1. Eindeutigkeits-Schwelle (oben) entscheidet, ob eine Dimension als 'erkannt' gilt → daraus folgt die Stufe. 2. Auto-Buchung-Schwelle (≥ 95% in allen drei Dimensionen) ist eine ZUSÄTZLICHE Hürde nur für Stufe 1 mit Betrag < Auto-Limit. Eine Stufe-1-Rechnung mit Konfidenz 92/88/100 geht NICHT auto, sondern in den Limit-Workflow.
+5.3 Pseudocode — Stufenableitung
+def fuehre_erkennung_aus(rechnung: Rechnung) -> Rechnung:
+log = RechnungsErkennungsLog(rechnung=rechnung)
+kreditor_match = match_kreditor(rechnung)
+objekt_match   = match_objekt(rechnung)
+konto_match, regel_treffer = MatchResult.empty(), None
+if kreditor_match.eindeutig and objekt_match.eindeutig:
+text_hash = leistungstext_hash(rechnung.leistungstext or '')
+regel_treffer = RechnungsMatchRegel.objects.filter(
+kreditor=kreditor_match.kandidat,
+objekt=objekt_match.kandidat,
+leistungstext_hash=text_hash,
+status='aktiv',
+).first()
+if regel_treffer:
+konto_match = MatchResult.eindeutig(
+regel_treffer.buchungskonto, 1.0
+)
+else:
+konto_match = match_konto_historie(
+kreditor_match.kandidat, objekt_match.kandidat
+)  # Konfidenz <= 0.7 — Vorschlag
+# Stufenableitung mit Sub-Stufen 2a/2b
+k_eind = kreditor_match.eindeutig
+o_eind = objekt_match.eindeutig
+c_eind = konto_match.eindeutig
+if k_eind and o_eind and c_eind:
+rechnung.status = 'erkannt'
+rechnung.erkennungs_stufe = '1'
+elif o_eind:
+# Objekt da — unabhängig ob Kreditor/Konto fehlen
+rechnung.status = 'pruefung_match'
+rechnung.erkennungs_stufe = '2a'
+elif k_eind:
+# Nur Kreditor
+rechnung.status = 'pruefung_match'
+rechnung.erkennungs_stufe = '2b'
+else:
+rechnung.status = 'nicht_erkannt'
+rechnung.erkennungs_stufe = '3'
+rechnung.kreditor      = kreditor_match.kandidat if k_eind else None
+rechnung.objekt        = objekt_match.kandidat   if o_eind else None
+rechnung.buchungskonto = konto_match.kandidat    if c_eind else None
+rechnung.match_regel   = regel_treffer
+rechnung.erkennungs_konfidenz = {
+'kreditor': kreditor_match.konfidenz,
+'objekt':   objekt_match.konfidenz,
+'konto':    konto_match.konfidenz,
+}
+route_rechnung(rechnung)  # Phase B
+rechnung.save(); log.save()
+return rechnung
+6. Routing-Logik (Phase B)
+6.1 Routing-Matrix
+Stufe
+routing_ziel
+zugewiesen_an
+Zusätzliche Prüfung
+1
+limit_workflow
+Auto-Limit: NULL (System) — sonst Sachbearb./GF gemäß Limit
+Auto nur wenn Konfidenz ≥ 95% in allen drei Dimensionen
+2a
+objektbetreuer
+Objekt.betreuer (oder Vertretung wenn abwesend)
+—
+2b
+frontoffice
+NULL (Queue) bis Lock
+—
+3
+frontoffice
+NULL (Queue) bis Lock
+—
+6.2 route_rechnung — Pseudocode
+AUTO_KONFIDENZ_SCHWELLE = 0.95
+def route_rechnung(rechnung: Rechnung) -> None:
+if rechnung.status == 'erkannt':
+rechnung.routing_ziel = 'limit_workflow'
+grenzen = rechnung.objekt.zahlungsfreigabe_grenzen
+stufe = ermittle_freigabestufe(rechnung.betrag, grenzen)
+if stufe['rolle'] == 'auto' and konfidenz_min(rechnung) >= AUTO_KONFIDENZ_SCHWELLE:
+buche_rechnung(rechnung)  # Status -> 'gebucht'
+return
+# Auto-Limit gilt, aber Konfidenz unzureichend → in_pruefung
+rechnung.status = 'in_pruefung'
+rechnung.zugewiesen_an = ermittle_freigabeperson(
+rechnung.objekt,
+stufe if stufe['rolle'] != 'auto' else stufe_naechste_manuelle(grenzen),
+)
+starte_eskalations_task(rechnung, stufe['frist_tage'])
+return
+if rechnung.status in ('pruefung_match', 'nicht_erkannt'):
+if rechnung.erkennungs_stufe == '2a':
+rechnung.routing_ziel = 'objektbetreuer'
+betreuer = rechnung.objekt.betreuer
+if betreuer.abwesend and rechnung.objekt.betreuer_vertretung:
+betreuer = rechnung.objekt.betreuer_vertretung
+rechnung.zugewiesen_an = betreuer
+else:  # 2b oder 3
+rechnung.routing_ziel = 'frontoffice'
+rechnung.zugewiesen_an = None  # Queue
+return
+def konfidenz_min(rechnung) -> float:
+return min(
+rechnung.erkennungs_konfidenz.get('kreditor', 0),
+rechnung.erkennungs_konfidenz.get('objekt', 0),
+rechnung.erkennungs_konfidenz.get('konto', 0),
+)
+Konfidenz-Schwelle nur für Auto-Buchung
+Stufe 1 mit Konfidenz < 95% überspringt nicht das Auto-Buchen — sie geht in den ersten manuellen Limit-Schritt (typischerweise Sachbearbeiter), auch wenn der Betrag < Auto-Limit ist. Damit wird verhindert, dass eine 'gerade so erkannte' Rechnung ohne Sichtung gebucht wird.
+6.3 Doppelfunktion bei Identifikation
+Sowohl Objektbetreuer (2a) als auch Frontoffice (2b/3) haben in der UI zwei Aktionen mit unterschiedlicher Wirkung:
+Button
+Wirkung
+Voraussetzung
+Identifizieren + Speichern
+Erzeugt Match-Regel; Status → erkannt; ruft route_rechnung erneut auf → Limit-Workflow.
+Pflichtfelder Kreditor, Objekt, Buchungskonto vollständig.
+Identifizieren + Freigeben
+Wie oben + direkter Sprung erkannt → freigegeben (überspringt in_pruefung).
+Bearbeiter ist in der Limit-Stufe der Rechnung als Freigeber konfiguriert (siehe darf_direkt_freigeben).
+Ablehnen
+Status → abgelehnt; Begründung Pflicht; KEIN Lerneffekt.
+Begründungstext eingegeben.
+def darf_direkt_freigeben(rechnung: Rechnung, bearbeiter: User) -> bool:
+grenzen = rechnung.objekt.zahlungsfreigabe_grenzen
+stufe = ermittle_freigabestufe(rechnung.betrag, grenzen)
+if stufe['rolle'] == 'auto':
+# Direktes Buchen — nur wenn Konfidenz nun ≥ 95% (durch Identifikation
+# erreicht: Konto-Auswahl gibt Konfidenz 1.0, Kreditor/Objekt durch
+# Bearbeiter-Bestätigung 1.0)
+return True
+if stufe['rolle'] == 'sachbearbeiter':
+# Frontoffice-User dürfen wie Sachbearbeiter freigeben.
+# Objektbetreuer nur wenn er auch Sachbearbeiter für das Objekt ist.
+if bearbeiter.has_role('Frontoffice'):
+return True
+return bearbeiter in rechnung.objekt.sachbearbeiter.all()
+if stufe['rolle'] == 'geschaeftsfuehrer':
+return bearbeiter.has_role('Geschaeftsfuehrer')
+return False
+7. Lernlogik
+7.1 Trigger
+Trigger A — Identifikation in Prüffall (egal ob Objektbetreuer oder Frontoffice): erzeugt Regel mit erstellt_aus='pruefung'.
+Trigger B — Konto-Korrektur in der Freigabe: alte Regel → veraltet; neue Regel mit erstellt_aus='freigabe_korrektur'.
+Trigger C — Manuelle Erfassung in Stufe 3 (neuer Kreditor): Anlage Person mit Rolle Dienstleister; Regel mit erstellt_aus='manuell'.
+7.2 Idempotenz und Konflikt
+Doppelte Bestätigung gleiche Konto-Wahl: keine neue Regel, trefferzahl++ + letzte_anwendung.
+Pro (kreditor, objekt, leistungstext_hash) max. 1 aktive Regel — unique_together-Constraint.
+Korrektur ersetzt: alte Regel → veraltet, neue Regel → aktiv.
+Opt-out: Checkbox "Einzelfall — keine Regel speichern" am Speichern-Dialog.
+8. UI-Anforderungen (React)
+8.1 Dashboard — Mein Posteingang
+Der bestehende Dashboard-Button "Rechnungen zur Prüfung" wird inhaltlich erweitert. Er zeigt mitarbeiterspezifisch alle Rechnungen wo current_user betroffen ist:
+Prüffälle als Objektbetreuer (Stufe 2a) — zugewiesen_an = current_user, gelbe Badge
+Aus Frontoffice-Queue (Stufe 2b/3) — nur sichtbar wenn current_user die Rolle Frontoffice hat, dann zugewiesen_an = NULL UND routing_ziel = frontoffice; orange Badge mit Lock-Indikator
+Zur Freigabe (Stufe 1, in_pruefung) — zugewiesen_an = current_user, blaue Badge
+Zähler im Button-Badge
+Tooltip beim Hover: "3 Prüffälle Objekt, 5 Frontoffice-Queue, 1 nicht erkannt, 7 Freigaben." Frontoffice-Zähler nur wenn der User die Rolle hat.
+8.2 Frontoffice-Inbox (eigene Seite)
+URL /rechnungen/frontoffice — nur für Rolle Frontoffice.
+Liste aller Rechnungen mit routing_ziel='frontoffice' und zugewiesen_an=NULL.
+Spalten: Eingang, Erkennungsstufe (2b/3), erkannter Kreditor (sofern), Betrag, Leistungstext-Auszug, Lock-Status.
+Klick auf Zeile = Lock setzen (5 Min, verlängert sich beim Tippen, Heartbeat alle 30 Sek). Andere Frontoffice-User sehen "In Bearbeitung von <name>".
+Sortierung default: ältester Eingang oben.
+8.3 Prüffall-Detailansicht (gemeinsam für 2a / 2b / 3)
+Linke Spalte: PDF-Vorschau / XRechnung-Strukturansicht.
+Rechte Spalte oben: drei Karten Kreditor / Objekt / Buchungskonto, jede mit Status-Badge. Erkannte Karten ausgegraut, fehlende hervorgehoben.
+Bei Stufe 2b/3 (Frontoffice): Objekt-Auswahl prominenter; Hinweis-Banner: "Nach Identifikation läuft die Rechnung in den regulären Limit-Workflow."
+Bei Stufe 2a (Objektbetreuer): Hinweis-Banner: "Sie bearbeiten als Objektbetreuer von <Objekt-Nr>."
+Konto-Auswahl: Top-3 historische Kandidaten + KI-Vorschlag + Suche im Objekt-Kontenplan.
+Aktions-Buttons: "Identifizieren + Speichern" (immer) | "Identifizieren + Freigeben" (nur wenn darf_direkt_freigeben True) | "Ablehnen".
+Tooltip am gesperrten Freigabe-Button: "Betrag über Ihrem Freigabelimit — wird nach Identifikation eskaliert."
+Lernhinweis + Opt-out-Checkbox "Einzelfall — keine Regel speichern".
+8.4 Freigabe-Korrekturhinweis (Phase B)
+Beim Ändern des Buchungskontos in der regulären Freigabe: Toast "Regel wird aktualisiert: <Kreditor> / <Objekt> / <Leistungstext> → neues Konto."
+Optional Checkbox "Nicht als Regel speichern".
+8.5 Wizard-Erweiterung
+WEG-Anlage-Wizard v1.2 Schritt 8 ("Freigabe & Verantwortliche"): Felder betreuer (Pflicht) und betreuer_vertretung (optional).
+Validierung: Betreuer muss min. eine Rolle aus {Sachbearbeiter, Geschaeftsfuehrer, Administrator, Frontoffice} haben.
+8.6 Regel-Verwaltung
+Seite /admin/rechnungen/match-regeln (Admin + Buchhalter).
+Filter: Kreditor, Objekt, Status, erstellt_aus.
+Aktion: manuell deaktivieren ohne Rechnungsänderung.
+9. API-Endpunkte
+Methode
+Pfad
+Beschreibung
+POST
+/rechnungen/{id}/erkennung-ausfuehren/
+Pipeline manuell anstossen
+GET
+/rechnungen/?routing_ziel=frontoffice&zugewiesen_an=null
+Frontoffice-Inbox
+GET
+/rechnungen/?zugewiesen_an=me
+Mein Posteingang
+GET
+/rechnungen/{id}/erkennungs-log/
+Audit-Trail
+POST
+/rechnungen/{id}/lock/
+Frontoffice-Lock setzen (Body: leer)
+DELETE
+/rechnungen/{id}/lock/
+Lock lösen
+POST
+/rechnungen/{id}/lock/heartbeat/
+Lock-Verlängerung (alle 30 Sek von UI)
+POST
+/rechnungen/{id}/identifizieren/
+Body: { kreditor_id, objekt_id, buchungskonto_id, modus: 'speichern'|'freigeben', lernen: true }
+POST
+/rechnungen/{id}/ablehnen/
+Body: { begruendung }
+POST
+/rechnungen/{id}/manuell-erfassen/
+Stufe 3: Vollerfassung
+GET/POST/PATCH/DELETE
+/match-regeln/...
+CRUD
+10. Tests
+10.1 Unit-Tests
+normalisiere_leistungstext + leistungstext_hash.
+match_kreditor: IBAN = 1.0; Fuzzy-Name max 0.85.
+Stufenableitung: 8 Kombinationen aus (k_eind, o_eind, c_eind) → korrekte Stufe (1, 2a, 2b, 3) inkl. Sub-Stufen-Unterscheidung 2a/2b.
+konfidenz_min mit fehlenden Dimensionen (0.0).
+darf_direkt_freigeben: alle Limit-Stufen × Bearbeiter-Rollen-Kombinationen (Frontoffice / Objektbetreuer / Sachbearbeiter / GF).
+RechnungsBearbeitungsLock: Heartbeat verlängert; Ablauf nach 5 Min.
+10.2 Integrations-Tests — Workflow-Pfade
+Pfad 1 — Stufe 1, Konfidenz 98%, Betrag 250 € → AUTO gebucht.
+Pfad 2 — Stufe 1, Konfidenz 92%, Betrag 250 € → NICHT auto, in_pruefung an Sachbearbeiter (auch wenn Auto-Limit greift).
+Pfad 3 — Stufe 1, Konfidenz 98%, Betrag 5.000 € → in_pruefung an GF (Limit greift).
+Pfad 4 — Stufe 2a (Objekt erkannt, Konto fehlt) → Routing Objektbetreuer → Identifizieren+Freigeben (sofern Limit erlaubt) → freigegeben.
+Pfad 5 — Stufe 2a, Betrag über Betreuer-Limit → Identifizieren+Freigeben gesperrt; nach Speichern in_pruefung mit Eskalation.
+Pfad 6 — Stufe 2b (nur Kreditor erkannt, Objekt fehlt) → Routing Frontoffice (zugewiesen_an=NULL); Frontoffice-User lädt Inbox, sieht Rechnung → Lock → identifiziert.
+Pfad 7 — Stufe 3 → Routing Frontoffice; manuelle Erfassung mit neuem Kreditor.
+Pfad 8 — Stufe 2a Vertretung: Betreuer.abwesend = True → Routing an betreuer_vertretung.
+Pfad 9 — Frontoffice-Lock: User A öffnet, User B sieht "in Bearbeitung"; Lock läuft ab → User B kann übernehmen.
+Pfad 10 — Lernen aus Korrektur: Konto-Änderung in Freigabe → alte Regel veraltet, neue Regel mit erstellt_aus='freigabe_korrektur'.
+Pfad 11 — Idempotenz: zweimalige gleiche Bestätigung → trefferzahl++.
+Pfad 12 — Frontoffice darf NICHT in Stufe-2a-Prüffälle anderer Objekte greifen — nur eigene Inbox + Frontoffice-Queue.
+10.3 Edge Cases
+Konto eines anderen Objekts darf nicht zugewiesen werden — Validation Error.
+Auto-Limit konfiguriert, aber Konfidenz exakt 0.95 → zählt als auto-fähig (≥, nicht >).
+Stufe 1 ohne Auto-Limit konfiguriert (zahlungsfreigabe_grenzen ohne 'auto'-Stufe) → immer in_pruefung, Konfidenz-Schwelle irrelevant.
+Veraltete Regel ignoriert — aktive Regel gewinnt.
+Kreditor mit mehreren IBANs — erste Treffer-IBAN gewinnt.
+11. Implementierungs-Reihenfolge fuer Claude Code
+Schritt 1 — Migration Rolle Frontoffice; Default-Permissions setzen.
+Schritt 2 — Migration Objekt: betreuer (PROTECT) + betreuer_vertretung. Daten-Migration.
+Schritt 3 — Migration Rechnung-Felder + RechnungsMatchRegel + RechnungsErkennungsLog + RechnungsBearbeitungsLock.
+Schritt 4 — normalisiere_leistungstext + Hash + Tests.
+Schritt 5 — Match-Funktionen + Tests.
+Schritt 6 — fuehre_erkennung_aus mit Sub-Stufen 2a/2b.
+Schritt 7 — route_rechnung mit dimensions-spezifischer Routing-Matrix + 95%-Schwelle.
+Schritt 8 — darf_direkt_freigeben.
+Schritt 9 — API-Endpunkte inkl. Lock-Endpunkte.
+Schritt 10 — Lernlogik in identifizieren + Freigabe-Korrektur-Hook.
+Schritt 11 — Wizard v1.2 Schritt 8 erweitern.
+Schritt 12 — Frontend: Dashboard-Button mit drei Zählern, Frontoffice-Inbox, Prüffall-Detail mit Doppel-Button + Lock-UI.
+Schritt 13 — Integrations-Tests Pfade 1–12.
+Schritt 14 — Datenmigration: Erkennungslauf auf Bestandsrechnungen im Status erfasst.
+12. Wichtige Hinweise fuer die Implementierung
+ROUTING NACH ERKANNTER DIMENSION
+Stufe 2 ist nicht monolithisch. Das Routing entscheidet anhand der erkannten Dimension: Objekt erkannt (mit oder ohne Kreditor) → Objektbetreuer. Nur Kreditor erkannt → Frontoffice. Stufe 3 → Frontoffice.
+95% NUR FÜR AUTO-BUCHUNG
+Die 95%-Schwelle ist ein zusätzliches Kriterium AN DER AUTO-STUFE — nicht an Stufe 1 als Ganzes. Stufe-1-Rechnungen mit Konfidenz < 95% laufen ganz normal in den Limit-Workflow (mit manueller Sichtung), auch wenn der Betrag unter dem Auto-Limit liegt. Begründung: 'gerade so erkannt' soll nicht ohne Sichtung gebucht werden.
+FRONTOFFICE IST GETEILTE INBOX
+Mehrere User können die Rolle Frontoffice haben. Soft-Lock von 5 Minuten beim Bearbeiten verhindert Doppelbearbeitung. Heartbeat alle 30 Sekunden verlängert den Lock während aktiver Bearbeitung.
+NACH IDENTIFIKATION IMMER LIMIT-WORKFLOW
+Egal ob Objektbetreuer (2a), Frontoffice (2b/3) oder Doppelfunktion-Freigabe — nach Identifikation greift der reguläre Limit-Workflow gemäss zahlungsfreigabe_grenzen. KEIN Rückweg zum Objektbetreuer aus Frontoffice und kein Sonderpfad.
+OBJEKTSPEZIFISCHE REGELN, SOFORTIGES LERNEN
+Match-Regeln gelten je (kreditor, objekt, leistungstext_hash). Jede manuelle Korrektur lernt sofort, mit optionaler Opt-out-Checkbox.
+13. Claude Code Prompt — Direktverwendung
+Folgender Block kann unverändert in Claude Code eingefügt werden:
+Lies IMMOCORE_Ausgangsspezifikation.docx Kapitel 7 sowie
+IMMOCORE_ClaudeCode_Rechnungserkennung_3stufig_v1_2.docx
+vollständig.
+Phasen 1-3 sind abgeschlossen. Erweitere den Rechnungs-Lifecycle
+um drei Erkennungsstufen mit dimensions-spezifischem Routing,
+geteilter Frontoffice-Inbox und lernendem Match-Regelwerk.
+Schlüsseldesign:
+- Neue Rolle Frontoffice (mehrere User möglich, geteilte Inbox)
+- Pflichtfeld Objekt.betreuer (FK -> User) + Vertretung
+- Sub-Stufen 2a (Objekt erkannt) und 2b (nur Kreditor)
+- Routing-Matrix:
+Stufe 1  -> Limit-Workflow
+Stufe 2a -> Objektbetreuer
+Stufe 2b -> Frontoffice
+Stufe 3  -> Frontoffice
+- Auto-Buchung NUR wenn Stufe 1 + Betrag < Auto-Limit
++ min(erkennungs_konfidenz) >= 0.95
+- Stufe 1 unter 95% Konfidenz -> in_pruefung an Sachbearbeiter
+(auch wenn Auto-Limit greifen würde)
+- Doppelfunktion: Objektbetreuer und Frontoffice können
+'Identifizieren + Freigeben' wenn ihre Limit-Rolle es zulässt
+- Frontoffice-User dürfen wie Sachbearbeiter freigeben
+- Nach Identifikation IMMER Limit-Workflow (kein Rückweg)
+- Lernschlüssel: (kreditor, objekt, leistungstext_hash)
+- Sofort-Lernen bei jeder Korrektur; Idempotenz: trefferzahl++
+- Frontoffice-Inbox: Soft-Lock 5 Min mit Heartbeat
+Implementiere in dieser Reihenfolge:
+1.  Rolle Frontoffice anlegen (Migration + Permissions)
+2.  Migration Objekt: betreuer + betreuer_vertretung
+(Daten-Migration für Bestand)
+3.  Migration Rechnung-Felder + RechnungsMatchRegel +
+RechnungsErkennungsLog + RechnungsBearbeitungsLock
+(Spec Kap. 3)
+4.  Leistungstext-Normalisierung + Hash (Spec Kap. 3.7)
+5.  Match-Funktionen (Spec Kap. 5)
+6.  fuehre_erkennung_aus mit Sub-Stufen 2a/2b (Spec Kap. 5.3)
+7.  route_rechnung mit Routing-Matrix + 95%-Schwelle
+(Spec Kap. 6.2)
+8.  darf_direkt_freigeben (Spec Kap. 6.3)
+9.  API-Endpunkte inkl. Lock-Endpunkte (Spec Kap. 9)
+10. Lernlogik in identifizieren + Freigabe-Korrektur-Hook
+(Spec Kap. 7)
+11. Wizard v1.2 Schritt 8 erweitern (Spec Kap. 8.5)
+12. React-UI: Dashboard-Button mit drei Zählern,
+Frontoffice-Inbox-Seite mit Lock-Anzeige,
+Prüffall-Detail mit Doppel-Button + bedingtem
+Freigabe-Button, Regel-Verwaltung (Spec Kap. 8)
+13. Tests: Unit + Integration Pfade 1-12 (Spec Kap. 10)
+14. Datenmigration: Erkennungslauf auf Bestandsrechnungen
+Anforderungen:
+- Match-Regeln objektspezifisch
+- unique_together (kreditor, objekt, leistungstext_hash, 'aktiv')
+- Idempotenz: doppelte Bestätigung = trefferzahl++, keine neue Regel
+- Alle Erkennungsläufe in RechnungsErkennungsLog protokollieren
+- KI-Modell für optionalen KI-Fallback: claude-sonnet-4-6
+- Buchungskonto darf nur Konto desselben Objekts sein
+- Bei Vertretung: Objekt.betreuer.abwesend = True ->
+Routing an betreuer_vertretung
+- Frontoffice-Lock: 5 Min, Heartbeat alle 30 Sek
+- Suffix .910 bleibt gesperrt (Konsistenz mit v1.2)
+14. Dokumentenmetadaten
+Feld
+Wert
+Auftraggeber
+Demme Immobilien Verwaltung GmbH
+Adresse
+Coventrystraße 32, 65934 Frankfurt am Main
+Dokument-Typ
+Claude Code Implementierungsprompt
+Modul
+3-stufige Rechnungserkennung mit lernender Buchungslogik
+Bezug
+IMMOCORE_Ausgangsspezifikation v1.1 Kap. 7 + 7.3; IMMOCORE_ClaudeCode_WEG_Objektanlage v1.2 Schritt 8
+Phase
+Erweiterung Phase 3 / Phase 5
+KI-Modell
+claude-sonnet-4-6
+Version
+1.2
+Stand
+Mai 2026
+Änderungen ggu. v1.1
+Stufe 2 in 2a (Objekt erkannt → Objektbetreuer) und 2b (nur Kreditor → Frontoffice) aufgespalten. Stufe 3 → Frontoffice. Neue Rolle Frontoffice mit geteilter Inbox + Soft-Lock. 95%-Konfidenz-Schwelle als zusätzliches Kriterium für Auto-Buchung.
+Status
+Freigegeben zur Verwendung in Claude Code
+Demme Immobilien Verwaltung GmbH  |  Vertraulich

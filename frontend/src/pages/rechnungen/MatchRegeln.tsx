@@ -85,7 +85,7 @@ export default function MatchRegeln() {
                   <td className="px-3 py-2 text-gray-500 max-w-xs truncate" title={r.leistungstext_sample}>
                     {r.leistungstext_sample || <span className="italic text-gray-400">—</span>}
                   </td>
-                  <td className="px-3 py-2">{r.konto_label}</td>
+                  <td className="px-3 py-2">{r.aufwandskonto_label}</td>
                   <td className="px-3 py-2">
                     <span className={`text-xs px-1.5 py-0.5 rounded ${
                       r.erstellt_aus === 'pruefung'           ? 'bg-yellow-100 text-yellow-700' :

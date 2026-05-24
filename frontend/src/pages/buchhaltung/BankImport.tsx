@@ -14,12 +14,12 @@ export function BankImport() {
   const { data: objekte } = useQuery({ queryKey: ['objekte'], queryFn: objekteApi.list })
   const { data: importe, isLoading } = useQuery({
     queryKey: ['bankimporte'],
-    queryFn: buchhaltungApi.bankImporte,
+    queryFn: () => buchhaltungApi.bankImporte(),
   })
 
   const uploadMutation = useMutation({
     mutationFn: ({ objektId, file }: { objektId: string; file: File }) =>
-      buchhaltungApi.uploadCamt(objektId, file),
+      buchhaltungApi.uploadCamtLegacy(objektId, file),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bankimporte'] })
       if (fileRef.current) fileRef.current.value = ''
@@ -95,20 +95,7 @@ export function BankImport() {
                   <td className="px-4 py-3">{i.anzahl_transaktionen}</td>
                   <td className="px-4 py-3"><Badge value={i.status} /></td>
                   <td className="px-4 py-3">
-                    <button
-                      onClick={async () => {
-                        const blob = await buchhaltungApi.sepaExport(i.id)
-                        const url = URL.createObjectURL(blob)
-                        const a = document.createElement('a')
-                        a.href = url
-                        a.download = `sepa_${i.id}.xml`
-                        a.click()
-                        URL.revokeObjectURL(url)
-                      }}
-                      className="text-xs text-primary-600 hover:underline"
-                    >
-                      SEPA-Export
-                    </button>
+                    <span className="text-xs text-gray-400">—</span>
                   </td>
                 </tr>
               ))}

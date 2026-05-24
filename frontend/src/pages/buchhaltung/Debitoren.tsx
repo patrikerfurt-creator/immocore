@@ -210,7 +210,7 @@ function PersonenkontoListe({
                         {EUR(k.saldo_offen)}
                       </td>
                       <td className="px-3 py-2.5">
-                        <Badge color={k.status === 'aktiv' ? 'green' : 'gray'}>{k.status}</Badge>
+                        <Badge value={k.status} />
                       </td>
                       <td className="px-3 py-2.5 text-center">
                         {k.sepa_mandat?.aktiv
@@ -302,8 +302,8 @@ function KontoauszugView({
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b">
               <tr>
-                <th className="text-left px-4 py-3 text-gray-600 font-medium w-36">BU-Nr.</th>
-                <th className="text-left px-4 py-3 text-gray-600 font-medium w-32">BU-Datum</th>
+                <th className="text-left px-4 py-3 text-gray-600 font-medium w-40">OPOS-Nr.</th>
+                <th className="text-left px-4 py-3 text-gray-600 font-medium w-32">Datum</th>
                 <th className="text-left px-4 py-3 text-gray-600 font-medium">Text</th>
                 <th className="text-right px-4 py-3 text-gray-600 font-medium w-28">Soll</th>
                 <th className="text-right px-4 py-3 text-gray-600 font-medium w-28">Haben</th>
@@ -328,7 +328,9 @@ function KontoauszugView({
                       : 'hover:bg-gray-50'
                   }`}
                 >
-                  <td className="px-4 py-2.5 font-mono text-xs text-gray-500">{pos.bu_nr}</td>
+                  <td className="px-4 py-2.5 font-mono text-xs text-blue-700">
+                    {pos.opos_nr ?? pos.bu_nr ?? '—'}
+                  </td>
                   <td className="px-4 py-2.5 text-gray-700 whitespace-nowrap">{DATUM(pos.buchungsdatum)}</td>
                   <td className="px-4 py-2.5 text-gray-800 max-w-xs truncate">{pos.buchungstext || '—'}</td>
                   <td className="px-4 py-2.5 text-right tabular-nums text-gray-800">

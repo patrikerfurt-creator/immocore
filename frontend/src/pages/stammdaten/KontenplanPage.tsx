@@ -2,8 +2,9 @@ import { useState } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { buchhaltungApi } from '../../api/buchhaltung'
+import { wirtschaftsjahreApi } from '../../api/wirtschaftsjahre'
 import { objekteApi } from '../../api/objekte'
-import type { Konto, Verteilerschluessel } from '../../types'
+import type { Konto, Verteilerschluessel, Wirtschaftsjahr } from '../../types'
 
 const kontoartLabel: Record<string, string> = {
   standard: 'Standard',
@@ -47,7 +48,17 @@ function kontoToForm(k: Konto): FormState {
   }
 }
 
-function KontoModal({ konto, objektId, onClose }: { konto: Konto | null; objektId: string; onClose: () => void }) {
+function KontoModal({
+  konto,
+  objektId,
+  wirtschaftsjahrId,
+  onClose,
+}: {
+  konto: Konto | null
+  objektId: string
+  wirtschaftsjahrId: string | undefined
+  onClose: () => void
+}) {
   const qc = useQueryClient()
   const isEdit = konto !== null
   const [form, setForm] = useState<FormState>(konto ? kontoToForm(konto) : emptyForm())
@@ -69,6 +80,7 @@ function KontoModal({ konto, objektId, onClose }: { konto: Konto | null; objektI
     mutationFn: () => {
       const payload = {
         objekt: objektId,
+        wirtschaftsjahr: wirtschaftsjahrId,
         kontonummer: form.kontonummer,
         kontoname: form.kontoname,
         kontoart: form.kontoart,
@@ -235,12 +247,29 @@ export function KontenplanPage() {
   const [searchParams] = useSearchParams()
   const objektId = searchParams.get('objekt')
   const [modalKonto, setModalKonto] = useState<Konto | 'new' | null>(null)
+  const [selectedWjId, setSelectedWjId] = useState<string | null>(null)
 
-  const { data: konten = [], isLoading } = useQuery({
-    queryKey: ['konten', objektId],
-    queryFn: () => buchhaltungApi.konten(objektId!),
+  const { data: wirtschaftsjahre = [], isLoading: wjLaden } = useQuery({
+    queryKey: ['wirtschaftsjahre', objektId],
+    queryFn: () => wirtschaftsjahreApi.list({ objekt: objektId! }),
     enabled: !!objektId,
+    select: (wjs: Wirtschaftsjahr[]) => [...wjs].sort((a, b) => b.jahr - a.jahr),
   })
+
+  const aktivesWj: Wirtschaftsjahr | undefined = (() => {
+    if (!wirtschaftsjahre.length) return undefined
+    if (selectedWjId) return wirtschaftsjahre.find(w => w.id === selectedWjId)
+    return wirtschaftsjahre.find(w => w.status === 'offen') ?? wirtschaftsjahre[0]
+  })()
+
+  // Konten laden sobald WJ-Query fertig ist (mit oder ohne WJ-Filter)
+  const { data: konten = [], isLoading: kontenLaden } = useQuery({
+    queryKey: ['konten', objektId, aktivesWj?.id ?? 'alle'],
+    queryFn: () => buchhaltungApi.konten(objektId!, aktivesWj ? { wirtschaftsjahr: aktivesWj.id } : undefined),
+    enabled: !!objektId && !wjLaden,
+  })
+
+  const isLoading = wjLaden || kontenLaden
 
   if (!objektId) {
     return (
@@ -260,20 +289,49 @@ export function KontenplanPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Kontenplan</h1>
-        <div className="flex items-center gap-3">
-          <span className="text-sm text-gray-500">{konten.length} Konten</span>
+        <div className="flex items-center gap-4">
+          {/* Wirtschaftsjahr-Selektor (nur wenn WJs vorhanden) */}
+          {wjLaden ? (
+            <span className="text-sm text-gray-400">Lade WJ…</span>
+          ) : wirtschaftsjahre.length > 0 ? (
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-500 font-medium">Wirtschaftsjahr:</span>
+              <select
+                value={aktivesWj?.id ?? ''}
+                onChange={e => setSelectedWjId(e.target.value || null)}
+                className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {wirtschaftsjahre.map(wj => (
+                  <option key={wj.id} value={wj.id}>
+                    {wj.jahr}{wj.status === 'abgeschlossen' ? ' (abgeschlossen)' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
+
+          <span className="text-sm text-gray-400">{konten.length} Konten</span>
           <button
             onClick={() => setModalKonto('new')}
-            className="px-3 py-1.5 text-sm bg-primary-600 text-white rounded hover:bg-primary-700"
+            disabled={!aktivesWj}
+            className="px-3 py-1.5 text-sm bg-primary-600 text-white rounded hover:bg-primary-700 disabled:opacity-40"
           >
             + Neues Konto
           </button>
         </div>
       </div>
 
+      {aktivesWj?.status === 'abgeschlossen' && (
+        <div className="mb-4 px-4 py-3 bg-amber-50 border border-amber-300 rounded-lg text-sm text-amber-800">
+          WJ {aktivesWj.jahr} ist abgeschlossen. Änderungen am Kontenplan sind nicht mehr möglich.
+        </div>
+      )}
+
       {konten.length === 0 ? (
         <div className="bg-white rounded-lg border border-gray-200 p-8 text-center">
-          <p className="text-gray-500">Keine Konten für dieses Objekt vorhanden.</p>
+          <p className="text-gray-500">
+            {aktivesWj ? `Keine Konten für WJ ${aktivesWj.jahr} vorhanden.` : 'Keine Konten vorhanden.'}
+          </p>
         </div>
       ) : (
         <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
@@ -328,6 +386,7 @@ export function KontenplanPage() {
         <KontoModal
           konto={modalKonto === 'new' ? null : modalKonto}
           objektId={objektId}
+          wirtschaftsjahrId={aktivesWj?.id}
           onClose={() => setModalKonto(null)}
         />
       )}

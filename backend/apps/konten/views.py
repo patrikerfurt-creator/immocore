@@ -45,10 +45,19 @@ class KontoViewSet(viewsets.ModelViewSet):
     ordering           = ['kontonummer']
 
     def get_queryset(self):
-        qs = Konto.objects.select_related('objekt')
+        qs = Konto.objects.select_related('wirtschaftsjahr__objekt')
         p = self.request.query_params
-        if p.get('objekt'):
-            qs = qs.filter(objekt_id=p['objekt'])
+        if p.get('wirtschaftsjahr'):
+            qs = qs.filter(wirtschaftsjahr_id=p['wirtschaftsjahr'])
+        elif p.get('objekt'):
+            from apps.objekte.models import Wirtschaftsjahr
+            wj = (
+                Wirtschaftsjahr.objects.filter(objekt_id=p['objekt'], status='offen')
+                .order_by('-jahr').first()
+                or Wirtschaftsjahr.objects.filter(objekt_id=p['objekt'])
+                .order_by('-jahr').first()
+            )
+            qs = qs.filter(wirtschaftsjahr=wj) if wj else qs.filter(wirtschaftsjahr__objekt_id=p['objekt'])
         if p.get('kontoart'):
             qs = qs.filter(kontoart=p['kontoart'])
         if p.get('abrechnungsart'):
@@ -59,12 +68,13 @@ class KontoViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'], url_path='weg-vorlage')
     def weg_vorlage(self, request):
-        """Lädt Musterkontenrahmen WEG (70 Konten) für ein Objekt nach."""
+        """Lädt Musterkontenrahmen WEG (70 Konten) für ein WJ oder Objekt nach."""
+        wj_id     = request.data.get('wirtschaftsjahr') or request.query_params.get('wirtschaftsjahr')
         objekt_id = request.data.get('objekt') or request.query_params.get('objekt')
-        if not objekt_id:
-            return Response({'error': 'objekt erforderlich'}, status=status.HTTP_400_BAD_REQUEST)
+        if not wj_id and not objekt_id:
+            return Response({'error': 'wirtschaftsjahr oder objekt erforderlich'}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            result = kontenrahmen_anlegen(objekt_id)
+            result = kontenrahmen_anlegen(wirtschaftsjahr_id=wj_id, objekt_id=objekt_id)
             return Response(result)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -83,9 +93,10 @@ class KontoViewSet(viewsets.ModelViewSet):
             return Response({'error': 'objekt erforderlich'}, status=status.HTTP_400_BAD_REQUEST)
 
         # Konten-IDs die in Buchungen vorkommen (soll oder haben)
-        buchungen = Buchung.objects.filter(
-            objekt_id=objekt_id
-        ).exclude(status='storniert')
+        buchungen = Buchung.objects.filter(objekt_id=objekt_id)
+        if wj_id := request.query_params.get('wirtschaftsjahr'):
+            buchungen = buchungen.filter(wirtschaftsjahr_id=wj_id)
+        buchungen = buchungen.exclude(status='storniert')
 
         soll_ids = set(
             buchungen.exclude(soll_konto__isnull=True)
@@ -137,20 +148,17 @@ class KontoViewSet(viewsets.ModelViewSet):
 
         konto = self.get_object()
 
-        buchungen = (
-            Buchung.objects
-            .filter(
-                Q(soll_konto=konto) | Q(haben_konto=konto),
-                objekt=konto.objekt,
-            )
-            .exclude(status='storniert')
-            .select_related(
-                'soll_konto', 'haben_konto',
-                'soll_unterkonto', 'personenkonto',
-                'buchungsart',
-            )
-            .order_by('buchungsdatum', 'erstellt_am')
-        )
+        qs = Buchung.objects.filter(
+            Q(soll_konto=konto) | Q(haben_konto=konto),
+            objekt=konto.objekt,
+        ).exclude(status='storniert')
+        if wj_id := request.query_params.get('wirtschaftsjahr'):
+            qs = qs.filter(wirtschaftsjahr_id=wj_id)
+        buchungen = qs.select_related(
+            'soll_konto', 'haben_konto',
+            'soll_unterkonto', 'personenkonto',
+            'buchungsart',
+        ).order_by('buchungsdatum', 'erstellt_am')
 
         saldo = Decimal('0.00')
         positionen = []
@@ -238,12 +246,11 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
     def mit_saldo(self, request):
         """
         Gibt alle Personenkonten eines Objekts zurück inkl. Saldo.
-        Saldo = SOLL-Buchungen (soll_konto=None, z.B. Sollstellungen)
-               minus HABEN-Buchungen (soll_konto gesetzt, z.B. Lastschrift/Zahlungseingang).
-        Konsistent mit dem Kontoauszug-View.
+        Soll = Nebenbuch (HausgeldSollstellung.soll_betrag, nicht storniert).
+        Haben = Zahlungseingänge (Buchung mit soll_konto gesetzt, verknüpft via Personenkonto).
         """
         from django.db.models import Sum
-        from apps.buchhaltung.models import Buchung
+        from apps.buchhaltung.models import Buchung, HausgeldSollstellung
 
         objekt_id = request.query_params.get('objekt')
         if not objekt_id:
@@ -256,29 +263,43 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
             .order_by('kontonummer')
         )
 
-        pk_ids = [pk.id for pk in pks]
+        ev_ids = [pk.vertrag_id for pk in pks if pk.vertrag_id]
+        pk_ids  = [pk.id for pk in pks]
+        wj_id   = request.query_params.get('wirtschaftsjahr')
 
-        # Zwei Bulk-Queries statt N einzelner Queries
-        soll_per_pk = dict(
-            Buchung.objects
-            .filter(personenkonto_id__in=pk_ids, soll_konto__isnull=True, parent_buchung__isnull=True)
-            .exclude(status='storniert')
-            .values('personenkonto_id')
-            .annotate(s=Sum('betrag'))
-            .values_list('personenkonto_id', 's')
+        # Soll aus Nebenbuch: Summe der nicht-stornierten Sollstellungen je EV
+        ss_qs = (
+            HausgeldSollstellung.objects
+            .filter(eigentumsverhaeltnis_id__in=ev_ids, storniert_am__isnull=True)
         )
-        haben_per_pk = dict(
+        if wj_id:
+            from apps.objekte.models import Wirtschaftsjahr
+            try:
+                wj = Wirtschaftsjahr.objects.get(pk=wj_id)
+                ss_qs = ss_qs.filter(periode__year=wj.jahr)
+            except Wirtschaftsjahr.DoesNotExist:
+                pass
+        soll_per_ev = dict(
+            ss_qs.values('eigentumsverhaeltnis_id')
+            .annotate(s=Sum('soll_betrag'))
+            .values_list('eigentumsverhaeltnis_id', 's')
+        )
+
+        # Haben aus Buchungen (Zahlungseingänge)
+        haben_qs = (
             Buchung.objects
             .filter(personenkonto_id__in=pk_ids, soll_konto__isnull=False, parent_buchung__isnull=True)
             .exclude(status='storniert')
-            .values('personenkonto_id')
-            .annotate(s=Sum('betrag'))
-            .values_list('personenkonto_id', 's')
+        )
+        if wj_id:
+            haben_qs = haben_qs.filter(wirtschaftsjahr_id=wj_id)
+        haben_per_pk = dict(
+            haben_qs.values('personenkonto_id').annotate(s=Sum('betrag')).values_list('personenkonto_id', 's')
         )
 
         result = []
         for pk in pks:
-            soll = soll_per_pk.get(pk.id) or Decimal('0')
+            soll  = soll_per_ev.get(pk.vertrag_id) or Decimal('0')
             haben = haben_per_pk.get(pk.id) or Decimal('0')
             saldo = soll - haben
             einheit_nr = ''
@@ -303,52 +324,90 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=['get'], url_path='kontoauszug')
     def kontoauszug(self, request, pk=None):
         """
-        Kontoauszug eines Personenkontos.
-        Zeigt nur Gesamt-Buchungen (parent_buchung=None), sortiert nach Datum.
-        Soll = Forderungen/Sollstellungen, Haben = Zahlungen/Gutschriften.
+        Kontoauszug eines Personenkontos (Debitorensicht).
+        Soll  = Forderungen aus dem Nebenbuch (HausgeldSollstellung).
+        Haben = Zahlungseingänge (Buchung, verknüpft via Personenkonto oder SollstellungZahlung).
+        Beide Listen werden nach Datum gemischt und chronologisch sortiert.
         """
-        from django.db.models import Q
-        from apps.buchhaltung.models import Buchung
+        from apps.buchhaltung.models import Buchung, HausgeldSollstellung
 
         pk_obj = self.get_object()
+        ev = pk_obj.vertrag
+        wj_id = request.query_params.get('wirtschaftsjahr')
 
-        # Nur Gesamt-Buchungen (keine Teilbuchungen der Sammelbuchung)
-        buchungen = (
-            Buchung.objects
-            .filter(
-                Q(personenkonto=pk_obj) |
-                Q(offener_posten__personenkonto=pk_obj)
-            )
-            .filter(parent_buchung__isnull=True)
-            .exclude(status='storniert')
-            .distinct()
-            .order_by('buchungsdatum', 'erstellt_am')
+        # --- Soll-Seite: Sollstellungen aus Nebenbuch ---
+        ss_qs = (
+            HausgeldSollstellung.objects
+            .filter(eigentumsverhaeltnis=ev, storniert_am__isnull=True)
+            .select_related('sollstellungslauf')
+            .order_by('periode', 'erstellt_am')
         )
+        if wj_id:
+            from apps.objekte.models import Wirtschaftsjahr
+            try:
+                wj = Wirtschaftsjahr.objects.get(pk=wj_id)
+                ss_qs = ss_qs.filter(periode__year=wj.jahr)
+            except Wirtschaftsjahr.DoesNotExist:
+                pass
+
+        # --- Haben-Seite: Zahlungseingänge (Buchungen) ---
+        haben_qs = (
+            Buchung.objects
+            .filter(personenkonto=pk_obj, soll_konto__isnull=False, parent_buchung__isnull=True)
+            .exclude(status='storniert')
+        )
+        if wj_id:
+            haben_qs = haben_qs.filter(wirtschaftsjahr_id=wj_id)
+        haben_qs = haben_qs.order_by('buchungsdatum', 'erstellt_am')
+
+        # Einträge zusammenführen und chronologisch sortieren
+        eintraege = []
+        for ss in ss_qs:
+            typ_label = {'hausgeld': 'Hausgeld', 'sonderumlage': 'Sonderumlage', 'abrechnungsergebnis': 'Abrechnung'}.get(ss.sollstellungs_typ, ss.sollstellungs_typ)
+            eintraege.append({
+                '_datum': ss.periode,
+                '_sort2': ss.erstellt_am,
+                'id': str(ss.id),
+                'typ': 'sollstellung',
+                'opos_nr': ss.opos_nr,
+                'bu_nr': ss.opos_nr,
+                'buchungsdatum': str(ss.periode),
+                'buchungstext': f"{typ_label} {ss.periode.strftime('%m/%Y')}",
+                'soll': float(ss.soll_betrag) if ss.soll_betrag > 0 else None,
+                'haben': float(abs(ss.soll_betrag)) if ss.soll_betrag < 0 else None,
+                'hat_detail': False,
+                'status': ss.status_cached,
+                'ist_betrag': float(ss.ist_betrag),
+            })
+        for b in haben_qs:
+            eintraege.append({
+                '_datum': b.buchungsdatum,
+                '_sort2': b.erstellt_am,
+                'id': str(b.id),
+                'typ': 'buchung',
+                'opos_nr': None,
+                'bu_nr': b.belegnr or f'BU-{str(b.id)[:8].upper()}',
+                'buchungsdatum': str(b.buchungsdatum),
+                'buchungstext': b.buchungstext,
+                'soll': None,
+                'haben': float(b.betrag),
+                'hat_detail': b.teilbuchungen.exists(),
+                'status': None,
+                'ist_betrag': None,
+            })
+
+        eintraege.sort(key=lambda x: (x['_datum'], x['_sort2'] or ''))
 
         saldo = Decimal('0.00')
         positionen = []
-        for b in buchungen:
-            ist_forderung = b.personenkonto_id == pk_obj.pk and b.soll_konto_id is None
-            if ist_forderung:
-                soll = b.betrag
-                haben = Decimal('0.00')
-            else:
-                soll = Decimal('0.00')
-                haben = b.betrag
-            saldo += soll - haben
-
-            bu_nr = b.belegnr or f'BU-{str(b.id)[:8].upper()}'
-            hat_teilbuchungen = b.teilbuchungen.exists()
-            positionen.append({
-                'id': str(b.id),
-                'bu_nr': bu_nr,
-                'buchungsdatum': str(b.buchungsdatum),
-                'buchungstext': b.buchungstext,
-                'soll': float(soll) if soll else None,
-                'haben': float(haben) if haben else None,
-                'saldo': float(saldo),
-                'hat_detail': hat_teilbuchungen,
-            })
+        for e in eintraege:
+            soll_val  = Decimal(str(e['soll']))  if e['soll']  is not None else Decimal('0')
+            haben_val = Decimal(str(e['haben'])) if e['haben'] is not None else Decimal('0')
+            saldo += soll_val - haben_val
+            e['saldo'] = float(saldo)
+            e.pop('_datum')
+            e.pop('_sort2')
+            positionen.append(e)
 
         einheit_nr = ''
         try:
@@ -410,6 +469,73 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
             'gesamt_betrag': float(gesamt.betrag),
             'positionen': positionen,
         })
+
+
+    @action(detail=True, methods=['post'], url_path='zahlungseingang')
+    def zahlungseingang(self, request, pk=None):
+        """
+        Bucht einen manuellen Zahlungseingang gegen offene Sollstellungen im Nebenbuch.
+        Body: { bank_sachkonto_id, betrag, buchungsdatum, buchungstext?, wirtschaftsjahr_id? }
+        """
+        from decimal import Decimal
+        from apps.buchhaltung.services.zahlungs_zuordnung_service import verrechne_eingang_manuell
+        from apps.konten.models import Konto
+        from apps.objekte.models import Wirtschaftsjahr
+
+        pk_obj = self.get_object()
+
+        bank_konto_id  = request.data.get('bank_sachkonto_id')
+        betrag_raw     = request.data.get('betrag')
+        buchungsdatum  = request.data.get('buchungsdatum')
+        buchungstext   = request.data.get('buchungstext', '')
+        wj_id          = request.data.get('wirtschaftsjahr_id')
+
+        if not bank_konto_id or not betrag_raw or not buchungsdatum:
+            return Response(
+                {'error': 'bank_sachkonto_id, betrag und buchungsdatum sind erforderlich'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            betrag = Decimal(str(betrag_raw))
+            if betrag <= 0:
+                raise ValueError
+        except (ValueError, Exception):
+            return Response({'error': 'Ungültiger Betrag'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            bank_konto = Konto.objects.get(pk=bank_konto_id)
+        except Konto.DoesNotExist:
+            return Response({'error': 'Sachkonto nicht gefunden'}, status=status.HTTP_404_NOT_FOUND)
+
+        wj = None
+        if wj_id:
+            wj = Wirtschaftsjahr.objects.filter(pk=wj_id).first()
+        if not wj:
+            obj = pk_obj.objekt
+            wj = (
+                Wirtschaftsjahr.objects.filter(objekt=obj, status='offen').order_by('-jahr').first()
+                or Wirtschaftsjahr.objects.filter(objekt=obj).order_by('-jahr').first()
+            )
+
+        try:
+            buchung = verrechne_eingang_manuell(
+                personenkonto=pk_obj,
+                bank_sachkonto=bank_konto,
+                betrag=betrag,
+                buchungsdatum=buchungsdatum,
+                buchungstext=buchungstext,
+                wirtschaftsjahr=wj,
+                user=request.user,
+            )
+        except Exception as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            'buchung_id': str(buchung.id),
+            'betrag': float(buchung.betrag),
+            'nachricht': f'Zahlungseingang {float(betrag):.2f} EUR erfolgreich gebucht.',
+        }, status=status.HTTP_201_CREATED)
 
 
 class UnterkontoViewSet(viewsets.ReadOnlyModelViewSet):

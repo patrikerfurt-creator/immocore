@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { rechnungenApi } from '../../api/rechnungen'
@@ -6,7 +6,7 @@ import { objekteApi } from '../../api/objekte'
 import { useObjektStore } from '../../stores/objekt'
 import { Button } from '../../components/ui/Button'
 import client from '../../api/client'
-import type { RechnungList, RechnungStatus, Konto } from '../../types'
+import type { RechnungList, RechnungStatus, Konto, Bankkonto } from '../../types'
 
 const EUR = (v: string | number | null) =>
   v == null ? '—' : Number(v).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })
@@ -29,9 +29,19 @@ const STATUS_STYLE: Record<string, string> = {
 }
 
 const STATUS_LABEL: Record<string, string> = {
+  importiert:     'Importiert',
+  duplikat:       'Duplikat',
+  prueffall:      'Prüffall (alt)',
   erkannt:        'Erkannt (Stufe 1)',
   pruefung_match: 'Prüffall (Stufe 2)',
   nicht_erkannt:  'Nicht erkannt (Stufe 3)',
+  erfasst:        'Erfasst',
+  in_pruefung:    'In Prüfung',
+  freigegeben:    'Freigegeben',
+  gebucht:        'Gebucht',
+  bezahlt:        'Bezahlt',
+  abgelehnt:      'Abgelehnt',
+  fehler:         'Fehler',
 }
 
 const PRUEFFALL_STATI = new Set(['pruefung_match', 'nicht_erkannt', 'in_pruefung'])
@@ -107,12 +117,36 @@ function BankabgangForm({ rechnung, onSuccess }: { rechnung: RechnungList; onSuc
   const [habenKontoId, setHabenKontoId] = useState('')
   const [buchungsdatum, setBuchungsdatum] = useState(new Date().toISOString().slice(0, 10))
 
+  // Buchungskonten 18xxx aus dem Kontenplan
   const { data: konten } = useQuery({
     queryKey: ['konten-bank', rechnung.objekt_id],
-    queryFn: () => client.get<Konto[]>('/konten/', { params: { objekt: rechnung.objekt_id, direktes_buchen: 'true' } }).then(r => r.data),
+    queryFn: () => client.get<Konto[]>('/konten/', { params: { objekt: rechnung.objekt_id } }).then(r => r.data),
     enabled: !!rechnung.objekt_id,
   })
   const bankKonten = (konten ?? []).filter(k => k.aktiv && k.kontonummer.startsWith('18'))
+
+  // Zahlungsverkehr-Bankkonto des Objekts
+  const { data: bankkontenMaster } = useQuery({
+    queryKey: ['bankkonten', rechnung.objekt_id],
+    queryFn: () => client.get<Bankkonto[]>('/bankkonten/', { params: { objekt: rechnung.objekt_id } }).then(r => r.data),
+    enabled: !!rechnung.objekt_id,
+  })
+  const zvBankkonto = (bankkontenMaster ?? []).find(b => b.zahlungsverkehr && b.aktiv)
+  const zvKontonummer = zvBankkonto
+    ? zvBankkonto.konto_typ === 'bewirtschaftung'
+      ? '18000'
+      : zvBankkonto.reihenfolge === 1 ? '18911' : `0991${zvBankkonto.reihenfolge}`
+    : null
+
+  // Auto-Vorauswahl wenn Zahlungsverkehrskonto gesetzt
+  useEffect(() => {
+    if (zvKontonummer && bankKonten.length > 0 && !habenKontoId) {
+      const match = bankKonten.find(k => k.kontonummer === zvKontonummer)
+      if (match) setHabenKontoId(match.id)
+    }
+  }, [zvKontonummer, bankKonten.length])
+
+  const zvKonto = habenKontoId ? bankKonten.find(k => k.id === habenKontoId) : null
 
   const mut = useMutation({
     mutationFn: () => rechnungenApi.bankabgang(rechnung.id, { haben_konto_id: habenKontoId, buchungsdatum }),
@@ -130,11 +164,18 @@ function BankabgangForm({ rechnung, onSuccess }: { rechnung: RechnungList; onSuc
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="block text-xs text-gray-500 mb-1">Bankkonto (Haben)</label>
-          <select value={habenKontoId} onChange={e => setHabenKontoId(e.target.value)}
-                  className="border rounded px-2 py-1.5 text-sm w-full">
-            <option value="">— Konto wählen —</option>
-            {bankKonten.map(k => <option key={k.id} value={k.id}>{k.kontonummer} — {k.kontoname}</option>)}
-          </select>
+          {zvBankkonto && zvKonto ? (
+            <div className="border rounded px-2 py-1.5 text-sm bg-gray-50 text-gray-800">
+              {zvKonto.kontonummer} — {zvKonto.kontoname}
+              <span className="ml-2 text-xs text-teal-600">({zvBankkonto.bezeichnung})</span>
+            </div>
+          ) : (
+            <select value={habenKontoId} onChange={e => setHabenKontoId(e.target.value)}
+                    className="border rounded px-2 py-1.5 text-sm w-full">
+              <option value="">— Konto wählen —</option>
+              {bankKonten.map(k => <option key={k.id} value={k.id}>{k.kontonummer} — {k.kontoname}</option>)}
+            </select>
+          )}
         </div>
         <div>
           <label className="block text-xs text-gray-500 mb-1">Buchungsdatum</label>
@@ -155,6 +196,27 @@ function BankabgangForm({ rechnung, onSuccess }: { rechnung: RechnungList; onSuc
 // ---------------------------------------------------------------------------
 // Detail-Modal
 // ---------------------------------------------------------------------------
+function SepaToggle({ rechnung }: { rechnung: RechnungList }) {
+  const qc = useQueryClient()
+  const mut = useMutation({
+    mutationFn: (val: boolean) => rechnungenApi.update(rechnung.id, { sepa_lastschrift: val } as never),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['rechnungen'] }),
+  })
+  return (
+    <label className="flex items-center gap-2 cursor-pointer select-none">
+      <input
+        type="checkbox"
+        checked={rechnung.sepa_lastschrift}
+        onChange={e => mut.mutate(e.target.checked)}
+        disabled={mut.isPending}
+        className="w-4 h-4 accent-blue-600"
+      />
+      <span className="text-sm text-gray-700">SEPA-Lastschrift</span>
+      {mut.isPending && <span className="text-xs text-gray-400">…</span>}
+    </label>
+  )
+}
+
 function DetailModal({ rechnung, onClose }: { rechnung: RechnungList; onClose: () => void }) {
   const qc = useQueryClient()
   const [begruendung, setBegruendung] = useState('')
@@ -215,6 +277,10 @@ function DetailModal({ rechnung, onClose }: { rechnung: RechnungList; onClose: (
                 <div className="font-medium text-gray-800">{value}</div>
               </div>
             ))}
+          </div>
+
+          <div className="flex items-center gap-3 px-1">
+            <SepaToggle rechnung={rechnung} />
           </div>
 
           {rechnung.duplikat_typ && (
@@ -316,8 +382,7 @@ function DetailModal({ rechnung, onClose }: { rechnung: RechnungList; onClose: (
 // ---------------------------------------------------------------------------
 
 const ALLE_STATUS: RechnungStatus[] = [
-  'importiert', 'duplikat', 'prueffall', 'erkannt', 'pruefung_match', 'nicht_erkannt',
-  'erfasst', 'in_pruefung', 'freigegeben', 'gebucht', 'bezahlt', 'abgelehnt', 'fehler',
+  'importiert', 'duplikat', 'erfasst', 'in_pruefung', 'freigegeben', 'gebucht', 'bezahlt', 'abgelehnt', 'fehler',
 ]
 
 export function RechnungenListe() {
@@ -340,7 +405,11 @@ export function RechnungenListe() {
     queryFn: () => {
       const params: Record<string, string> = {}
       if (objektId) params.objekt = objektId
-      if (statusFilter) params.status = statusFilter
+      if (statusFilter === '__prueffall_alle__') {
+        params.status = 'prueffall,pruefung_match,nicht_erkannt'
+      } else if (statusFilter) {
+        params.status = statusFilter
+      }
       if (suche) params.search = suche
       return rechnungenApi.list(params)
     },
@@ -379,7 +448,10 @@ export function RechnungenListe() {
           className="border rounded px-3 py-2 text-sm"
         >
           <option value="">Alle Status</option>
-          {ALLE_STATUS.map(s => <option key={s} value={s}>{s}</option>)}
+          <option value="__prueffall_alle__">— Alle Prüffälle —</option>
+          {ALLE_STATUS.map(s => (
+            <option key={s} value={s}>{STATUS_LABEL[s] ?? s}</option>
+          ))}
         </select>
       </div>
 
@@ -426,8 +498,8 @@ export function RechnungenListe() {
                     }
                   </td>
                   <td className="px-4 py-3">
-                    {r.kostenstelle_label
-                      ? <span className="text-xs bg-green-50 text-green-700 px-2 py-0.5 rounded font-mono">{r.kostenstelle_label}</span>
+                    {r.aufwandskonto_label || r.kostenstelle_label
+                      ? <span className="text-xs bg-green-50 text-green-700 px-2 py-0.5 rounded font-mono">{r.aufwandskonto_label || r.kostenstelle_label}</span>
                       : r.vorgeschlagenes_konto_label
                       ? <span className="text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded font-mono">{r.vorgeschlagenes_konto_label} *</span>
                       : <span className="text-xs text-gray-300">—</span>
@@ -437,6 +509,9 @@ export function RechnungenListe() {
                     <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_STYLE[r.status] ?? 'bg-gray-100'}`}>
                       {STATUS_LABEL[r.status] ?? r.status}
                     </span>
+                    {r.op_nummer && (
+                      <div className="text-xs text-gray-500 font-mono mt-0.5">OP-{r.op_nummer}</div>
+                    )}
                     {r.duplikat_typ && (
                       <div className="text-xs text-orange-400 mt-0.5">{r.duplikat_typ}</div>
                     )}

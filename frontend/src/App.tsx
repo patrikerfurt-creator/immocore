@@ -15,7 +15,10 @@ import { VertragsmanagementPage } from './pages/vertragsmanagement/Vertragsmanag
 import { Buchungsjournal } from './pages/buchhaltung/Buchungsjournal'
 import { BankImport } from './pages/buchhaltung/BankImport'
 import { Sollstellungen } from './pages/buchhaltung/Sollstellungen'
+import { AutoPipeline } from './pages/buchhaltung/AutoPipeline'
+import { AutoPipelineProtokollDetail } from './pages/buchhaltung/AutoPipelineProtokollDetail'
 import { EBanking } from './pages/buchhaltung/EBanking'
+import { BankMatchRulesPage } from './pages/buchhaltung/BankMatchRulesPage'
 import { Debitoren } from './pages/buchhaltung/Debitoren'
 import { Kontoauszug } from './pages/buchhaltung/Kontoauszug'
 import { Dialogbuchhaltung } from './pages/buchhaltung/Dialogbuchhaltung'
@@ -75,7 +78,10 @@ export default function App() {
             <Route path="buchhaltung/debitoren" element={<Debitoren />} />
             <Route path="buchhaltung/kontoauszug" element={<Kontoauszug />} />
             <Route path="buchhaltung/sollstellungen" element={<Sollstellungen />} />
+            <Route path="buchhaltung/auto-pipeline" element={<AutoPipeline />} />
+            <Route path="buchhaltung/auto-pipeline/protokoll/:id" element={<AutoPipelineProtokollDetail />} />
             <Route path="buchhaltung/ebanking" element={<EBanking />} />
+            <Route path="buchhaltung/ebanking/regeln" element={<BankMatchRulesPage />} />
             <Route path="buchhaltung/dialog" element={<Dialogbuchhaltung />} />
             <Route path="rechnungen" element={<RechnungenListe />} />
             <Route path="rechnungen/:id/prueffall" element={<PrueffallDetail />} />

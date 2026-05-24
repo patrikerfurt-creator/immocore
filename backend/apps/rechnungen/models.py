@@ -191,6 +191,10 @@ class Rechnung(models.Model):
         related_name='rechnung_aufwand',
         help_text='Phase-2-Buchung: Aufwand / Bank bei Zahlung',
     )
+    sepa_lastschrift = models.BooleanField(
+        default=False,
+        help_text='Zahlung erfolgt per SEPA-Lastschrift (Abbuchung durch Kreditor)',
+    )
 
     class Meta:
         verbose_name = 'Rechnung'

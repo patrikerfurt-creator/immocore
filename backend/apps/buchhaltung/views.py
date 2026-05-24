@@ -10,34 +10,42 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.objekte.models import Wirtschaftsjahr, EinheitVerbrauch
+from apps.konten.models import KontoVerteilerSchluessel
 from .models import (
-    Buchungsart, Buchung, Buchungsstapel, OffenerPosten,
-    SollstellungsLauf, Sollstellung,
+    Buchungsart, Buchung, Buchungsstapel, OffenerPosten, KreditorOP,
     CamtImportEinstellung, CamtImportLog, ImportOrdnerEinstellung, Kontoumsatz,
+    BankMatchRegel,
     Mahnlauf, Mahnung, Mahnsperre,
     Forderungsfall, Basiszinssatz,
     RAPPosition, RAPAufloesung,
     BankImport, Jahresabrechnung, EinzelAbrechnung,
     LastschriftLauf,
+    HausgeldSollstellungslauf, HausgeldSollstellung,
+    AutoLaufProtokoll,
 )
 from .serializers import (
     BuchungsartSerializer,
     BuchungSerializer, BuchungListSerializer, BuchungsstapelSerializer,
     OffenerPostenSerializer,
-    SollstellungsLaufSerializer, SollstellungSerializer,
     CamtImportEinstellungSerializer, CamtImportLogSerializer,
     ImportOrdnerEinstellungSerializer, KontoumsatzSerializer,
+    BankBuchungSerializer, BankMatchRegelSerializer, KreditorOPSerializer,
     MahnlaufSerializer, MahnungSerializer, MahnsperreSerializer,
     ForderungsfallSerializer, BasiszinssatzSerializer,
     RAPPositionSerializer, RAPAufloesungSerializer,
     BankImportSerializer, JahresabrechnungSerializer, EinzelAbrechnungSerializer,
     LastschriftLaufSerializer,
+    WirtschaftsjahrSerializer, KontoVerteilerSchluesselSerializer, EinheitVerbrauchSerializer,
+    HausgeldSollstellungslaufSerializer,
+    HausgeldSollstellungSerializer, HausgeldSollstellungListSerializer,
+    AutoLaufProtokollSerializer,
 )
 from .services.camt053 import parse_camt053
 from .services.buchungserkennung import erkenne_buchung, lerne_aus_buchung
+from .services.ebanking_erkennungs_service import fuehre_erkennung_aus
 from .services.sepa_export import exportiere_sepa
 from .services.sepa_lastschrift import exportiere_lastschrift
-from .services.sollstellung import simuliere_lauf, fuehre_lauf_aus
 from .services.mahnwesen import simuliere_mahnlauf, fuehre_mahnlauf_aus
 from .services.zinsen import berechne_verzugszinsen
 
@@ -50,8 +58,13 @@ class BuchungsartViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='manuell-waehlbar')
     def manuell_waehlbar(self, request):
-        """Nur die BAs, die manuell wählbar sind (nicht system_buchungsart)."""
+        """Manuell wählbare BAs, optional gefiltert nach ?buchungstyp=sachkonto|personenkonto|kreditor."""
         qs = self.get_queryset().filter(system_buchungsart=False)
+        buchungstyp = request.query_params.get('buchungstyp')
+        if buchungstyp:
+            qs = qs.filter(buchungstyp=buchungstyp)
+        else:
+            qs = qs.filter(buchungstyp__isnull=False)
         return Response(BuchungsartSerializer(qs, many=True).data)
 
 
@@ -181,80 +194,6 @@ class OffenerPostenViewSet(viewsets.ReadOnlyModelViewSet):
         return qs
 
 
-class SollstellungsLaufViewSet(viewsets.ModelViewSet):
-    serializer_class = SollstellungsLaufSerializer
-    permission_classes = [IsAuthenticated]
-    filter_backends = [filters.OrderingFilter]
-    ordering = ['-erstellt_am']
-
-    def get_queryset(self):
-        qs = SollstellungsLauf.objects.select_related('objekt', 'ausgefuehrt_von')
-        if objekt_id := self.request.query_params.get('objekt'):
-            qs = qs.filter(objekt_id=objekt_id)
-        return qs
-
-    @action(detail=False, methods=['post'], url_path='simulieren')
-    def simulieren(self, request):
-        objekt_id = request.data.get('objekt')
-        periode_von = request.data.get('periode_von')
-        periode_bis = request.data.get('periode_bis')
-        ba_filter = request.data.get('ba_filter', [])
-
-        if not all([objekt_id, periode_von, periode_bis]):
-            return Response(
-                {'error': 'objekt, periode_von und periode_bis erforderlich'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        from datetime import date as _date
-        try:
-            von = _date.fromisoformat(periode_von)
-            bis = _date.fromisoformat(periode_bis)
-        except ValueError:
-            return Response(
-                {'error': 'Ungültiges Datumsformat (YYYY-MM-DD)'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        vorschau = simuliere_lauf(objekt_id, von, bis, ba_filter or None)
-        return Response(vorschau)
-
-    @action(detail=True, methods=['post'], url_path='ausfuehren')
-    def ausfuehren(self, request, pk=None):
-        try:
-            ergebnis = fuehre_lauf_aus(pk, request.user)
-        except ValueError as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(ergebnis)
-
-    @action(detail=True, methods=['post'], url_path='freigeben')
-    def freigeben(self, request, pk=None):
-        lauf = self.get_object()
-        if lauf.status != 'simulation':
-            return Response(
-                {'error': 'Nur Simulationen können freigegeben werden'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        lauf.status = 'freigegeben'
-        lauf.freigabe_user = request.user
-        lauf.freigabe_am = timezone.now()
-        lauf.save(update_fields=['status', 'freigabe_user', 'freigabe_am'])
-        return Response(SollstellungsLaufSerializer(lauf, context={'request': request}).data)
-
-
-class SollstellungViewSet(viewsets.ReadOnlyModelViewSet):
-    serializer_class = SollstellungSerializer
-    permission_classes = [IsAuthenticated]
-
-    def get_queryset(self):
-        qs = Sollstellung.objects.select_related(
-            'lauf', 'personenkonto', 'buchungsart'
-        )
-        if lauf_id := self.request.query_params.get('lauf'):
-            qs = qs.filter(lauf_id=lauf_id)
-        return qs
-
-
 class CamtImportEinstellungViewSet(viewsets.ModelViewSet):
     serializer_class = CamtImportEinstellungSerializer
     permission_classes = [IsAuthenticated]
@@ -344,19 +283,51 @@ class KontoumsatzViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         qs = Kontoumsatz.objects.select_related('objekt', 'bankkonto', 'buchung')
         params = self.request.query_params
+        s = params.get('status')
+        if s == 'unbekannt':
+            return qs.filter(status='unbekannt')
         if objekt_id := params.get('objekt'):
             qs = qs.filter(objekt_id=objekt_id)
-        if s := params.get('status'):
+        if s:
             qs = qs.filter(status=s)
         return qs
+
+    @action(detail=False, methods=['post'], url_path='iban-verknuepfen')
+    def iban_verknuepfen(self, request):
+        """
+        Verknüpft alle Kontoumsätze mit bankkonto=NULL rückwirkend,
+        sofern ein Bankkonto mit passender empfaenger_iban existiert.
+        Einmalig nach nachträglicher IBAN-Anlage aufzurufen.
+        """
+        from apps.objekte.models import Bankkonto
+        from django.db.models import Case, F, Value, When
+
+        aktualisiert_gesamt = 0
+        for bk in Bankkonto.objects.filter(iban__gt=''):
+            qs = Kontoumsatz.objects.filter(empfaenger_iban=bk.iban, bankkonto__isnull=True)
+            anzahl = qs.count()
+            if anzahl:
+                qs.update(
+                    bankkonto=bk,
+                    objekt=bk.objekt,
+                    status=Case(
+                        When(status='unbekannt', then=Value('importiert')),
+                        default=F('status'),
+                    ),
+                )
+                aktualisiert_gesamt += anzahl
+
+        return Response({'aktualisiert': aktualisiert_gesamt})
 
     @action(detail=False, methods=['post'], url_path='camt-vorschau')
     def camt_vorschau(self, request):
         """
-        CAMT.053-Datei parsen und Vorschau zurückgeben. Kein DB-Commit.
+        CAMT-Datei parsen und Vorschau zurückgeben. Kein DB-Commit.
+        Erkennt camt.054 und gibt entsprechendes Flag zurück.
         Body: multipart mit objekt (UUID) + datei (XML).
-        Antwort: { transaktionen, neu_anzahl, duplikat_anzahl, gesamt, objekt, objekt_bezeichnung }
         """
+        from .services.camt054_service import erkenne_camt_typ
+
         objekt_id = request.data.get('objekt')
         datei = request.FILES.get('datei')
 
@@ -372,8 +343,29 @@ class KontoumsatzViewSet(viewsets.ModelViewSet):
         except Objekt.DoesNotExist:
             return Response({'error': 'Objekt nicht gefunden'}, status=status.HTTP_404_NOT_FOUND)
 
+        xml_bytes = datei.read()
+        camt_typ = erkenne_camt_typ(xml_bytes)
+
+        # camt.054 → Stub-Response (kein Parsen der Transaktionen)
+        if camt_typ == 'camt054':
+            return Response({
+                'camt_typ':          'camt054',
+                'transaktionen':     [],
+                'neu_anzahl':        0,
+                'duplikat_anzahl':   0,
+                'gesamt':            0,
+                'objekt':            str(objekt.id),
+                'objekt_bezeichnung': objekt.bezeichnung,
+                'import_datei':      datei.name,
+                'hinweis': (
+                    'camt.054-Datei erkannt. Verarbeitung von Rücklastschriften '
+                    'wird in der Mahnwesen-Spec implementiert. '
+                    'Die Datei wird sicher gespeichert.'
+                ),
+            })
+
         try:
-            transaktionen_roh = parse_camt053(datei.read())
+            transaktionen_roh = parse_camt053(xml_bytes)
         except Exception as exc:
             return Response(
                 {'error': f'Fehler beim Parsen: {exc}'},
@@ -389,13 +381,14 @@ class KontoumsatzViewSet(viewsets.ModelViewSet):
         duplikat_anzahl = sum(1 for t in vorschau if t['status'] == 'duplikat')
 
         return Response({
-            'transaktionen':   vorschau,
-            'neu_anzahl':      neu_anzahl,
-            'duplikat_anzahl': duplikat_anzahl,
-            'gesamt':          len(vorschau),
-            'objekt':          str(objekt.id),
+            'camt_typ':          'camt053',
+            'transaktionen':     vorschau,
+            'neu_anzahl':        neu_anzahl,
+            'duplikat_anzahl':   duplikat_anzahl,
+            'gesamt':            len(vorschau),
+            'objekt':            str(objekt.id),
             'objekt_bezeichnung': objekt.bezeichnung,
-            'import_datei':    datei.name,
+            'import_datei':      datei.name,
         })
 
     @action(detail=False, methods=['post'], url_path='camt-upload')
@@ -452,16 +445,18 @@ class KontoumsatzViewSet(viewsets.ModelViewSet):
                 auftraggeber_iban=txn.get('auftraggeber_iban', ''),
                 empfaenger_iban=empfaenger_iban,
                 verwendungszweck=txn.get('verwendungszweck', ''),
+                end_to_end_id=txn.get('end_to_end_id', ''),
                 import_datei=import_datei,
             )
 
-            vorschlag = erkenne_buchung(ku)
-            if vorschlag:
-                ku.ki_vorschlag = vorschlag
-                ku.status = 'erkannt'
-                ku.save(update_fields=['ki_vorschlag', 'status'])
-                erkannt += 1
+            try:
+                fuehre_erkennung_aus(ku)
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).error("E-Banking Erkennung Fehler: %s", exc)
 
+            if ku.status not in ('importiert', 'unbekannt'):
+                erkannt += 1
             importiert += 1
 
         return Response({
@@ -470,6 +465,44 @@ class KontoumsatzViewSet(viewsets.ModelViewSet):
             'erkannt':    erkannt,
             'gesamt':     len(transaktionen),
         })
+
+    @action(detail=False, methods=['post'], url_path='camt054-upload')
+    def camt054_upload(self, request):
+        """
+        camt.054-Datei sicher speichern (STUB v1.0).
+        Erzeugt CamtImportLog(typ='camt054', status='pending_mahnwesen_spec').
+        Keine Buchung wird erzeugt.
+        Body: multipart mit datei (XML).
+        """
+        from .services.camt054_service import verarbeite_camt054
+
+        datei = request.FILES.get('datei')
+        if not datei:
+            return Response({'error': 'datei erforderlich'}, status=status.HTTP_400_BAD_REQUEST)
+
+        xml_bytes = datei.read()
+        log = CamtImportLog.objects.create(
+            typ='camt054',
+            import_ordner='',
+            anzahl_dateien=1,
+        )
+        log._xml_inhalt = xml_bytes.decode('utf-8', errors='replace')
+        verarbeite_camt054(log)
+
+        return Response({
+            'id':      str(log.id),
+            'typ':     log.typ,
+            'status':  log.status,
+            'notiz':   log.notiz,
+            'datei':   datei.name,
+        }, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['get'], url_path='camt054-liste')
+    def camt054_liste(self, request):
+        """Liste geparkter camt.054-Importe."""
+        qs = CamtImportLog.objects.filter(typ='camt054').order_by('-zeitpunkt')
+        serializer = CamtImportLogSerializer(qs, many=True)
+        return Response(serializer.data)
 
     @action(detail=True, methods=['post'], url_path='zuordnen')
     def zuordnen(self, request, pk=None):
@@ -1061,7 +1094,7 @@ class LastschriftLaufViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = LastschriftLauf.objects.select_related(
-            'objekt', 'sollstellungs_lauf', 'erstellt_von'
+            'objekt', 'hausgeld_sollstellungslauf', 'erstellt_von'
         )
         if objekt_id := self.request.query_params.get('objekt'):
             qs = qs.filter(objekt_id=objekt_id)
@@ -1069,25 +1102,24 @@ class LastschriftLaufViewSet(viewsets.ModelViewSet):
 
     def create(self, request, *args, **kwargs):
         from decimal import Decimal
-        from apps.objekte.models import Bankkonto
+        from datetime import datetime
+        from apps.objekte.models import Objekt
 
-        objekt_id = request.data.get('objekt_id')
-        sollstellungs_lauf_id = request.data.get('sollstellungs_lauf_id')
+        objekt_id             = request.data.get('objekt_id')
+        hg_lauf_id            = request.data.get('hg_lauf_id')
         faelligkeitsdatum_str = request.data.get('faelligkeitsdatum')
-        bezeichnung = request.data.get('bezeichnung', '')
+        bezeichnung           = request.data.get('bezeichnung', '')
 
         if not objekt_id:
             return Response({'error': 'Objekt fehlt'}, status=status.HTTP_400_BAD_REQUEST)
         if not faelligkeitsdatum_str:
             return Response({'error': 'Fälligkeitsdatum fehlt'}, status=status.HTTP_400_BAD_REQUEST)
 
-        from datetime import datetime
         try:
             faelligkeitsdatum = datetime.strptime(faelligkeitsdatum_str, '%Y-%m-%d').date()
         except ValueError:
             return Response({'error': 'Ungültiges Fälligkeitsdatum'}, status=status.HTTP_400_BAD_REQUEST)
 
-        from apps.objekte.models import Objekt
         try:
             objekt = Objekt.objects.prefetch_related('bankkonten').get(id=objekt_id)
         except Objekt.DoesNotExist:
@@ -1096,78 +1128,82 @@ class LastschriftLaufViewSet(viewsets.ModelViewSet):
         if not objekt.glaeubiger_id:
             return Response({'error': 'Kein Gläubiger-ID am Objekt hinterlegt'}, status=status.HTTP_400_BAD_REQUEST)
 
-        bankkonto = objekt.bankkonten.filter(aktiv=True, konto_typ='bewirtschaftung').first()
-        if not bankkonto:
-            return Response({'error': 'Kein aktives Bewirtschaftungs-Bankkonto am Objekt'}, status=status.HTTP_400_BAD_REQUEST)
+        positionen = []
+        ohne_mandat = []
+        hg_lauf = None
 
-        sollstellungs_lauf = None
-        if sollstellungs_lauf_id:
+        # ── Hausgeld-Nebenbuch ─────────────────────────────────────────
+        if hg_lauf_id:
+            from .models import HausgeldSollstellungslauf
+            from .services.sepa_lastschrift import bestimme_suffix, baue_verwendungszweck
             try:
-                sollstellungs_lauf = SollstellungsLauf.objects.prefetch_related(
-                    'sollstellungen__personenkonto__eigentuemer__sepa_mandat'
-                ).get(id=sollstellungs_lauf_id, objekt=objekt)
-            except SollstellungsLauf.DoesNotExist:
-                return Response({'error': 'Sollstellungslauf nicht gefunden'}, status=status.HTTP_400_BAD_REQUEST)
+                hg_lauf = HausgeldSollstellungslauf.objects.prefetch_related(
+                    'sollstellungen__splits__bankkonto_ziel',
+                    'sollstellungen__eigentumsverhaeltnis__person__sepa_mandat',
+                    'sollstellungen__eigentumsverhaeltnis__einheit',
+                ).get(id=hg_lauf_id, objekt=objekt)
+            except HausgeldSollstellungslauf.DoesNotExist:
+                return Response({'error': 'Hausgeld-Lauf nicht gefunden'}, status=status.HTTP_400_BAD_REQUEST)
 
-            if sollstellungs_lauf.status not in ('ausgefuehrt', 'freigegeben'):
+            if hg_lauf.status != 'commited':
                 return Response(
-                    {'error': f'Sollstellungslauf hat Status "{sollstellungs_lauf.status}" — nur "ausgefuehrt" oder "freigegeben" erlaubt'},
+                    {'error': f'Hausgeld-Lauf hat Status "{hg_lauf.status}" — nur "commited" erlaubt'},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-        # Positionen aus Sollstellungslauf aufbauen
-        positionen = []
-        ohne_mandat = []
-
-        if sollstellungs_lauf:
-            # Aggregate per Personenkonto — sum all Sollstellungen
-            von_pk: dict[str, dict] = {}
-            for s in sollstellungs_lauf.sollstellungen.filter(status__in=('vorschau', 'gebucht')):
-                pk = s.personenkonto
-                person = getattr(pk, 'eigentuemer', None)
-                if not person:
-                    from apps.konten.models import Personenkonto as PKModel
-                    pk_obj = PKModel.objects.select_related('eigentuemer__sepa_mandat').filter(id=pk.id).first()
-                    person = pk_obj.eigentuemer if pk_obj else None
-
-                if not person:
-                    ohne_mandat.append({'sollstellung_id': str(s.id), 'grund': 'Keine Person gefunden'})
-                    continue
-
-                mandat = person.sepa_mandat
+            for ss in hg_lauf.sollstellungen.filter(
+                status_cached__in=('offen', 'teilbezahlt'), storniert_am__isnull=True
+            ).select_related(
+                'eigentumsverhaeltnis__person__sepa_mandat',
+                'eigentumsverhaeltnis__einheit', 'objekt',
+            ).prefetch_related('splits__bankkonto_ziel'):
+                person = ss.eigentumsverhaeltnis.person
+                mandat = getattr(person, 'sepa_mandat', None)
                 if not mandat or not mandat.aktiv:
-                    ohne_mandat.append({
-                        'person_name': person.name,
-                        'personenkonto_nr': pk.kontonummer,
-                        'sollstellung_id': str(s.id),
-                        'grund': 'Kein aktives SEPA-Mandat',
-                    })
+                    ohne_mandat.append({'sollstellung_id': str(ss.id), 'grund': 'Kein aktives SEPA-Mandat'})
                     continue
 
-                pk_key = str(pk.id)
-                if pk_key not in von_pk:
-                    von_pk[pk_key] = {
-                        'betrag': Decimal('0'),
-                        'personenkonto_id': str(pk.id),
-                        'personenkonto_nr': pk.kontonummer,
-                        'schuldner_name': person.name,
-                        'schuldner_iban': mandat.iban,
-                        'schuldner_bic': mandat.bic or 'NOTPROVIDED',
-                        'mandatsreferenz': mandat.mandatsreferenz,
-                        'mandat_datum': str(mandat.unterzeichnet_am),
-                        'verwendungszweck': (
-                            f"Hausgeld {faelligkeitsdatum.strftime('%m/%Y')} "
-                            f"{objekt.bezeichnung}"
-                        ),
+                if ss.sollstellungs_typ == 'hausgeld':
+                    splits_je_bank: dict = {}
+                    for split in ss.splits.all():
+                        splits_je_bank.setdefault(str(split.bankkonto_ziel_id), []).append(split)
+                    for bk_id_str, splits in splits_je_bank.items():
+                        suffix = bestimme_suffix(bk_id_str, objekt)
+                        betrag = sum(s.betrag for s in splits)
+                        positionen.append({
+                            'sollstellung_id':   str(ss.id),
+                            'end_to_end_id':     f"{ss.opos_nr}-{suffix}",
+                            'betrag':            float(betrag),
+                            'schuldner_name':    person.name,
+                            'schuldner_iban':    mandat.iban,
+                            'schuldner_bic':     mandat.bic or 'NOTPROVIDED',
+                            'mandatsreferenz':   mandat.mandatsreferenz,
+                            'mandat_datum':      str(mandat.unterzeichnet_am),
+                            'verwendungszweck':  baue_verwendungszweck(ss, suffix),
+                            'faelligkeitsdatum': str(faelligkeitsdatum),
+                            'seq_typ':           'RCUR',
+                        })
+                else:
+                    # Sonderumlage / Abrechnungsergebnis: BA bestimmt Zielkonto
+                    from .services.sollstellung_service import _bankkonto_fuer_ba
+                    try:
+                        bk = _bankkonto_fuer_ba(objekt, ss.ba)
+                        suffix = bestimme_suffix(str(bk.pk), objekt)
+                    except Exception:
+                        suffix = 'S' if ss.sollstellungs_typ == 'sonderumlage' else 'A'
+                    positionen.append({
+                        'sollstellung_id':   str(ss.id),
+                        'end_to_end_id':     f"{ss.opos_nr}-{suffix}",
+                        'betrag':            float(ss.soll_betrag),
+                        'schuldner_name':    person.name,
+                        'schuldner_iban':    mandat.iban,
+                        'schuldner_bic':     mandat.bic or 'NOTPROVIDED',
+                        'mandatsreferenz':   mandat.mandatsreferenz,
+                        'mandat_datum':      str(mandat.unterzeichnet_am),
+                        'verwendungszweck':  baue_verwendungszweck(ss, suffix),
                         'faelligkeitsdatum': str(faelligkeitsdatum),
-                        'seq_typ': 'RCUR',
-                    }
-                von_pk[pk_key]['betrag'] += s.betrag
-
-            # Decimal → float für JSON-Serialisierung (psycopg2 kennt kein Decimal)
-            for p in von_pk.values():
-                p['betrag'] = float(p['betrag'])
-            positionen = list(von_pk.values())
+                        'seq_typ':           'RCUR',
+                    })
 
         if not positionen:
             return Response(
@@ -1182,7 +1218,7 @@ class LastschriftLaufViewSet(viewsets.ModelViewSet):
 
         lauf = LastschriftLauf.objects.create(
             objekt=objekt,
-            sollstellungs_lauf=sollstellungs_lauf,
+            hausgeld_sollstellungslauf=hg_lauf,
             bezeichnung=bezeichnung or f"Lastschrift {faelligkeitsdatum.strftime('%m/%Y')}",
             faelligkeitsdatum=faelligkeitsdatum,
             erstellt_von=request.user,
@@ -1217,7 +1253,7 @@ class LastschriftLaufViewSet(viewsets.ModelViewSet):
 
         # Buchungen beim ersten XML-Abruf erstellen
         if not lauf.buchungen_erstellt:
-            gegenkonto = Konto.objects.filter(objekt=objekt, kontonummer='13650').first()
+            gegenkonto = Konto.objects.filter(wirtschaftsjahr__objekt=objekt, kontonummer='13650').first()
             if not gegenkonto:
                 return Response(
                     {'error': 'Konto 13650 (DCL-Debitor) nicht im Kontenplan gefunden'},
@@ -1320,3 +1356,567 @@ class LastschriftLaufViewSet(viewsets.ModelViewSet):
         response = HttpResponse(xml_bytes, content_type='application/xml')
         response['Content-Disposition'] = f'attachment; filename="{dateiname}"'
         return response
+
+
+# ---------------------------------------------------------------------------
+# Wirtschaftsjahr — Liste, Detail, Folgejahr-Eröffnung
+# ---------------------------------------------------------------------------
+
+class WirtschaftsjahrViewSet(viewsets.ReadOnlyModelViewSet):
+    """Wirtschaftsjahre — read-only Basis; Folgejahr via dedizierte Actions."""
+    serializer_class   = WirtschaftsjahrSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends    = [filters.OrderingFilter]
+    ordering           = ['objekt__bezeichnung', 'jahr']
+
+    def get_queryset(self):
+        qs = Wirtschaftsjahr.objects.select_related('objekt', 'vorjahr')
+        p  = self.request.query_params
+        if p.get('objekt'):
+            qs = qs.filter(objekt_id=p['objekt'])
+        if p.get('status'):
+            qs = qs.filter(status=p['status'])
+        return qs
+
+    @action(detail=False, methods=['post'], url_path='folgejahr/preview')
+    def folgejahr_preview(self, request):
+        """Vorschau: prüft je Objekt, ob Folgejahr angelegt werden kann."""
+        from .services.wirtschaftsjahr import folgejahr_preview
+        objekt_ids = request.data.get('objekt_ids', [])
+        if not objekt_ids:
+            return Response({'error': 'objekt_ids erforderlich'}, status=status.HTTP_400_BAD_REQUEST)
+        ergebnisse = folgejahr_preview(objekt_ids)
+        return Response({'ergebnisse': ergebnisse})
+
+    @action(detail=False, methods=['post'], url_path='folgejahr/commit')
+    def folgejahr_commit(self, request):
+        """Folgejahr für mehrere Objekte atomisch anlegen."""
+        from .services.wirtschaftsjahr import folgejahr_eroeffnen_batch
+        objekt_ids = request.data.get('objekt_ids', [])
+        if not objekt_ids:
+            return Response({'error': 'objekt_ids erforderlich'}, status=status.HTTP_400_BAD_REQUEST)
+        ergebnisse = folgejahr_eroeffnen_batch(objekt_ids, request.user)
+        return Response({'ergebnisse': ergebnisse})
+
+
+# ---------------------------------------------------------------------------
+# Hausgeld-Nebenbuch ViewSets
+# ---------------------------------------------------------------------------
+
+class HausgeldSollstellungslaufViewSet(viewsets.ModelViewSet):
+    """Hausgeld-Massenlauf: Vorschau, Commit, Storno."""
+    serializer_class   = HausgeldSollstellungslaufSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names  = ['get', 'post', 'head', 'options']
+
+    def get_queryset(self):
+        qs = HausgeldSollstellungslauf.objects.select_related('objekt', 'erstellt_von')
+        if objekt_id := self.request.query_params.get('objekt'):
+            qs = qs.filter(objekt_id=objekt_id)
+        if typ := self.request.query_params.get('typ'):
+            qs = qs.filter(typ=typ)
+        return qs.order_by('-periode')
+
+    def perform_create(self, serializer):
+        serializer.save(erstellt_von=self.request.user)
+
+    def _parse_periode(self, periode_str):
+        """Akzeptiert 'YYYY-MM' oder 'YYYY-MM-DD', gibt date(year, month, 1) zurück."""
+        from datetime import datetime
+        if not periode_str:
+            raise ValueError("periode fehlt")
+        if len(periode_str) == 7:
+            periode_str = periode_str + '-01'
+        return datetime.strptime(periode_str, '%Y-%m-%d').date()
+
+    @action(detail=False, methods=['post'], url_path='simulieren')
+    def simulieren(self, request):
+        """Vorschau ohne DB-Commit."""
+        from .services.sollstellungslauf_service import simuliere_hausgeld_monat
+        from apps.objekte.models import Objekt
+        from django.core.exceptions import ValidationError as DjVE
+        try:
+            objekt  = Objekt.objects.get(pk=request.data.get('objekt_id'))
+            periode = self._parse_periode(request.data.get('periode'))
+        except (Objekt.DoesNotExist, ValueError) as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        vorschau = simuliere_hausgeld_monat(objekt, periode)
+        return Response(vorschau)
+
+    @action(detail=False, methods=['post'], url_path='erstellen')
+    def erstellen(self, request):
+        """Lauf-Datensatz mit Status 'vorschau' anlegen."""
+        from .services.sollstellungslauf_service import erstelle_lauf_aus_vorschau
+        from apps.objekte.models import Objekt
+        from django.core.exceptions import ValidationError as DjVE
+        try:
+            objekt  = Objekt.objects.get(pk=request.data.get('objekt_id'))
+            periode = self._parse_periode(request.data.get('periode'))
+        except (Objekt.DoesNotExist, ValueError) as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            lauf = erstelle_lauf_aus_vorschau(objekt, periode, request.user)
+        except DjVE as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(HausgeldSollstellungslaufSerializer(lauf).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='freigeben')
+    def freigeben(self, request, pk=None):
+        """vorschau → freigegeben (Vier-Augen)."""
+        from .services.sollstellungslauf_service import freigeben_lauf
+        from django.core.exceptions import ValidationError as DjVE
+        lauf = self.get_object()
+        try:
+            lauf = freigeben_lauf(lauf, request.user)
+        except DjVE as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(HausgeldSollstellungslaufSerializer(lauf).data)
+
+    @action(detail=True, methods=['post'], url_path='commiten')
+    def commiten(self, request, pk=None):
+        """freigegeben → commited — erzeugt alle Sollstellungen."""
+        from .services.sollstellungslauf_service import commiten_lauf
+        from django.core.exceptions import ValidationError as DjVE
+        lauf = self.get_object()
+        try:
+            lauf = commiten_lauf(lauf, request.user)
+        except DjVE as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(HausgeldSollstellungslaufSerializer(lauf).data)
+
+    @action(detail=False, methods=['post'], url_path='hausgeld-lauf-starten')
+    def hausgeld_lauf_starten(self, request):
+        """Legacy-Direktcommit (rückwärtskompatibel, wird in Phase D entfernt)."""
+        from .services.sollstellungslauf_service import run_hausgeld_monat
+        from apps.objekte.models import Objekt
+        from django.core.exceptions import ValidationError as DjVE
+
+        objekt_id = request.data.get('objekt')
+        periode_str = request.data.get('periode')
+        if not objekt_id or not periode_str:
+            return Response({'error': 'objekt und periode erforderlich'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            objekt  = Objekt.objects.get(pk=objekt_id)
+            periode = self._parse_periode(periode_str)
+        except (Objekt.DoesNotExist, ValueError) as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            lauf = run_hausgeld_monat(objekt, periode, request.user)
+        except DjVE as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(HausgeldSollstellungslaufSerializer(lauf).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='stornieren')
+    def stornieren(self, request, pk=None):
+        from .services.sollstellungslauf_service import storniere_lauf
+        from django.core.exceptions import ValidationError as DjVE
+        lauf  = self.get_object()
+        grund = request.data.get('grund', '')
+        try:
+            storniere_lauf(lauf, grund, request.user)
+        except DjVE as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(HausgeldSollstellungslaufSerializer(lauf).data)
+
+
+class HausgeldSollstellungViewSet(viewsets.ReadOnlyModelViewSet):
+    """Lese-Zugriff + Storno für einzelne Hausgeld-Sollstellungen."""
+    permission_classes = [IsAuthenticated]
+
+    def get_serializer_class(self):
+        if self.action == 'retrieve':
+            return HausgeldSollstellungSerializer
+        return HausgeldSollstellungListSerializer
+
+    def get_queryset(self):
+        qs = HausgeldSollstellung.objects.select_related(
+            'objekt', 'eigentumsverhaeltnis__person',
+            'eigentumsverhaeltnis__einheit', 'eigentumsverhaeltnis__personenkonto',
+            'ba', 'sollstellungslauf',
+        ).prefetch_related('splits__ba', 'splits__bankkonto_ziel')
+        p = self.request.query_params
+        if objekt_id := p.get('objekt'):
+            qs = qs.filter(objekt_id=objekt_id)
+        if ev_id := p.get('eigentumsverhaeltnis'):
+            qs = qs.filter(eigentumsverhaeltnis_id=ev_id)
+        if s := p.get('status'):
+            qs = qs.filter(status_cached=s)
+        if typ := p.get('typ'):
+            qs = qs.filter(sollstellungs_typ=typ)
+        if lauf_id := p.get('lauf'):
+            qs = qs.filter(sollstellungslauf_id=lauf_id)
+        return qs.order_by('-periode')
+
+    @action(detail=True, methods=['post'], url_path='stornieren')
+    def stornieren(self, request, pk=None):
+        from .services.sollstellung_service import storniere_sollstellung
+        from django.core.exceptions import ValidationError as DjVE
+        ss    = self.get_object()
+        grund = request.data.get('grund', '')
+        try:
+            storniere_sollstellung(ss, grund, request.user)
+        except DjVE as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(HausgeldSollstellungSerializer(ss).data)
+
+
+class AutoLaufProtokollViewSet(viewsets.ReadOnlyModelViewSet):
+    """Auto-Pipeline-Protokolle — read-only + Einstellungen + Datei-Download."""
+    serializer_class   = AutoLaufProtokollSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        qs = AutoLaufProtokoll.objects.select_related('objekt')
+        if objekt_id := self.request.query_params.get('objekt'):
+            qs = qs.filter(objekt_id=objekt_id)
+        return qs.order_by('-ausgefuehrt_am')[:100]
+
+    @action(detail=False, methods=['get'], url_path='einstellungen')
+    def einstellungen(self, request):
+        """Gibt SEPA_AUTOPILOT_AKTIV, nächsten Lauf und Objekt-Anzahl zurück."""
+        from datetime import date as dt_date
+        from django.conf import settings as dj_settings
+        from apps.objekte.models import Objekt as ObjektModel
+
+        heute = timezone.localdate()
+        stichtag = dj_settings.SEPA_AUTOPILOT_STICHTAG
+        if heute.day < stichtag:
+            naechster_lauf = dt_date(heute.year, heute.month, stichtag)
+        elif heute.month == 12:
+            naechster_lauf = dt_date(heute.year + 1, 1, stichtag)
+        else:
+            naechster_lauf = dt_date(heute.year, heute.month + 1, stichtag)
+
+        aktive_objekte = ObjektModel.objects.filter(
+            auto_pipeline_aktiv=True, status='aktiv'
+        ).count()
+
+        return Response({
+            'aktiv':           dj_settings.SEPA_AUTOPILOT_AKTIV,
+            'stichtag':        stichtag,
+            'naechster_lauf':  naechster_lauf,
+            'aktive_objekte':  aktive_objekte,
+            'sepa_output_dir': dj_settings.SEPA_OUTPUT_DIR,
+            'vorlauf_bd':      dj_settings.SEPA_AUTOPILOT_VORLAUF_BD,
+        })
+
+    @action(detail=True, methods=['get'], url_path='download-pain008')
+    def download_pain008(self, request, pk=None):
+        """Lädt die pain.008-Datei des Protokoll-Eintrags herunter."""
+        import os
+        from django.http import FileResponse
+
+        protokoll = self.get_object()
+        if not protokoll.datei_pfad:
+            return Response({'error': 'Kein Dateipfad hinterlegt.'}, status=status.HTTP_404_NOT_FOUND)
+        if not os.path.exists(protokoll.datei_pfad):
+            return Response(
+                {'error': f'Datei nicht gefunden: {protokoll.datei_pfad}'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        filename = os.path.basename(protokoll.datei_pfad)
+        response = FileResponse(open(protokoll.datei_pfad, 'rb'))
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        response['Content-Type'] = 'application/xml'
+        return response
+
+
+# ---------------------------------------------------------------------------
+# E-Banking Phase E — neue Endpunkte
+# ---------------------------------------------------------------------------
+
+class EBankingBuchungViewSet(viewsets.ModelViewSet):
+    """
+    Kontoumsätze mit E-Banking-spezifischen Aktionen und erweitertem Serializer.
+    Registriert unter e-banking/bank-buchungen/.
+    """
+    serializer_class = BankBuchungSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'post', 'patch', 'head', 'options']
+
+    def get_queryset(self):
+        qs = Kontoumsatz.objects.select_related(
+            'objekt', 'bankkonto', 'buchung',
+            'erkannt_gegenkonto', 'erkannt_kreditor',
+            'erkannt_eigentumsverhaeltnis__einheit',
+            'erkannt_eigentumsverhaeltnis__person',
+            'verbucht_von', 'match_regel',
+        )
+        p = self.request.query_params
+
+        if objekt_id := p.get('objekt'):
+            qs = qs.filter(objekt_id=objekt_id)
+        if bankkonto_id := p.get('bankkonto'):
+            qs = qs.filter(bankkonto_id=bankkonto_id)
+
+        # Status-Filter: kommagetrennte Liste oder einzelner Wert
+        status_param = p.get('status')
+        if status_param:
+            werte = [s.strip() for s in status_param.split(',') if s.strip()]
+            if werte:
+                qs = qs.filter(status__in=werte)
+
+        if datum_von := p.get('datum_von'):
+            qs = qs.filter(buchungsdatum__gte=datum_von)
+        if datum_bis := p.get('datum_bis'):
+            qs = qs.filter(buchungsdatum__lte=datum_bis)
+        if betrag_min := p.get('betrag_min'):
+            qs = qs.filter(betrag__gte=betrag_min)
+        if betrag_max := p.get('betrag_max'):
+            qs = qs.filter(betrag__lte=betrag_max)
+        if suche := p.get('suche'):
+            from django.db.models import Q
+            qs = qs.filter(
+                Q(auftraggeber_name__icontains=suche)
+                | Q(auftraggeber_iban__icontains=suche)
+                | Q(verwendungszweck__icontains=suche)
+            )
+        return qs.order_by('-buchungsdatum')
+
+    @action(detail=True, methods=['post'], url_path='verbuchen')
+    def verbuchen(self, request, pk=None):
+        from decimal import Decimal
+        from django.core.exceptions import ValidationError as DjValidationError
+        from django.db import transaction as db_tx
+        from django.utils import timezone as tz
+        from apps.konten.models import Konto
+        from apps.personen.models import Person, EigentumsVerhaeltnis
+        from .services.ebanking_buchungs_service import verbuche
+        from .services.ebanking_erkennungs_service import regel_anlegen_oder_aktualisieren
+
+        ku = self.get_object()
+        if ku.status == 'verbucht':
+            return Response({'error': 'Kontoumsatz ist bereits verbucht.'}, status=status.HTTP_400_BAD_REQUEST)
+        if ku.status == 'storniert':
+            return Response({'error': 'Kontoumsatz ist storniert.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        buchungs_typ   = request.data.get('buchungs_typ', 'sachkonto')
+        notiz          = request.data.get('notiz', '')
+        opt_out_lernen = bool(request.data.get('opt_out_lernen', False))
+
+        # ── Debitorische Buchung (Hausgeld-Zahlungseingang) ──────────────────
+        if buchungs_typ == 'debitor':
+            from apps.konten.models import Personenkonto
+            from apps.objekte.models import Wirtschaftsjahr
+            from .services.zahlungs_zuordnung_service import verrechne_eingang_manuell
+            from .services.ebanking_buchungs_service import _ermittle_bank_sachkonto
+
+            pk_id = request.data.get('personenkonto_id')
+            if not pk_id:
+                return Response(
+                    {'error': 'personenkonto_id ist erforderlich.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            try:
+                personenkonto = Personenkonto.objects.get(pk=pk_id, objekt=ku.objekt)
+            except Personenkonto.DoesNotExist:
+                return Response(
+                    {'error': 'Personenkonto nicht gefunden oder gehört nicht zum Objekt.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            bank_konto = _ermittle_bank_sachkonto(ku)
+            if not bank_konto:
+                return Response({'error': 'Kein Bank-Sachkonto (18xxx) gefunden.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            wj = (
+                Wirtschaftsjahr.objects.filter(objekt=ku.objekt, status='offen').order_by('-jahr').first()
+                or Wirtschaftsjahr.objects.filter(objekt=ku.objekt).order_by('-jahr').first()
+            )
+            if not wj:
+                return Response({'error': 'Kein aktives Wirtschaftsjahr gefunden.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            with db_tx.atomic():
+                try:
+                    b = verrechne_eingang_manuell(
+                        personenkonto=personenkonto,
+                        bank_sachkonto=bank_konto,
+                        betrag=abs(ku.betrag),
+                        buchungsdatum=ku.buchungsdatum,
+                        buchungstext=ku.verwendungszweck or 'E-Banking Zahlungseingang',
+                        wirtschaftsjahr=wj,
+                        user=request.user,
+                    )
+                except Exception as exc:
+                    return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+                ku.buchung      = b
+                ku.status       = 'verbucht'
+                ku.verbucht_am  = tz.now()
+                ku.verbucht_von = request.user
+                if notiz:
+                    ku.notiz = notiz
+                ku.save()
+            ku.refresh_from_db()
+            return Response(BankBuchungSerializer(ku, context={'request': request}).data)
+
+        # ── Sachkonto- / Kreditorische Buchung ───────────────────────────────
+        gegenkonto_id  = request.data.get('gegenkonto_id')
+        kreditor_id    = request.data.get('kreditor_id')
+        ev_id          = request.data.get('eigentumsverhaeltnis_id')
+        kreditor_op_id = request.data.get('kreditor_op_id') or None
+
+        gegenkonto = None
+        if gegenkonto_id:
+            try:
+                gegenkonto = Konto.objects.get(pk=gegenkonto_id)
+            except Konto.DoesNotExist:
+                return Response({'error': 'Gegenkonto nicht gefunden'}, status=status.HTTP_400_BAD_REQUEST)
+
+        kreditor = Person.objects.filter(pk=kreditor_id).first() if kreditor_id else None
+        ev       = EigentumsVerhaeltnis.objects.filter(pk=ev_id).first() if ev_id else None
+
+        try:
+            verbuche(
+                ku,
+                verbucht_von=request.user,
+                gegenkonto=gegenkonto,
+                eigentumsverhaeltnis=ev,
+                kreditor=kreditor,
+                notiz=notiz,
+                kreditor_op_id=kreditor_op_id,
+            )
+        except DjValidationError as e:
+            return Response(
+                {'error': e.messages[0] if e.messages else str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not opt_out_lernen:
+            gk_final = gegenkonto or ku.erkannt_gegenkonto
+            if gk_final:
+                try:
+                    regel_anlegen_oder_aktualisieren(ku, gk_final, 'bestaetigung', request.user)
+                except Exception as exc:
+                    import logging as _log
+                    _log.getLogger(__name__).warning("Regel-Lernen fehlgeschlagen: %s", exc)
+
+        ku.refresh_from_db()
+        return Response(BankBuchungSerializer(ku, context={'request': request}).data)
+
+    @action(detail=True, methods=['post'], url_path='speichern')
+    def speichern(self, request, pk=None):
+        """Felder speichern ohne Verbuchung — kein Lerneffekt, kein Status-Wechsel."""
+        from apps.konten.models import Konto
+        from apps.personen.models import Person, EigentumsVerhaeltnis
+
+        ku = self.get_object()
+
+        update_fields = []
+        if 'gegenkonto_id' in request.data:
+            gk = Konto.objects.filter(pk=request.data['gegenkonto_id']).first() if request.data['gegenkonto_id'] else None
+            ku.erkannt_gegenkonto = gk
+            update_fields.append('erkannt_gegenkonto')
+        if 'kreditor_id' in request.data:
+            kr = Person.objects.filter(pk=request.data['kreditor_id']).first() if request.data['kreditor_id'] else None
+            ku.erkannt_kreditor = kr
+            update_fields.append('erkannt_kreditor')
+        if 'eigentumsverhaeltnis_id' in request.data:
+            ev = EigentumsVerhaeltnis.objects.filter(pk=request.data['eigentumsverhaeltnis_id']).first() if request.data['eigentumsverhaeltnis_id'] else None
+            ku.erkannt_eigentumsverhaeltnis = ev
+            update_fields.append('erkannt_eigentumsverhaeltnis')
+        if 'notiz' in request.data:
+            ku.notiz = request.data['notiz']
+            update_fields.append('notiz')
+
+        if update_fields:
+            ku.save(update_fields=update_fields)
+
+        ku.refresh_from_db()
+        return Response(BankBuchungSerializer(ku, context={'request': request}).data)
+
+    @action(detail=True, methods=['post'], url_path='erkennung-neu')
+    def erkennung_neu(self, request, pk=None):
+        """Erkennungs-Pipeline erneut ausführen."""
+        from .services.ebanking_erkennungs_service import fuehre_erkennung_aus
+
+        ku = self.get_object()
+        if ku.status in ('verbucht', 'storniert'):
+            return Response(
+                {'error': 'Erneute Erkennung für verbuchte/stornierte Buchungen nicht möglich.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        fuehre_erkennung_aus(ku)
+        ku.refresh_from_db()
+        return Response(BankBuchungSerializer(ku, context={'request': request}).data)
+
+    @action(detail=True, methods=['post'], url_path='storno')
+    def storno(self, request, pk=None):
+        from django.core.exceptions import ValidationError as DjValidationError
+        from .services.ebanking_buchungs_service import storniere
+
+        ku = self.get_object()
+        begruendung = request.data.get('begruendung', '')
+        if not begruendung:
+            return Response(
+                {'error': 'Begründung ist Pflichtfeld.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            storniere(ku, begruendung, request.user)
+        except DjValidationError as e:
+            return Response(
+                {'error': e.messages[0] if e.messages else str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        ku.refresh_from_db()
+        return Response(BankBuchungSerializer(ku, context={'request': request}).data)
+
+
+class BankMatchRegelViewSet(viewsets.ModelViewSet):
+    """
+    Verwaltung der BankMatchRegel-Einträge.
+    Registriert unter e-banking/bank-match-regeln/.
+    Nur PATCH (status → 'veraltet') und GET erlaubt; keine POST/DELETE.
+    """
+    serializer_class = BankMatchRegelSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'patch', 'head', 'options']
+
+    def get_queryset(self):
+        qs = BankMatchRegel.objects.select_related(
+            'bankkonto', 'gegenkonto', 'kreditor', 'eigentumsverhaeltnis',
+            'erstellt_von',
+        )
+        p = self.request.query_params
+        if bankkonto_id := p.get('bankkonto'):
+            qs = qs.filter(bankkonto_id=bankkonto_id)
+        if objekt_id := p.get('objekt'):
+            qs = qs.filter(bankkonto__objekt_id=objekt_id)
+        if status_p := p.get('status'):
+            qs = qs.filter(status=status_p)
+        if erstellt_aus := p.get('erstellt_aus'):
+            qs = qs.filter(erstellt_aus=erstellt_aus)
+        return qs.order_by('-erstellt_am')
+
+    def partial_update(self, request, *args, **kwargs):
+        regel = self.get_object()
+        new_status = request.data.get('status')
+        if new_status != 'veraltet':
+            return Response(
+                {'error': "Nur status='veraltet' ist zulässig."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        regel.status = 'veraltet'
+        regel.save(update_fields=['status'])
+        return Response(BankMatchRegelSerializer(regel, context={'request': request}).data)
+
+
+class KreditorOPViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Offene Kreditor-OPs für E-Banking-Verbuchung (Kreditorische Buchung).
+    Registriert unter e-banking/kreditor-ops/.
+    """
+    serializer_class = KreditorOPSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        qs = KreditorOP.objects.select_related('kreditor', 'rechnung')
+        p = self.request.query_params
+        if objekt_id := p.get('objekt'):
+            qs = qs.filter(objekt_id=objekt_id)
+        status_p = p.get('status')
+        if status_p:
+            qs = qs.filter(status=status_p)
+        else:
+            qs = qs.filter(status__in=['offen', 'teilbezahlt'])
+        return qs.order_by('faellig_ab')

@@ -123,8 +123,10 @@ def parse_camt053(xml_bytes: bytes) -> list[dict]:
                     # Verwendungszweck
                     verwendungszweck = _findtext(tx, 'RmtInf/Ustrd', ns)
                     if not verwendungszweck:
-                        # Structured reference fallback
                         verwendungszweck = _findtext(tx, 'RmtInf/Strd/CdtrRefInf/Ref', ns)
+
+                    # EndToEndId
+                    end_to_end_id = _findtext(tx, 'Refs/EndToEndId', ns)
 
                     txn = {
                         'buchungsdatum': buchungsdatum,
@@ -134,6 +136,7 @@ def parse_camt053(xml_bytes: bytes) -> list[dict]:
                         'auftraggeber_iban': auftraggeber_iban,
                         'empfaenger_iban': stmt_iban,
                         'verwendungszweck': verwendungszweck,
+                        'end_to_end_id': end_to_end_id,
                     }
                     txn['sha256_hash'] = _sha256_transaktion(txn)
                     transaktionen.append(txn)

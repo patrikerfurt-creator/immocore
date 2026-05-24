@@ -25,29 +25,27 @@ def _sub(parent, tag, text=None):
     return el
 
 
-def exportiere_sepa(zahlungen: list[dict], auftraggeber: dict) -> bytes:
+def exportiere_sepa(
+    zahlungen: list[dict] = None,
+    auftraggeber: dict = None,
+    *,
+    gruppen: list[dict] | None = None,
+) -> bytes:
     """
     Erstellt SEPA pain.001.001.09 XML.
 
-    auftraggeber: {
-        'name': str,
-        'iban': str,
-        'bic': str,
-        'bank_bezeichnung': str
-    }
+    Entweder (zahlungen, auftraggeber) für einen Auftraggeber übergeben,
+    oder gruppen=[{'auftraggeber': {...}, 'zahlungen': [...]}] für mehrere.
 
-    zahlungen: Liste von {
-        'betrag': Decimal,
-        'empfaenger_name': str,
-        'empfaenger_iban': str,
-        'empfaenger_bic': str,
-        'verwendungszweck': str,
-        'faelligkeitsdatum': date,
-        'end_to_end_id': str (optional)
-    }
-
-    Gibt UTF-8 kodierte XML-Bytes zurück.
+    auftraggeber: {'name', 'iban', 'bic', 'bank_bezeichnung'}
+    zahlungen:    [{'betrag', 'empfaenger_name', 'empfaenger_iban', 'empfaenger_bic',
+                    'verwendungszweck', 'faelligkeitsdatum', 'end_to_end_id' (opt.)}]
     """
+    if gruppen is None:
+        gruppen = [{'auftraggeber': auftraggeber, 'zahlungen': zahlungen or []}]
+
+    alle_zahlungen = [z for g in gruppen for z in g['zahlungen']]
+
     ET.register_namespace('', NS)
 
     doc = ET.Element('Document', attrib={
@@ -63,78 +61,52 @@ def exportiere_sepa(zahlungen: list[dict], auftraggeber: dict) -> bytes:
     msg_id = str(uuid.uuid4()).replace('-', '')[:35]
     _sub(grp_hdr, 'MsgId', msg_id)
     _sub(grp_hdr, 'CreDtTm', date.today().isoformat() + 'T00:00:00')
-    _sub(grp_hdr, 'NbOfTxs', len(zahlungen))
-
-    ctrl_sum = sum(z['betrag'] for z in zahlungen)
-    _sub(grp_hdr, 'CtrlSum', f'{ctrl_sum:.2f}')
-
+    _sub(grp_hdr, 'NbOfTxs', len(alle_zahlungen))
+    _sub(grp_hdr, 'CtrlSum', f'{sum(z["betrag"] for z in alle_zahlungen):.2f}')
     initiating = _sub(grp_hdr, 'InitgPty')
-    _sub(initiating, 'Nm', auftraggeber['name'][:70])
+    _sub(initiating, 'Nm', gruppen[0]['auftraggeber']['name'][:70])
 
-    # Payment Information (ein Block pro Fälligkeitsdatum)
-    gruppen: dict[str, list] = {}
-    for z in zahlungen:
-        dt = z['faelligkeitsdatum']
-        if isinstance(dt, date):
-            dt_str = dt.isoformat()
-        else:
-            dt_str = str(dt)
-        gruppen.setdefault(dt_str, []).append(z)
+    # Payment Information: ein Block pro (Auftraggeber-IBAN, Fälligkeitsdatum)
+    for gruppe in gruppen:
+        ag = gruppe['auftraggeber']
+        pmt_gruppen: dict[str, list] = {}
+        for z in gruppe['zahlungen']:
+            dt = z['faelligkeitsdatum']
+            dt_str = dt.isoformat() if isinstance(dt, date) else str(dt)
+            pmt_gruppen.setdefault(dt_str, []).append(z)
 
-    for dt_str, gruppe in gruppen.items():
-        pmt_inf = _sub(init, 'PmtInf')
-        pmt_inf_id = str(uuid.uuid4()).replace('-', '')[:35]
-        _sub(pmt_inf, 'PmtInfId', pmt_inf_id)
-        _sub(pmt_inf, 'PmtMtd', 'TRF')
-        _sub(pmt_inf, 'NbOfTxs', len(gruppe))
-        _sub(pmt_inf, 'CtrlSum', f'{sum(z["betrag"] for z in gruppe):.2f}')
+        for dt_str, txs in pmt_gruppen.items():
+            pmt_inf = _sub(init, 'PmtInf')
+            _sub(pmt_inf, 'PmtInfId', str(uuid.uuid4()).replace('-', '')[:35])
+            _sub(pmt_inf, 'PmtMtd', 'TRF')
+            _sub(pmt_inf, 'NbOfTxs', len(txs))
+            _sub(pmt_inf, 'CtrlSum', f'{sum(z["betrag"] for z in txs):.2f}')
 
-        pmt_tp_inf = _sub(pmt_inf, 'PmtTpInf')
-        svc_lvl = _sub(pmt_tp_inf, 'SvcLvl')
-        _sub(svc_lvl, 'Cd', 'SEPA')
-        lcl_instrm = _sub(pmt_tp_inf, 'LclInstrm')
-        _sub(lcl_instrm, 'Cd', 'CORE')
+            pmt_tp_inf = _sub(pmt_inf, 'PmtTpInf')
+            _sub(_sub(pmt_tp_inf, 'SvcLvl'), 'Cd', 'SEPA')
+            _sub(_sub(pmt_tp_inf, 'LclInstrm'), 'Cd', 'CORE')
 
-        _sub(pmt_inf, 'ReqdExctnDt', dt_str)
+            _sub(pmt_inf, 'ReqdExctnDt', dt_str)
+            _sub(_sub(pmt_inf, 'Dbtr'), 'Nm', ag['name'][:70])
 
-        dbtr = _sub(pmt_inf, 'Dbtr')
-        _sub(dbtr, 'Nm', auftraggeber['name'][:70])
+            dbtr_acct = _sub(pmt_inf, 'DbtrAcct')
+            _sub(_sub(dbtr_acct, 'Id'), 'IBAN', ag['iban'])
 
-        dbtr_acct = _sub(pmt_inf, 'DbtrAcct')
-        dbtr_id = _sub(dbtr_acct, 'Id')
-        _sub(dbtr_id, 'IBAN', auftraggeber['iban'])
+            _sub(_sub(_sub(pmt_inf, 'DbtrAgt'), 'FinInstnId'), 'BICFI', ag['bic'] or 'NOTPROVIDED')
 
-        dbtr_agt = _sub(pmt_inf, 'DbtrAgt')
-        fin_instn = _sub(dbtr_agt, 'FinInstnId')
-        _sub(fin_instn, 'BICFI', auftraggeber['bic'])
+            for z in txs:
+                cdt_trf = _sub(pmt_inf, 'CdtTrfTxInf')
+                e2e = z.get('end_to_end_id') or str(uuid.uuid4()).replace('-', '')[:35]
+                _sub(_sub(cdt_trf, 'PmtId'), 'EndToEndId', e2e[:35])
 
-        for z in gruppe:
-            cdt_trf = _sub(pmt_inf, 'CdtTrfTxInf')
+                instd = _sub(_sub(cdt_trf, 'Amt'), 'InstdAmt', f'{z["betrag"]:.2f}')
+                instd.set('Ccy', 'EUR')
 
-            pmt_id = _sub(cdt_trf, 'PmtId')
-            e2e = z.get('end_to_end_id') or str(uuid.uuid4()).replace('-', '')[:35]
-            _sub(pmt_id, 'EndToEndId', e2e[:35])
+                _sub(_sub(_sub(cdt_trf, 'CdtrAgt'), 'FinInstnId'), 'BICFI', z.get('empfaenger_bic', 'NOTPROVIDED'))
+                _sub(_sub(cdt_trf, 'Cdtr'), 'Nm', z['empfaenger_name'][:70])
+                _sub(_sub(_sub(cdt_trf, 'CdtrAcct'), 'Id'), 'IBAN', z['empfaenger_iban'])
+                _sub(_sub(cdt_trf, 'RmtInf'), 'Ustrd', z.get('verwendungszweck', '')[:140])
 
-            amt = _sub(cdt_trf, 'Amt')
-            instd = _sub(amt, 'InstdAmt', f'{z["betrag"]:.2f}')
-            instd.set('Ccy', 'EUR')
-
-            cdtr_agt = _sub(cdt_trf, 'CdtrAgt')
-            cdtr_fin = _sub(cdtr_agt, 'FinInstnId')
-            _sub(cdtr_fin, 'BICFI', z.get('empfaenger_bic', 'NOTPROVIDED'))
-
-            cdtr = _sub(cdt_trf, 'Cdtr')
-            _sub(cdtr, 'Nm', z['empfaenger_name'][:70])
-
-            cdtr_acct = _sub(cdt_trf, 'CdtrAcct')
-            cdtr_id = _sub(cdtr_acct, 'Id')
-            _sub(cdtr_id, 'IBAN', z['empfaenger_iban'])
-
-            rmt_inf = _sub(cdt_trf, 'RmtInf')
-            verwendungszweck = z.get('verwendungszweck', '')[:140]
-            _sub(rmt_inf, 'Ustrd', verwendungszweck)
-
-    # Schön formatiertes XML
     xml_str = ET.tostring(doc, encoding='unicode', xml_declaration=False)
     dom = minidom.parseString(f'<?xml version="1.0" encoding="UTF-8"?>{xml_str}')
     return dom.toprettyxml(indent='  ', encoding='UTF-8')

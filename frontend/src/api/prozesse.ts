@@ -1,5 +1,5 @@
 import client from './client'
-import type { Prozess, ProzessTyp } from '../types'
+import type { Prozess, ProzessTyp, WechselAnalyse } from '../types'
 
 export const prozesseApi = {
   list: (params?: Record<string, string>) =>
@@ -51,4 +51,8 @@ export const prozesseApi = {
   // Atomic activation (step 10)
   abschliessen: (id: string) =>
     client.post(`/prozesse/${id}/abschliessen/`).then(r => r.data),
+
+  // Eigentümerwechsel: read-only analysis of seller's Sollstellungen
+  ewAnalyse: (id: string) =>
+    client.get<WechselAnalyse>(`/prozesse/${id}/ew-analyse/`).then(r => r.data),
 }

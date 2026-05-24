@@ -230,7 +230,7 @@ function KreditorForm({
         </div>
       </div>
       <div className="flex gap-3 justify-end mt-4">
-        <Button variant="outline" onClick={onCancel}>Abbrechen</Button>
+        <Button variant="secondary" onClick={onCancel}>Abbrechen</Button>
         <Button onClick={() => onSave(form)} disabled={!form.name}>Speichern</Button>
       </div>
     </div>

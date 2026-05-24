@@ -28,11 +28,19 @@ class PersonListSerializer(serializers.ModelSerializer):
 
 class HausgeldHistorieSerializer(serializers.ModelSerializer):
     erstellt_von = serializers.HiddenField(default=serializers.CurrentUserDefault())
+    abrechnungsart_code = serializers.CharField(source='abrechnungsart.code', read_only=True)
+    abrechnungsart_bezeichnung = serializers.CharField(
+        source='abrechnungsart.bezeichnung', read_only=True
+    )
 
     class Meta:
         model = HausgeldHistorie
-        fields = '__all__'
-        read_only_fields = ['id']
+        fields = [
+            'id', 'eigentumsverhaeltnis', 'abrechnungsart', 'abrechnungsart_code',
+            'abrechnungsart_bezeichnung', 'betrag', 'gueltig_ab', 'wirtschaftsplan_jahr',
+            'quelle', 'bemerkung', 'erstellt_von', 'erstellt_am',
+        ]
+        read_only_fields = ['id', 'erstellt_am']
 
 
 class EigentumsVerhaeltnisSerializer(serializers.ModelSerializer):
@@ -40,7 +48,7 @@ class EigentumsVerhaeltnisSerializer(serializers.ModelSerializer):
         max_digits=10, decimal_places=2, read_only=True
     )
     ist_aktiv = serializers.BooleanField(read_only=True)
-    hausgeld_historie = HausgeldHistorieSerializer(many=True, read_only=True)
+    hausgeld_eintraege = HausgeldHistorieSerializer(many=True, read_only=True)
     person_name = serializers.CharField(source='person.name', read_only=True)
     einheit_nr = serializers.CharField(source='einheit.einheit_nr', read_only=True)
 

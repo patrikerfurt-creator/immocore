@@ -130,7 +130,7 @@ def erzeuge_vorlage() -> bytes:
     headers = ['Objektart', 'Bezeichnung', 'Anschrift 1', 'PLZ1', 'ORT1']
     for i in range(2, 11):
         headers += [f'Anschrift {i}', f'PLZ{i}', f'ORT{i}']
-    headers += ['Baujahr', 'ANZ-RL']
+    headers += ['Baujahr', 'ANZ-RL', 'WJ-Jahr', 'WJ-Beginn-Monat']
 
     pflicht_fill  = PatternFill('solid', fgColor='FFD700')   # gelb
     optional_fill = PatternFill('solid', fgColor='C6EFCE')   # grün
@@ -161,8 +161,10 @@ def erzeuge_vorlage() -> bytes:
     ws.cell(row=2, column=6, value='Musterstraße 3')
     ws.cell(row=2, column=7, value='12345')
     ws.cell(row=2, column=8, value='Musterstadt')
-    ws.cell(row=2, column=total - 1, value=1985)
-    ws.cell(row=2, column=total,     value=1)
+    ws.cell(row=2, column=total - 3, value=1985)     # Baujahr
+    ws.cell(row=2, column=total - 2, value=1)        # ANZ-RL
+    ws.cell(row=2, column=total - 1, value=AKTUELLES_JAHR)  # WJ-Jahr
+    ws.cell(row=2, column=total,     value=1)        # WJ-Beginn-Monat
 
     out = BytesIO()
     wb.save(out)
@@ -240,13 +242,41 @@ def parse_excel(file_bytes: bytes) -> list[dict]:
             except (ValueError, TypeError):
                 pass
 
+        parse_warnungen = []
+
+        wj_jahr = None
+        wj_raw  = get_raw('WJ-Jahr')
+        if wj_raw is not None and _cell_str(wj_raw):
+            try:
+                wj_jahr = int(float(str(wj_raw)))
+            except (ValueError, TypeError):
+                pass
+        if wj_jahr is None:
+            wj_jahr = AKTUELLES_JAHR
+            parse_warnungen.append(
+                f'WJ-Jahr nicht angegeben — auf {AKTUELLES_JAHR} gesetzt.'
+            )
+
+        wj_beginn_monat = None
+        wbm_raw = get_raw('WJ-Beginn-Monat')
+        if wbm_raw is not None and _cell_str(wbm_raw):
+            try:
+                wj_beginn_monat = int(float(str(wbm_raw)))
+            except (ValueError, TypeError):
+                pass
+        if wj_beginn_monat is None:
+            wj_beginn_monat = 1
+
         rows.append({
-            'zeilennummer': row_idx,
-            'objektart':    get('Objektart').upper(),
-            'bezeichnung':  get('Bezeichnung'),
-            'eingaenge':    eingaenge,
-            'baujahr':      baujahr,
-            'anz_rl':       anz_rl,
+            'zeilennummer':    row_idx,
+            'objektart':       get('Objektart').upper(),
+            'bezeichnung':     get('Bezeichnung'),
+            'eingaenge':       eingaenge,
+            'baujahr':         baujahr,
+            'anz_rl':          anz_rl,
+            'wj_jahr':         wj_jahr,
+            'wj_beginn_monat': wj_beginn_monat,
+            'parse_warnungen': parse_warnungen,
         })
 
     return rows
@@ -308,6 +338,17 @@ def validate_zeile(zeile: dict) -> tuple[str, list[str]]:
     elif not isinstance(anz_rl, int) or not (0 <= anz_rl <= 21):
         fehler.append('ANZ-RL muss eine ganze Zahl zwischen 0 und 21 sein.')
 
+    for w in zeile.get('parse_warnungen', []):
+        warnungen.append(w)
+
+    wj_jahr = zeile.get('wj_jahr')
+    if wj_jahr is not None and not (2000 <= wj_jahr <= AKTUELLES_JAHR + 1):
+        fehler.append(f'WJ-Jahr muss zwischen 2000 und {AKTUELLES_JAHR + 1} liegen.')
+
+    wj_beginn_monat = zeile.get('wj_beginn_monat')
+    if wj_beginn_monat is not None and not (1 <= wj_beginn_monat <= 12):
+        fehler.append('WJ-Beginn-Monat muss zwischen 1 und 12 liegen.')
+
     adressen = [f"{e['strasse']}|{e['plz']}|{e['ort']}"
                 for e in eingaenge if e.get('strasse')]
     if len(adressen) != len(set(adressen)):
@@ -351,15 +392,17 @@ def preview_erstellen(file_bytes: bytes, user) -> dict:
         anz_rl = zeile.get('anz_rl') or 0
 
         zeilen_preview.append({
-            'zeilennummer':         zeile['zeilennummer'],
-            'status':               status,
-            'meldungen':            meldungen,
-            'bezeichnung':          bez,
-            'eingaenge_anzahl':     eingaenge_anzahl,
-            'ruecklagen':           anz_rl,
-            'konten_anzahl':        _berechne_konten(anz_rl),
+            'zeilennummer':            zeile['zeilennummer'],
+            'status':                  status,
+            'meldungen':               meldungen,
+            'bezeichnung':             bez,
+            'eingaenge_anzahl':        eingaenge_anzahl,
+            'ruecklagen':              anz_rl,
+            'konten_anzahl':           _berechne_konten(anz_rl),
             'abrechnungsarten_anzahl': _berechne_abrechnungsarten(anz_rl),
-            '_daten':               zeile,
+            'wj_jahr':                 zeile.get('wj_jahr'),
+            'wj_beginn_monat':         zeile.get('wj_beginn_monat'),
+            '_daten':                  zeile,
         })
 
     ok      = sum(1 for z in zeilen_preview if z['status'] == 'ok')
@@ -406,14 +449,16 @@ def preview_erstellen(file_bytes: bytes, user) -> dict:
 # ---------------------------------------------------------------------------
 @transaction.atomic
 def _importiere_eine_zeile(zeile: dict, user) -> dict:
-    from apps.objekte.models import Objekt, Eingang, Bankkonto
+    from apps.objekte.models import Objekt, Eingang, Bankkonto, Wirtschaftsjahr
     from apps.konten.models import Konto, Abrechnungsart
     from apps.konten.services import kontenrahmen_anlegen, abrechnungsarten_anlegen, verteilerschluessel_anlegen
 
-    anz_rl    = zeile.get('anz_rl') or 0
-    eingaenge = zeile.get('eingaenge', [])
-    e1        = eingaenge[0] if eingaenge else {}
-    objektart = zeile.get('objektart', 'WEG')
+    anz_rl          = zeile.get('anz_rl') or 0
+    eingaenge       = zeile.get('eingaenge', [])
+    e1              = eingaenge[0] if eingaenge else {}
+    objektart       = zeile.get('objektart', 'WEG')
+    wj_jahr         = zeile.get('wj_jahr') or AKTUELLES_JAHR
+    wj_beginn_monat = zeile.get('wj_beginn_monat') or 1
 
     # 1. Objekt
     objekt = Objekt.objects.create(
@@ -424,12 +469,21 @@ def _importiere_eine_zeile(zeile: dict, user) -> dict:
         ort=e1.get('ort', ''),
         baujahr=zeile.get('baujahr'),
         verwaltung_seit=date.today(),
-        wirtschaftsjahr_start=1,
+        wirtschaftsjahr_start=wj_beginn_monat,
         zahlungsfreigabe_grenzen=STANDARD_FREIGABE_GRENZEN,
         status='aktiv',
     )
 
-    # 2. Eingänge / Liegenschaften
+    # 2a. Erstes Wirtschaftsjahr
+    wj = Wirtschaftsjahr.objects.create(
+        objekt=objekt,
+        jahr=wj_jahr,
+        beginn_monat=wj_beginn_monat,
+        status='offen',
+        eroeffnet_von=user,
+    )
+
+    # 2b. Eingänge / Liegenschaften
     for i, e in enumerate(eingaenge, start=1):
         if not e.get('strasse'):
             continue
@@ -466,17 +520,19 @@ def _importiere_eine_zeile(zeile: dict, user) -> dict:
             aktiv=False,
         )
 
-    # 5. Standard-Kontenrahmen (enthält Rücklage-I-Konten bereits)
-    kontenrahmen_anlegen(str(objekt.id))
+    # 5. Standard-Kontenrahmen (enthält Rücklage-I-Konten bereits) — nur für WEG
+    if objektart == 'WEG':
+        kontenrahmen_anlegen(wirtschaftsjahr_id=str(wj.id))
 
-    # 6. Dynamische Rücklagen-Konten (für alle N, get_or_create ist idempotent)
-    for n in range(1, anz_rl + 1):
-        for kd in _ruecklage_konten_defs(n):
-            Konto.objects.get_or_create(
-                objekt=objekt,
-                kontonummer=kd['kontonummer'],
-                defaults={**kd, 'arge_kostenart': None, 'aktiv': True},
-            )
+    # 6. Dynamische Rücklagen-Konten (für alle N, get_or_create ist idempotent) — nur WEG
+    if objektart == 'WEG':
+        for n in range(1, anz_rl + 1):
+            for kd in _ruecklage_konten_defs(n):
+                Konto.objects.get_or_create(
+                    wirtschaftsjahr=wj,
+                    kontonummer=kd['kontonummer'],
+                    defaults={**kd, 'arge_kostenart': None, 'aktiv': True},
+                )
 
     # 7. Standard-Abrechnungsarten (inkl. 911 für Rücklage I)
     abrechnungsarten_anlegen(str(objekt.id))

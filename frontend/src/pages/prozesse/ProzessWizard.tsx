@@ -7,14 +7,22 @@ import { Badge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import { Stepper } from '../../components/ui/Stepper'
 import type { StepperStep } from '../../components/ui/Stepper'
-import type { ProzessTyp } from '../../types'
+import type { ProzessTyp, EWAbschlussErgebnis } from '../../types'
+
+import { EW_Step01_EinheitStichtag } from './steps/EW_Step01_EinheitStichtag'
+import { EW_Step02_Kaeufer } from './steps/EW_Step02_Kaeufer'
+import { EW_Step03_HausgeldSollwerte } from './steps/EW_Step03_HausgeldSollwerte'
+import { EW_Step04_Analyse } from './steps/EW_Step04_Analyse'
+import { EW_Step05_Vorschau } from './steps/EW_Step05_Vorschau'
 
 import { Step01_Objekttyp } from './steps/Step01_Objekttyp'
 import { Step02_Stammdaten } from './steps/Step02_Stammdaten'
 import { Step03_Eingaenge } from './steps/Step03_Eingaenge'
+import { Step04a_Wirtschaftsjahr } from './steps/Step04a_Wirtschaftsjahr'
 import { Step04_Einheiten } from './steps/Step04_Einheiten'
 import { Step06_Bankkonten } from './steps/Step06_Bankkonten'
 import { Step07_Kontenrahmen } from './steps/Step07_Kontenrahmen'
+import { Step08_Vertraege } from './steps/Step08_Vertraege'
 import { Step09_Freigabelimits } from './steps/Step09_Freigabelimits'
 import { Step10_Review } from './steps/Step10_Review'
 
@@ -25,17 +33,25 @@ const PROZESS_TYPEN: { value: ProzessTyp; label: string }[] = [
 ]
 
 const STEP_LABELS: { nr: number; bezeichnung: string }[] = [
-  { nr: 1, bezeichnung: 'Objekttyp' },
-  { nr: 2, bezeichnung: 'Stammdaten' },
-  { nr: 3, bezeichnung: 'Eingänge' },
-  { nr: 4, bezeichnung: 'Einheiten' },
-  { nr: 5, bezeichnung: 'Bankkonten' },
-  { nr: 6, bezeichnung: 'Kontenrahmen' },
-  { nr: 7, bezeichnung: 'Freigabelimits' },
-  { nr: 8, bezeichnung: 'Überprüfung' },
+  { nr: 1,  bezeichnung: 'Objekttyp' },
+  { nr: 2,  bezeichnung: 'Stammdaten' },
+  { nr: 3,  bezeichnung: 'Eingänge' },
+  { nr: 4,  bezeichnung: 'Wirtschaftsjahr' },
+  { nr: 5,  bezeichnung: 'Einheiten' },
+  { nr: 6,  bezeichnung: 'Bankkonten' },
+  { nr: 7,  bezeichnung: 'Kontenrahmen' },
+  { nr: 8,  bezeichnung: 'Verträge' },
+  { nr: 9,  bezeichnung: 'Freigabelimits' },
+  { nr: 10, bezeichnung: 'Review & Aktivierung' },
 ]
 
-const TOTAL_STEPS = STEP_LABELS.length
+const EW_STEP_LABELS: { nr: number; bezeichnung: string }[] = [
+  { nr: 1, bezeichnung: 'Einheit & Stichtag' },
+  { nr: 2, bezeichnung: 'Käufer erfassen' },
+  { nr: 3, bezeichnung: 'Hausgeld-Sollwerte' },
+  { nr: 4, bezeichnung: 'Sollstellungs-Analyse' },
+  { nr: 5, bezeichnung: 'Vorschau & Bestätigung' },
+]
 
 function buildStepperSchritte(
   labels: { nr: number; bezeichnung: string }[],
@@ -100,6 +116,7 @@ export function ProzessWizard() {
   const [currentNr, setCurrentNr] = useState(1)
   const [mutationError, setMutationError] = useState<string | null>(null)
   const [stepErrors, setStepErrors] = useState<string[]>([])
+  const [ewAbschlussErgebnis, setEwAbschlussErgebnis] = useState<EWAbschlussErgebnis | null>(null)
 
   // Sync neuerTyp when URL param changes
   useEffect(() => {
@@ -134,6 +151,7 @@ export function ProzessWizard() {
       setActiveProzessId(p.id)
       setCurrentNr(p.current_step ?? 1)
       setStepErrors([])
+      setEwAbschlussErgebnis(null)
     },
     onError: (err: unknown) => {
       const msgs = extractErrors(err)
@@ -159,6 +177,11 @@ export function ProzessWizard() {
       setStepErrors([])
       queryClient.invalidateQueries({ queryKey: ['prozesse'] })
       queryClient.invalidateQueries({ queryKey: ['prozess', activeProzessId] })
+      const ewResult = data as { wechsel_id?: string }
+      if (ewResult?.wechsel_id) {
+        setEwAbschlussErgebnis(data as EWAbschlussErgebnis)
+        return
+      }
       const objId = (data as { objekt_id?: string })?.objekt_id ?? (data as { objekt?: string })?.objekt
       if (objId) {
         navigate(`/objekte/${objId}`)
@@ -176,11 +199,18 @@ export function ProzessWizard() {
       setActiveProzessId(null)
       setCurrentNr(1)
       setStepErrors([])
+      setEwAbschlussErgebnis(null)
     },
   })
 
   // ── Wizard logic ──────────────────────────────────────────────────────
-  const stepsData = (aktiverProzess?.steps_data ?? {}) as Record<string, unknown>
+  const stepsData = {
+    ...(aktiverProzess?.steps_data ?? {}),
+    objekt_id: aktiverProzess?.objekt,
+  } as Record<string, unknown>
+  const isEw = aktiverProzess?.prozess_typ === 'eigentuemerwechsel'
+  const stepLabels = isEw ? EW_STEP_LABELS : STEP_LABELS
+  const totalSteps = stepLabels.length
 
   function getStepInitialData(nr: number): Record<string, unknown> {
     // Backend may store step data as "1", "2", … or "step_1", "step_2", …
@@ -191,13 +221,13 @@ export function ProzessWizard() {
   }
 
   const handleWeiter = async (daten: Record<string, unknown>): Promise<void> => {
-    if (currentNr === TOTAL_STEPS) {
+    if (currentNr === totalSteps) {
       await abschliessenMutation.mutateAsync()
       return
     }
     await saveStepMutation.mutateAsync({ nr: currentNr, daten })
     await refetchAktiverProzess()
-    setCurrentNr(prev => Math.min(prev + 1, TOTAL_STEPS))
+    setCurrentNr(prev => Math.min(prev + 1, totalSteps))
   }
 
   const handleZurueck = () => {
@@ -215,8 +245,48 @@ export function ProzessWizard() {
 
   // ── Active wizard view ────────────────────────────────────────────────
   if (activeProzessId && aktiverProzess) {
+    // EW success view
+    if (aktiverProzess.status === 'abgeschlossen' && ewAbschlussErgebnis) {
+      return (
+        <div className="max-w-2xl mx-auto">
+          <div className="bg-white rounded-lg border border-green-200 p-8 text-center space-y-4">
+            <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto">
+              <svg className="w-8 h-8 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <h2 className="text-xl font-bold text-gray-900">Eigentümerwechsel erfolgreich durchgeführt</h2>
+            <p className="text-sm text-gray-500">Der Wechsel wurde atomar in der Datenbank gespeichert.</p>
+            <div className="rounded-lg bg-gray-50 border border-gray-200 p-4 text-sm text-left space-y-2 max-w-sm mx-auto">
+              <div className="grid grid-cols-2 gap-1">
+                <span className="text-gray-500">Vorgang-ID:</span>
+                <span className="font-mono text-xs font-medium">{ewAbschlussErgebnis.wechsel_id}</span>
+                <span className="text-gray-500">Käufer-EV:</span>
+                <span className="font-mono text-xs font-medium">{ewAbschlussErgebnis.kaeufer_ev_id}</span>
+                {ewAbschlussErgebnis.auszahlungslauf_id && (
+                  <>
+                    <span className="text-gray-500">Auszahlungslauf:</span>
+                    <span className="font-mono text-xs font-medium">{ewAbschlussErgebnis.auszahlungslauf_id}</span>
+                  </>
+                )}
+                <span className="text-gray-500">Storniert:</span>
+                <span className="font-medium">{ewAbschlussErgebnis.storniert_count} Sollstellung(en)</span>
+                <span className="text-gray-500">Nachgeholt:</span>
+                <span className="font-medium">{ewAbschlussErgebnis.nachhol_count} Sollstellung(en)</span>
+              </div>
+            </div>
+            <div className="flex gap-3 justify-center pt-2">
+              <Button onClick={() => { setActiveProzessId(null); setEwAbschlussErgebnis(null) }}>
+                Zu den Prozessen
+              </Button>
+            </div>
+          </div>
+        </div>
+      )
+    }
+
     const processCurrentStep = aktiverProzess.current_step ?? 1
-    const stepperSchritte = buildStepperSchritte(STEP_LABELS, currentNr, processCurrentStep)
+    const stepperSchritte = buildStepperSchritte(stepLabels, currentNr, processCurrentStep)
     const initialData = getStepInitialData(currentNr)
     const isMutating = saveStepMutation.isPending || abschliessenMutation.isPending
 
@@ -229,18 +299,31 @@ export function ProzessWizard() {
       errors: stepErrors,
     }
 
-    const stepComponents: Record<number, React.ReactElement> = {
-      1: <Step01_Objekttyp    key={1} {...stepProps} />,
-      2: <Step02_Stammdaten   key={2} {...stepProps} />,
-      3: <Step03_Eingaenge    key={3} {...stepProps} />,
-      4: <Step04_Einheiten    key={4} {...stepProps} />,
-      5: <Step06_Bankkonten   key={5} {...stepProps} />,
-      6: <Step07_Kontenrahmen key={6} {...stepProps} />,
-      7: <Step09_Freigabelimits key={7} {...stepProps} />,
-      8: <Step10_Review       key={8} {...stepProps} />,
+    let stepComponents: Record<number, React.ReactElement>
+    if (isEw) {
+      stepComponents = {
+        1: <EW_Step01_EinheitStichtag   key={1} {...stepProps} />,
+        2: <EW_Step02_Kaeufer           key={2} {...stepProps} />,
+        3: <EW_Step03_HausgeldSollwerte key={3} {...stepProps} />,
+        4: <EW_Step04_Analyse           key={4} {...stepProps} />,
+        5: <EW_Step05_Vorschau          key={5} {...stepProps} />,
+      }
+    } else {
+      stepComponents = {
+        1:  <Step01_Objekttyp        key={1}  {...stepProps} />,
+        2:  <Step02_Stammdaten       key={2}  {...stepProps} />,
+        3:  <Step03_Eingaenge        key={3}  {...stepProps} />,
+        4:  <Step04a_Wirtschaftsjahr key={4}  {...stepProps} />,
+        5:  <Step04_Einheiten        key={5}  {...stepProps} />,
+        6:  <Step06_Bankkonten       key={6}  {...stepProps} />,
+        7:  <Step07_Kontenrahmen     key={7}  {...stepProps} />,
+        8:  <Step08_Vertraege        key={8}  {...stepProps} />,
+        9:  <Step09_Freigabelimits   key={9}  {...stepProps} />,
+        10: <Step10_Review           key={10} {...stepProps} />,
+      }
     }
 
-    const currentStepLabel = STEP_LABELS.find(s => s.nr === currentNr)?.bezeichnung ?? ''
+    const currentStepLabel = stepLabels.find(s => s.nr === currentNr)?.bezeichnung ?? ''
 
     return (
       <div className="max-w-5xl mx-auto">
@@ -273,8 +356,16 @@ export function ProzessWizard() {
           <div className="flex items-start justify-between mb-1">
             <div>
               <h2 className="text-lg font-bold text-gray-900">{aktiverProzess.prozess_typ_display}</h2>
-              <p className="text-sm text-gray-500">
-                Schritt {currentNr} von {STEP_LABELS.length}: <span className="font-medium text-gray-700">{currentStepLabel}</span>
+              {aktiverProzess.objekt && (() => {
+                const obj = objekte?.find(o => o.id === aktiverProzess.objekt)
+                return obj ? (
+                  <p className="text-sm text-primary-700 font-medium mt-0.5">
+                    Objekt: {obj.objektnummer} — {obj.bezeichnung}
+                  </p>
+                ) : null
+              })()}
+              <p className="text-sm text-gray-500 mt-0.5">
+                Schritt {currentNr} von {stepLabels.length}: <span className="font-medium text-gray-700">{currentStepLabel}</span>
               </p>
             </div>
           </div>
@@ -393,6 +484,7 @@ export function ProzessWizard() {
                           setActiveProzessId(p.id)
                           setCurrentNr(p.current_step ?? 1)
                           setStepErrors([])
+                          setEwAbschlussErgebnis(null)
                         }}
                         className="text-xs text-primary-600 hover:underline"
                       >

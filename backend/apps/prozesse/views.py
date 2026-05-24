@@ -19,6 +19,13 @@ from .models import Prozess
 from .serializers import ProzessSerializer
 from .validators import ObjektAnlageValidator
 
+try:
+    from apps.buchhaltung.models import EigentuemerwechselVorgang
+    from apps.buchhaltung.services.eigentuemerwechsel_service import analysiere_wechsel, commite_wechsel
+    _EW_AVAILABLE = True
+except ImportError:
+    _EW_AVAILABLE = False
+
 
 _NR_RANGES = {
     'WEG': (10001, 29999),
@@ -68,19 +75,23 @@ def _get_next_objektnummer(objekt_typ: str) -> str:
 
 SCHRITT_DEFINITIONEN = {
     'objekt_anlegen': {
-        1: {'bezeichnung': 'Objekttyp', 'typ': 'objekttyp'},
-        2: {'bezeichnung': 'Stammdaten', 'typ': 'stammdaten'},
-        3: {'bezeichnung': 'Eingänge', 'typ': 'eingaenge'},
-        4: {'bezeichnung': 'Einheiten', 'typ': 'einheiten'},
-        5: {'bezeichnung': 'Bankkonten', 'typ': 'bankkonten'},
-        6: {'bezeichnung': 'Kontenrahmen', 'typ': 'kontenrahmen'},
-        7: {'bezeichnung': 'Freigabelimits', 'typ': 'freigabelimits'},
-        8: {'bezeichnung': 'Review & Aktivierung', 'typ': 'review'},
+        1:  {'bezeichnung': 'Objekttyp',           'typ': 'objekttyp'},
+        2:  {'bezeichnung': 'Stammdaten',           'typ': 'stammdaten'},
+        3:  {'bezeichnung': 'Eingänge',             'typ': 'eingaenge'},
+        4:  {'bezeichnung': 'Wirtschaftsjahr',      'typ': 'wirtschaftsjahr'},
+        5:  {'bezeichnung': 'Einheiten',            'typ': 'einheiten'},
+        6:  {'bezeichnung': 'Bankkonten',           'typ': 'bankkonten'},
+        7:  {'bezeichnung': 'Kontenrahmen',         'typ': 'kontenrahmen'},
+        8:  {'bezeichnung': 'Verträge',             'typ': 'vertraege'},
+        9:  {'bezeichnung': 'Freigabelimits',       'typ': 'freigabelimits'},
+        10: {'bezeichnung': 'Review & Aktivierung', 'typ': 'review'},
     },
     'eigentuemerwechsel': {i + 1: {'bezeichnung': s, 'typ': 'generic'} for i, s in enumerate([
-        'Bisherigen Eigentümer wählen', 'Übertragungsdatum', 'Neuen Eigentümer erfassen',
-        'Abgrenzung berechnen', 'Personenkonto archivieren', 'Neues Personenkonto anlegen',
-        'Abschluss & Bestätigung',
+        'Einheit & Stichtag',
+        'Käufer erfassen',
+        'Hausgeld-Sollwerte',
+        'Sollstellungs-Analyse',
+        'Vorschau & Bestätigung',
     ])},
     'jahresabrechnung': {i + 1: {'bezeichnung': s, 'typ': 'generic'} for i, s in enumerate([
         'Wirtschaftsjahr wählen', 'Buchungen prüfen', 'Kostenpositionen aufteilen',
@@ -214,11 +225,11 @@ class ProzessViewSet(viewsets.ModelViewSet):
             return Response({'errors': ['Prozess ist nicht mehr aktiv']}, status=400)
 
         daten = request.data.get('daten', {})
-        validator = ObjektAnlageValidator()
-        errors = validator.validate_step(nr_int, daten)
-
-        if errors:
-            return Response({'errors': errors}, status=400)
+        if prozess.prozess_typ == 'objekt_anlegen':
+            validator = ObjektAnlageValidator()
+            errors = validator.validate_step(nr_int, daten)
+            if errors:
+                return Response({'errors': errors}, status=400)
 
         steps_data = prozess.steps_data or {}
         steps_data[str(nr_int)] = daten
@@ -473,6 +484,47 @@ class ProzessViewSet(viewsets.ModelViewSet):
     # ------------------------------------------------------------------
     # Abschliessen — atomare Aktivierung
     # ------------------------------------------------------------------
+    @action(detail=True, methods=['get'], url_path='ew-analyse')
+    def ew_analyse(self, request, pk=None):
+        """Read-only Analyse der Verkäufer-Sollstellungen für Eigentümerwechsel."""
+        if not _EW_AVAILABLE:
+            return Response({'error': 'EW-Modul nicht verfügbar'}, status=503)
+        prozess = self.get_object()
+        sd = prozess.steps_data or {}
+        step1 = sd.get('1', {})
+        einheit_id = step1.get('einheit_id')
+        stichtag_str = step1.get('stichtag')
+        if not einheit_id or not stichtag_str:
+            return Response({'error': 'Schritt 1 fehlt (einheit_id/stichtag)'}, status=400)
+        from datetime import date as _date
+        from apps.objekte.models import Einheit as _Einheit
+        try:
+            einheit = _Einheit.objects.get(id=einheit_id)
+            stichtag = _date.fromisoformat(stichtag_str)
+        except Exception as e:
+            return Response({'error': str(e)}, status=400)
+        try:
+            analyse = analysiere_wechsel(einheit, stichtag)
+        except Exception as e:
+            return Response({'error': str(e)}, status=400)
+        from dataclasses import asdict
+        import dataclasses
+
+        def _serial(obj):
+            if dataclasses.is_dataclass(obj):
+                return {k: _serial(v) for k, v in dataclasses.asdict(obj).items()}
+            if isinstance(obj, list):
+                return [_serial(i) for i in obj]
+            from decimal import Decimal
+            from datetime import date
+            if isinstance(obj, Decimal):
+                return str(obj)
+            if isinstance(obj, date):
+                return obj.isoformat()
+            return obj
+
+        return Response(_serial(analyse))
+
     @action(detail=True, methods=['post'], url_path='abschliessen')
     def abschliessen(self, request, pk=None):
         """Atomare Aktivierung — 13 Sub-Schritte gemäß Spec v1.4."""
@@ -480,14 +532,19 @@ class ProzessViewSet(viewsets.ModelViewSet):
         if prozess.status != 'aktiv':
             return Response({'errors': ['Prozess ist nicht aktiv']}, status=400)
 
+        if prozess.prozess_typ == 'eigentuemerwechsel':
+            return self._abschliessen_eigentuemerwechsel(request, prozess)
+
         sd = prozess.steps_data or {}
         step1 = sd.get('1', {})
         step2 = sd.get('2', {})
         step3 = sd.get('3', {})
-        step4 = sd.get('4', {})
-        step5 = sd.get('5', {})   # Bankkonten
-        step6 = sd.get('6', {})   # Kontenrahmen-Anpassungen
-        step7 = sd.get('7', {})   # Freigabelimits
+        step4 = sd.get('4', {})   # Wirtschaftsjahr
+        step5 = sd.get('5', {})   # Einheiten
+        step6 = sd.get('6', {})   # Bankkonten
+        step7 = sd.get('7', {})   # Kontenrahmen-Anpassungen
+        step8 = sd.get('8', {})   # Verträge
+        step9 = sd.get('9', {})   # Freigabelimits
 
         if step1.get('objekt_typ') not in ('WEG', 'ZH', 'SEV'):
             return Response({'errors': ['Objekttyp fehlt oder ungültig']}, status=400)
@@ -505,7 +562,7 @@ class ProzessViewSet(viewsets.ModelViewSet):
                     baujahr=step2.get('baujahr') or None,
                     verwaltung_seit=step2['verwaltung_seit'],
                     wirtschaftsjahr_start=int(step2.get('wirtschaftsjahr_start', 1)),
-                    zahlungsfreigabe_grenzen=step7.get('grenzen', FREIGABE_STANDARD),
+                    zahlungsfreigabe_grenzen=step9.get('grenzen', FREIGABE_STANDARD),
                 )
 
                 # Sub-Schritt 2: Eingänge anlegen
@@ -520,8 +577,21 @@ class ProzessViewSet(viewsets.ModelViewSet):
                     )
                     eingang_map[i] = eingang
 
-                # Sub-Schritt 3: Einheiten anlegen (ohne VS — kommen in Sub-Schritt 10)
-                einheiten_list = step4.get('einheiten', [])
+                # Sub-Schritt 3: Erstes Wirtschaftsjahr anlegen (Schritt 4 des Wizards)
+                import datetime as _dt
+                wj_jahr = int(step4.get('jahr', _dt.date.today().year))
+                from apps.objekte.models import Wirtschaftsjahr, EinheitVerbrauch
+                wj = Wirtschaftsjahr.objects.create(
+                    objekt=objekt,
+                    jahr=wj_jahr,
+                    beginn_monat=objekt.wirtschaftsjahr_start,
+                    status='offen',
+                    vorjahr=None,
+                    eroeffnet_von=request.user,
+                )
+
+                # Sub-Schritt 4: Einheiten anlegen (ohne VS — kommen in Sub-Schritt 10)
+                einheiten_list = step5.get('einheiten', [])
                 einheit_objects = []
                 for seq, e in enumerate(einheiten_list, start=1):
                     eingang_bez = e.get('eingang', '').strip()
@@ -540,9 +610,9 @@ class ProzessViewSet(viewsets.ModelViewSet):
                     )
                     einheit_objects.append((einheit, e))
 
-                # Sub-Schritt 6: Bankkonten anlegen
+                # Sub-Schritt 5: Bankkonten anlegen
                 ruecklagen = []
-                for b in step5.get('bankkonten', []):
+                for b in step6.get('bankkonten', []):
                     Bankkonto.objects.create(
                         objekt=objekt,
                         konto_typ=b['konto_typ'],
@@ -555,34 +625,79 @@ class ProzessViewSet(viewsets.ModelViewSet):
                     if b['konto_typ'] == 'ruecklage':
                         ruecklagen.append(b)
 
-                # Sub-Schritt 7: Musterkontenrahmen laden (70 Basis-Konten)
+                # Sub-Schritt 6: Musterkontenrahmen laden (70 Basis-Konten) — an WJ hängen
                 if objekt.objekt_typ == 'WEG':
-                    kontenrahmen_anlegen(str(objekt.id))
+                    kontenrahmen_anlegen(wirtschaftsjahr_id=str(wj.id))
 
-                # Sub-Schritt 8: Rücklagen-Konten für Rücklage II+ generieren
+                # Sub-Schritt 7: Rücklagen-Konten für Rücklage II+ generieren
                 if len(ruecklagen) >= 2:
-                    ruecklagen_konten_anlegen(str(objekt.id), ruecklagen)
+                    ruecklagen_konten_anlegen(ruecklagen, wirtschaftsjahr_id=str(wj.id))
 
-                # Sub-Schritt 8b: Standard-Abrechnungsarten + Rücklage II+ anlegen
+                # Sub-Schritt 7b: Standard-Abrechnungsarten + Rücklage II+ anlegen
                 abrechnungsarten_anlegen(str(objekt.id), ruecklagen)
 
-                # Sub-Schritt 9: Kontenplan-Anpassungen aus Schritt 6 anwenden
-                for k in step6.get('konten', []):
+                # Sub-Schritt 8: Kontenplan-Anpassungen aus Schritt 7 anwenden
+                for k in step7.get('konten', []):
                     if not k.get('aktiv', True):
-                        Konto.objects.filter(objekt=objekt, kontonummer=k.get('kontonummer', '')).update(aktiv=False)
+                        Konto.objects.filter(wirtschaftsjahr=wj, kontonummer=k.get('kontonummer', '')).update(aktiv=False)
                     elif k.get('kontonummer'):
                         Konto.objects.update_or_create(
-                            objekt=objekt,
+                            wirtschaftsjahr=wj,
                             kontonummer=k['kontonummer'],
                             defaults={
-                                'kontoname':          k.get('kontoname', k.get('bezeichnung', '')),
-                                'abrechnungsart':     k.get('abrechnungsart') or None,
-                                'direktes_buchen':    k.get('direktes_buchen', True),
+                                'kontoname':           k.get('kontoname', k.get('bezeichnung', '')),
+                                'abrechnungsart':      k.get('abrechnungsart') or None,
+                                'direktes_buchen':     k.get('direktes_buchen', True),
                                 'verteilerschluessel': k.get('verteilerschluessel') or None,
-                                'kontoart':           k.get('kontoart', 'standard'),
-                                'arge_konto':         k.get('arge_konto', False),
-                                'aktiv':              k.get('aktiv', True),
+                                'kontoart':            k.get('kontoart', 'standard'),
+                                'arge_konto':          k.get('arge_konto', False),
+                                'aktiv':               k.get('aktiv', True),
                             },
+                        )
+
+                # Sub-Schritt 9: Verträge + Hausgeld-Historien aus Wizard-Schritt 8
+                from apps.personen.models import EigentumsVerhaeltnis as EV, HausgeldHistorie
+                from apps.konten.models import Abrechnungsart
+                from apps.konten.services import personenkonto_anlegen
+
+                einheit_by_nr = {e.einheit_nr: e for e, _ in einheit_objects}
+
+                for vdata in step8.get('vertraege', []):
+                    einheit_nr_v  = vdata.get('einheit_nr', '')
+                    person_id_v   = vdata.get('person_id')
+                    beginn_str_v  = vdata.get('beginn', '')
+
+                    einheit_v = einheit_by_nr.get(einheit_nr_v)
+                    if not einheit_v or not person_id_v or not beginn_str_v:
+                        continue
+
+                    import datetime as _dtv
+                    beginn_v = _dtv.date.fromisoformat(beginn_str_v)
+                    ev_obj = EV.objects.create(
+                        einheit=einheit_v,
+                        person_id=person_id_v,
+                        beginn=beginn_v,
+                    )
+                    personenkonto_anlegen(ev_obj, objekt)
+
+                    for he in vdata.get('hausgeld_eintraege', []):
+                        abr_code_v  = he.get('abrechnungsart_code', '')
+                        betrag_v    = he.get('betrag')
+                        if not abr_code_v or betrag_v is None:
+                            continue
+                        try:
+                            abr_v = Abrechnungsart.objects.get(objekt=objekt, code=abr_code_v)
+                        except Abrechnungsart.DoesNotExist:
+                            continue
+                        HausgeldHistorie.objects.create(
+                            eigentumsverhaeltnis=ev_obj,
+                            abrechnungsart=abr_v,
+                            betrag=Decimal(str(betrag_v).replace(',', '.')),
+                            gueltig_ab=beginn_v,
+                            wirtschaftsplan_jahr=wj_jahr,
+                            quelle='import',
+                            import_referenz='wizard_erstanlage',
+                            erstellt_von=request.user,
                         )
 
                 # Sub-Schritt 10: 7 Muster-Verteilerschlüssel + VSBeteiligung je Einheit
@@ -640,6 +755,15 @@ class ProzessViewSet(viewsets.ModelViewSet):
                                 quelle=quelle,
                             )
 
+                # Sub-Schritt 11: EinheitVerbrauch-Strukturzeilen (VS 140–145) je Einheit
+                for einheit, _ in einheit_objects:
+                    for vs_code in ('140', '141', '142', '143', '144', '145'):
+                        EinheitVerbrauch.objects.get_or_create(
+                            wirtschaftsjahr=wj,
+                            einheit=einheit,
+                            vs_code=vs_code,
+                        )
+
                 # Sub-Schritt 13: Prozess abschließen
                 prozess.status = 'abgeschlossen'
                 prozess.abgeschlossen_am = datetime.now(timezone.utc)
@@ -658,3 +782,75 @@ class ProzessViewSet(viewsets.ModelViewSet):
                 {'errors': [f'Aktivierung fehlgeschlagen: {str(e)}. Rollback.'], 'detail': traceback.format_exc()},
                 status=500,
             )
+
+    def _abschliessen_eigentuemerwechsel(self, request, prozess):
+        """Eigentümerwechsel-Commit via eigentuemerwechsel_service."""
+        if not _EW_AVAILABLE:
+            return Response({'errors': ['EW-Modul nicht verfügbar']}, status=503)
+        sd = prozess.steps_data or {}
+        step1 = sd.get('1', {})
+        step2 = sd.get('2', {})
+        step3 = sd.get('3', {})
+        step4 = sd.get('4', {})
+
+        einheit_id   = step1.get('einheit_id')
+        stichtag_str = step1.get('stichtag')
+
+        if not einheit_id or not stichtag_str:
+            return Response({'errors': ['Schritt 1 unvollständig']}, status=400)
+        if not step2.get('kaeufer_person_id'):
+            return Response({'errors': ['Käufer fehlt (Schritt 2)']}, status=400)
+
+        from datetime import date as _date
+        from apps.objekte.models import Einheit as _Einheit
+
+        try:
+            einheit  = _Einheit.objects.get(id=einheit_id)
+            stichtag = _date.fromisoformat(stichtag_str)
+        except Exception as e:
+            return Response({'errors': [str(e)]}, status=400)
+
+        wirkungs_periode_str = step1.get('wirkungs_periode')
+        try:
+            wirkungs_periode = _date.fromisoformat(wirkungs_periode_str) if wirkungs_periode_str else None
+        except ValueError:
+            wirkungs_periode = None
+        if not wirkungs_periode:
+            wirkungs_periode = analysiere_wechsel(einheit, stichtag).wirkungs_periode
+
+        verkaeufer_iban = step4.get('verkaeufer_iban') or ''
+
+        entscheidungen = {
+            'kaeufer_person_id': step2['kaeufer_person_id'],
+            'kaeufer_iban': step2.get('kaeufer_iban', ''),
+            'hausgeld_je_ba': step3.get('hausgeld_je_ba', {}),
+            'stornieren_ids': step4.get('stornieren_ids', []),
+            'erstatten': step4.get('erstatten', []),
+            'verkaeufer_iban': verkaeufer_iban,
+        }
+
+        try:
+            result = commite_wechsel(
+                einheit=einheit,
+                stichtag=stichtag,
+                wirkungs_periode=wirkungs_periode,
+                entscheidungen=entscheidungen,
+                user=request.user,
+            )
+        except Exception as e:
+            import traceback
+            import logging
+            logging.getLogger(__name__).error('commite_wechsel fehlgeschlagen: %s', traceback.format_exc())
+            return Response({'errors': [str(e)]}, status=400)
+
+        prozess.status = 'abgeschlossen'
+        prozess.abgeschlossen_am = datetime.now(timezone.utc)
+        prozess.save(update_fields=['status', 'abgeschlossen_am'])
+
+        return Response({
+            'wechsel_id': result['wechsel_id'],
+            'kaeufer_ev_id': result['kaeufer_ev_id'],
+            'auszahlungslauf_id': result['auszahlungslauf_id'],
+            'nachhol_count': len(result['nachhol_sollstellungs_ids']),
+            'storniert_count': len(result['stornierte_sollstellungs_ids']),
+        })

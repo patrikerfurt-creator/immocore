@@ -2,9 +2,10 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { buchhaltungApi } from '../../api/buchhaltung'
 import { rechnungenApi } from '../../api/rechnungen'
+import { wirtschaftsjahreApi } from '../../api/wirtschaftsjahre'
 import { useObjektStore } from '../../stores/objekt'
 import { Button } from '../../components/ui/Button'
-import type { Konto, Buchungsart, PersonenkontoSaldo, Kreditor, Buchung } from '../../types'
+import type { Konto, Buchungsart, PersonenkontoSaldo, Kreditor, Wirtschaftsjahr } from '../../types'
 
 const EUR = (v: number | string) =>
   Number(v).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })
@@ -40,6 +41,14 @@ interface FormState {
   haben_kreditor: string
 }
 
+interface ZeFormState {
+  personenkonto_id: string
+  bank_sachkonto_id: string
+  betrag: string
+  buchungsdatum: string
+  buchungstext: string
+}
+
 const EMPTY: FormState = {
   buchungsart: '',
   buchungsdatum: today(),
@@ -54,6 +63,14 @@ const EMPTY: FormState = {
   haben_konto: '',
   haben_personenkonto: '',
   haben_kreditor: '',
+}
+
+const ZE_EMPTY: ZeFormState = {
+  personenkonto_id: '',
+  bank_sachkonto_id: '',
+  betrag: '',
+  buchungsdatum: today(),
+  buchungstext: '',
 }
 
 // ── Typ-Wähler Tabs ─────────────────────────────────────────────────────────
@@ -141,10 +158,14 @@ function KontoDropdown({
 export function Dialogbuchhaltung() {
   const objektId = useObjektStore(s => s.selectedId)
   const qc = useQueryClient()
+  const [modus, setModus] = useState<'sachkonto' | 'personenkonto' | 'kreditor'>('sachkonto')
   const [form, setForm] = useState<FormState>(EMPTY)
+  const [zeForm, setZeForm] = useState<ZeFormState>(ZE_EMPTY)
   const [success, setSuccess] = useState(false)
+  const [zeSuccess, setZeSuccess] = useState(false)
   const [aktuellerStapelId, setAktuellerStapelId] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [selectedWjId, setSelectedWjId] = useState<string | null>(null)
 
   const { data: offeneStapel } = useQuery({
     queryKey: ['buchungsstapel', objektId, 'offen'],
@@ -174,14 +195,32 @@ export function Dialogbuchhaltung() {
   })
 
   const { data: buchungsarten } = useQuery({
-    queryKey: ['buchungsarten-manuell'],
-    queryFn: () => buchhaltungApi.buchungsartenManuell(),
+    queryKey: ['buchungsarten-manuell', modus],
+    queryFn: () => buchhaltungApi.buchungsartenManuell(modus),
     enabled: !!objektId,
   })
 
+  const { data: wirtschaftsjahre } = useQuery({
+    queryKey: ['wirtschaftsjahre', objektId],
+    queryFn: () => wirtschaftsjahreApi.list({ objekt: objektId! }),
+    enabled: !!objektId,
+    select: (wjs: Wirtschaftsjahr[]) => [...wjs].sort((a, b) => b.jahr - a.jahr),
+  })
+
+  // Aktives WJ: zuerst selectedWjId, dann das neueste offene, dann das neueste gesamt
+  const aktivesWj: Wirtschaftsjahr | undefined = (() => {
+    if (!wirtschaftsjahre?.length) return undefined
+    if (selectedWjId) return wirtschaftsjahre.find(w => w.id === selectedWjId)
+    return (
+      wirtschaftsjahre.find(w => w.status === 'offen') ??
+      wirtschaftsjahre[0]
+    )
+  })()
+
   const { data: konten } = useQuery({
-    queryKey: ['konten', objektId],
-    queryFn: () => buchhaltungApi.konten(objektId!),
+    queryKey: ['konten', objektId, aktivesWj?.id],
+    queryFn: () =>
+      buchhaltungApi.konten(objektId!, aktivesWj ? { wirtschaftsjahr: aktivesWj.id } : undefined),
     enabled: !!objektId,
   })
 
@@ -212,6 +251,7 @@ export function Dialogbuchhaltung() {
     qc.invalidateQueries({ queryKey: ['buchungen-dialog', objektId] })
     qc.invalidateQueries({ queryKey: ['buchungen'] })
     qc.invalidateQueries({ queryKey: ['buchungsstapel', objektId] })
+    qc.invalidateQueries({ queryKey: ['personenkonten-saldo', objektId] })
   }
 
   function buildPayload(f: FormState) {
@@ -247,6 +287,7 @@ export function Dialogbuchhaltung() {
       }
       return buchhaltungApi.createBuchung({
         ...buildPayload(form),
+        wirtschaftsjahr: aktivesWj?.id ?? undefined,
         stapel: stapelId,
       } as never)
     },
@@ -270,8 +311,36 @@ export function Dialogbuchhaltung() {
     },
   })
 
+  const zeMut = useMutation({
+    mutationFn: () =>
+      buchhaltungApi.zahlungseingang(zeForm.personenkonto_id, {
+        bank_sachkonto_id: zeForm.bank_sachkonto_id,
+        betrag: Number(zeForm.betrag),
+        buchungsdatum: zeForm.buchungsdatum,
+        buchungstext: zeForm.buchungstext || undefined,
+        wirtschaftsjahr_id: aktivesWj?.id,
+      }),
+    onSuccess: () => {
+      invalidateAll()
+      setZeForm({ ...ZE_EMPTY, buchungsdatum: zeForm.buchungsdatum })
+      setZeSuccess(true)
+      setTimeout(() => setZeSuccess(false), 4000)
+    },
+  })
+
+  const setZe = (field: keyof ZeFormState) => (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+  ) => setZeForm(prev => ({ ...prev, [field]: e.target.value }))
+
+  const kannZeBuchen =
+    !!zeForm.personenkonto_id &&
+    !!zeForm.bank_sachkonto_id &&
+    !!zeForm.betrag &&
+    Number(zeForm.betrag) > 0 &&
+    !!zeForm.buchungsdatum
+
   function handleEditClick(buchungId: string) {
-    buchhaltungApi.getBuchung(buchungId).then((b: Buchung) => {
+    buchhaltungApi.getBuchung(buchungId).then((b) => {
       setEditingId(buchungId)
       setForm({
         buchungsart: b.buchungsart ?? '',
@@ -331,8 +400,12 @@ export function Dialogbuchhaltung() {
     (form.haben_typ === 'personenkonto' && !!form.haben_personenkonto) ||
     (form.haben_typ === 'kreditorenkonto' && !!form.haben_kreditor)
 
+  const bankKonten = aktiveKonten.filter((k: Konto) => k.kontonummer.startsWith('18'))
+
   const kannBuchen =
     !!objektId &&
+    !!aktivesWj &&
+    aktivesWj.status !== 'abgeschlossen' &&
     !!form.buchungsdatum &&
     sollGesetzt &&
     habenGesetzt &&
@@ -347,7 +420,39 @@ export function Dialogbuchhaltung() {
 
   return (
     <div className="max-w-3xl">
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">Dialogbuchhaltung</h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-bold text-gray-900">Dialogbuchhaltung</h1>
+
+        {/* ── Wirtschaftsjahr-Selektor ── */}
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-gray-500 font-medium">Wirtschaftsjahr:</span>
+          {wirtschaftsjahre && wirtschaftsjahre.length > 0 ? (
+            <select
+              value={aktivesWj?.id ?? ''}
+              onChange={e => setSelectedWjId(e.target.value || null)}
+              className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              {wirtschaftsjahre.map(wj => (
+                <option key={wj.id} value={wj.id}>
+                  {wj.jahr}
+                  {wj.status === 'abgeschlossen' ? ' (abgeschlossen)' : ''}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span className="text-sm text-red-600">
+              Kein Wirtschaftsjahr vorhanden —{' '}
+              <a href="/objekte" className="underline">in Objektliste eröffnen</a>
+            </span>
+          )}
+        </div>
+      </div>
+
+      {aktivesWj?.status === 'abgeschlossen' && (
+        <div className="mb-4 px-4 py-3 bg-amber-50 border border-amber-300 rounded-lg text-sm text-amber-800">
+          WJ {aktivesWj.jahr} ist abgeschlossen. Buchungen sind in diesem Jahr nicht mehr möglich.
+        </div>
+      )}
 
       {/* ── Stapel-Anzeige ── */}
       <div className="mb-4">
@@ -387,7 +492,150 @@ export function Dialogbuchhaltung() {
         )}
       </div>
 
-      {/* ── Buchungsmaske ── */}
+      {/* ── Modus-Tabs ── */}
+      <div className="flex gap-1 mb-4 bg-gray-100 rounded-lg p-1 w-fit">
+        {([
+          { key: 'sachkonto',     label: 'Sachkontenbuchung' },
+          { key: 'personenkonto', label: 'Personenkontobuchung' },
+          { key: 'kreditor',      label: 'Kreditorenbuchung' },
+        ] as const).map(({ key, label }) => (
+          <button
+            key={key}
+            onClick={() => { setModus(key); setForm(EMPTY); setZeForm(ZE_EMPTY) }}
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${modus === key ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Personenkonto-Maske ── */}
+      {modus === 'personenkonto' && (
+        <div className="bg-white rounded-xl border shadow-sm p-6 mb-6">
+          <div className="grid grid-cols-2 gap-4 mb-5">
+            <div>
+              <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
+                Personenkonto (Eigentümer) *
+              </label>
+              <select
+                value={zeForm.personenkonto_id}
+                onChange={setZe('personenkonto_id')}
+                className="border rounded-lg px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">— Eigentümer wählen —</option>
+                {(personenkonten ?? []).map((pk: { id: string; eigentuemer_name: string; einheit_nr: string; saldo_offen: number }) => (
+                  <option key={pk.id} value={pk.id}>
+                    {pk.eigentuemer_name} — {pk.einheit_nr} (offen: {pk.saldo_offen.toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
+                Bankkonto (Sachkonto 18xxx) *
+              </label>
+              <select
+                value={zeForm.bank_sachkonto_id}
+                onChange={setZe('bank_sachkonto_id')}
+                className="border rounded-lg px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">— Bankkonto wählen —</option>
+                {bankKonten.map((k: Konto) => (
+                  <option key={k.id} value={k.id}>
+                    {k.kontonummer} — {k.kontoname}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4 mb-5">
+            <div>
+              <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
+                Buchungsdatum *
+              </label>
+              <input
+                type="date"
+                value={zeForm.buchungsdatum}
+                onChange={setZe('buchungsdatum')}
+                className="border rounded-lg px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
+                Betrag (EUR) *
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={zeForm.betrag}
+                onChange={setZe('betrag')}
+                placeholder="0,00"
+                className="border rounded-lg px-3 py-2 text-sm w-full text-right tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          </div>
+
+          <div className="mb-5">
+            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
+              Buchungstext
+            </label>
+            <input
+              type="text"
+              value={zeForm.buchungstext}
+              onChange={setZe('buchungstext')}
+              placeholder="z.B. Überweisung Hausgeld Januar"
+              className="border rounded-lg px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          {zeForm.personenkonto_id && zeForm.bank_sachkonto_id && zeForm.betrag && (
+            <div className="mb-4 px-4 py-3 bg-blue-50 rounded-lg text-sm text-blue-800 border border-blue-100">
+              Soll{' '}
+              <span className="font-mono font-semibold">
+                {bankKonten.find((k: Konto) => k.id === zeForm.bank_sachkonto_id)?.kontonummer}
+              </span>
+              {' '}/ Haben{' '}
+              <span className="font-mono font-semibold">41xxx</span>
+              {' '}—{' '}
+              <span className="font-semibold tabular-nums">{EUR(zeForm.betrag)}</span>
+              <span className="text-blue-600 ml-2 text-xs">Splits werden automatisch nach offenen Sollstellungen ermittelt</span>
+            </div>
+          )}
+
+          {zeMut.isError && (
+            <div className="mb-4 text-sm text-red-600 bg-red-50 rounded-lg px-4 py-2 border border-red-200">
+              {(zeMut.error as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Fehler beim Buchen.'}
+            </div>
+          )}
+
+          {zeSuccess && (
+            <div className="mb-4 text-sm text-green-700 bg-green-50 rounded-lg px-4 py-2 border border-green-200">
+              Zahlungseingang erfolgreich gebucht. Offene Posten wurden aktualisiert.
+            </div>
+          )}
+
+          <div className="flex justify-between items-center">
+            <button
+              type="button"
+              onClick={() => setZeForm(ZE_EMPTY)}
+              className="text-sm text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              Felder leeren
+            </button>
+            <Button
+              onClick={() => zeMut.mutate()}
+              disabled={!kannZeBuchen || zeMut.isPending}
+            >
+              {zeMut.isPending ? 'Buche…' : 'Zahlungseingang buchen'}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Buchungsmaske (Sachkonto + Kreditor) ── */}
+      {(modus === 'sachkonto' || modus === 'kreditor') && (
       <div className={`bg-white rounded-xl border shadow-sm p-6 mb-6 ${editingId ? 'border-amber-300 ring-1 ring-amber-200' : ''}`}>
 
         {editingId && (
@@ -598,6 +846,7 @@ export function Dialogbuchhaltung() {
           </div>
         </div>
       </div>
+      )}
 
       {/* ── Letzte Buchungen ── */}
       <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
