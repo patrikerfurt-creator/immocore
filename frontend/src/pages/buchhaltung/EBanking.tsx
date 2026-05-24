@@ -70,8 +70,8 @@ function DetailSlideOver({
   const qc = useQueryClient()
 
   const { data: konten } = useQuery({
-    queryKey: ['konten', objektId],
-    queryFn: () => buchhaltungApi.konten(objektId),
+    queryKey: ['konten', objektId, 'direktes_buchen'],
+    queryFn: () => buchhaltungApi.konten(objektId, { direktes_buchen: true }),
     enabled: !!objektId && kannBearbeiten,
   })
 
@@ -87,8 +87,9 @@ function DetailSlideOver({
     enabled: !!objektId && kannBearbeiten && buchungsTyp === 'kreditor',
   })
 
-  const buchbareKonten = (konten ?? []).filter((k: Konto) => k.kontoart === 'standard' && k.aktiv)
-  const alleKonten     = (konten ?? []).filter((k: Konto) => k.aktiv)
+  // Alle Konten die direkt bebuchbar sind (standard + unterkonto, kein Summierungskonto)
+  const buchbareKonten = (konten ?? []).filter((k: Konto) => k.aktiv && k.direktes_buchen && k.kontoart !== 'summierung')
+  const alleKonten     = (konten ?? []).filter((k: Konto) => k.aktiv && k.direktes_buchen)
 
   function invalidate() {
     qc.invalidateQueries({ queryKey: ['e-banking-buchungen'] })

@@ -115,7 +115,8 @@ läuft nur, wenn Stufe N-1 nicht eindeutig war:
 | 1a | **`EndToEndId`-Match** auf offene Hausgeld-Sollstellung (Suffix `-B`, `-R{n}`, `-S`, `-A`, `-AUSZ`) | 1.0 | Auto-Tilgung im Nebenbuch (HAUSGELD_NEBENBUCH Kap. 10.1) — Bankbuchung wird **direkt** als `verbucht` markiert, erscheint nicht in der E-Banking-Übersicht |
 | 1b | **IBAN-Match** auf eindeutiges `EigentumsVerhältnis` + Betrag = Soll + Einnahmen-Check | 1.0 | Auto-Tilgung Nebenbuch (HAUSGELD_NEBENBUCH Kap. 10.2) — `verbucht`, nicht in Übersicht |
 | 2 | **Bank-Match-Regel** (neu, siehe Kap. 4.2): `(bankkonto, kontrahent_iban, verwendungszweck_hash) → gegenkonto` | 1.0 | Status `erkannt`, Auto-Booking möglich |
-| 3 | **IBAN-Match** ohne weitere Bestätigung *(z.B. Kreditor-IBAN bekannt, aber kein eindeutiger OP)* | 0.7–0.9 | Status `vorschlag`, Auto-Booking gesperrt |
+| 3 | **IBAN-Match** auf Kreditor (`Person`, `person_typ='300'`) ohne OP-Treffer | 0.80 | Status `vorschlag`, Gegenkonto leer — kein Auto-Booking |
+| 3b | **Kreditor-Lastschrift OP-Match** (`betrag < 0`): IBAN → `rechnungen.Kreditor` → `KreditorOP` mit `betrag_offen ≈ |betrag|` | 1.0 (genau 1 OP) / 0.85 (mehrere OPs) / 0.70 (Kreditor bekannt, kein OP) | Status `erkannt` oder `vorschlag`; Gegenkonto = Kreditorkonto (70xxx) |
 | 4 | **KI-Vorschlag** (Claude API) mit WEG-Kontext | KI-Konfidenz, gecappt bei 0.85 | Status `vorschlag` |
 | 5 | Kein Treffer | 0.0 | Status `unklar` |
 
@@ -215,7 +216,8 @@ als eigenständiges Model materialisieren.
 | **`erkannt_gegenkonto`** | FK → Konto, nullable | Vorschlag aus Erkennungspipeline |
 | **`erkannt_eigentumsverhaeltnis`** | FK → EigentumsVerhaeltnis, nullable | bei Hausgeld-Eingängen |
 | **`erkannt_kreditor`** | FK → Person, nullable | bei Kreditor-Zahlungen |
-| **`erkennungs_quelle`** | Enum: `e2e_id` / `iban_ev` / `bank_match_regel` / `iban_kreditor` / `ki` / `keine` | für Audit + Lernlogik |
+| **`erkennungs_quelle`** | Enum: `e2e_id` / `iban_ev` / `bank_match_regel` / `iban_kreditor` / `kreditor_op_match` / `ki` / `keine` | für Audit + Lernlogik |
+| **`erkannt_kreditor_op`** | FK → KreditorOP, nullable | bei Stufe 3b: der eindeutig gematchte offene Posten |
 | **`erkennungs_konfidenz`** | DecimalField(3, 2) | 0.00 – 1.00 |
 | **`erkennungs_begruendung`** | TextField | menschenlesbar, für Übersicht |
 | `match_regel` | FK → BankMatchRegel, nullable | wenn Stufe 2 |
@@ -408,7 +410,7 @@ def fuehre_erkennung_aus(bb: BankBuchung) -> BankBuchung:
         _save_all(bb, log)
         return bb
 
-    # ---- Stufe 3: IBAN-Match auf Kreditor (ohne Regel) ----
+    # ---- Stufe 3: IBAN-Match auf Kreditor (ohne OP, Eingänge / unklare Richtung) ----
     if bb.kontrahent_iban:
         kreditor = Person.objects.filter(
             ibans__contains=[bb.kontrahent_iban], rolle='dienstleister'
@@ -423,6 +425,35 @@ def fuehre_erkennung_aus(bb: BankBuchung) -> BankBuchung:
                 f"Gegenkonto noch zu wählen."
             )
             log.stufe_erreicht = '3'
+            _save_all(bb, log)
+            return bb
+
+    # ---- Stufe 3b: Kreditor-Lastschrift OP-Match (nur betrag < 0) ----
+    # Bei Abbuchungen durch einen Kreditor per SEPA-Lastschrift:
+    # IBAN → rechnungen.Kreditor → offene KreditorOPs nach Betrag.
+    # Kein normalisierter VZ-Hash — der Betrag ist das primäre Matching-Kriterium.
+    # Rechnungsnummer im Verwendungszweck dient als Konfidenz-Boost.
+    if bb.betrag < 0 and bb.kontrahent_iban:
+        treffer = _versuche_kreditor_op_match(bb)
+        if treffer:
+            bb.status = 'erkannt' if treffer['konfidenz'] == Decimal("1.00") else 'vorschlag'
+            bb.erkannt_gegenkonto           = treffer['kreditorkonto']
+            bb.erkannt_kreditor_op          = treffer['op']          # genau 1 OP oder None
+            bb.erkennungs_quelle            = 'kreditor_op_match'
+            bb.erkennungs_konfidenz         = treffer['konfidenz']
+            bb.erkennungs_begruendung       = treffer['begruendung']
+            log.stufe_erreicht              = '3b'
+            log.quelle                      = 'kreditor_op_match'
+            log.konfidenz                   = treffer['konfidenz']
+            log.gegenkonto_vorschlag        = treffer['kreditorkonto']
+
+            # Auto-Booking nur bei eindeutigem OP-Match (Konfidenz 1.0)
+            if (bb.status == 'erkannt'
+                    and bb.bankkonto.objekt.auto_verbuchen_aktiv
+                    and bb.erkannt_gegenkonto):
+                ebanking_buchungs_service.verbuche(bb, verbucht_von=system_user())
+                log.auto_verbucht = True
+
             _save_all(bb, log)
             return bb
 
@@ -557,6 +588,8 @@ def _buchungstext(bb, gk, ev, kr) -> str:
 | **Bestätigung** | Nutzer klickt "Bestätigen & Verbuchen" auf einer Buchung im Status `erkannt` oder `vorschlag`, ohne das erkannte Gegenkonto zu ändern | Falls Quelle ≠ `bank_match_regel`: neue Regel mit `erstellt_aus='bestaetigung'`. Falls bereits Regel-Treffer: `trefferzahl++`. |
 | **Korrektur** | Nutzer ändert vor dem Verbuchen das Gegenkonto / Kreditor / EV | Bestehende Regel (falls vorhanden) → `status='veraltet'`. Neue Regel mit `erstellt_aus='korrektur'`. |
 | **Manuell-Erfassung** | Nutzer verbucht eine `unklar`-Buchung | Neue Regel mit `erstellt_aus='manuell'` (Opt-out-Checkbox "Einzelfall — keine Regel speichern" möglich). |
+
+> **Hinweis Stufe 3b:** Buchungen mit Quelle `kreditor_op_match` lösen **keine** neue `BankMatchRegel` aus — die Zuordnung ist bereits durch den offenen OP eindeutig. Lernregeln werden nur angelegt, wenn der Nutzer ein abweichendes Gegenkonto wählt (Korrektur-Trigger) oder die Buchung aus dem `unklar`-Zustand manuell verbucht wird.
 
 ### 7.2 Opt-out
 
@@ -835,6 +868,10 @@ JWT-Bearer-Token erforderlich. Berechtigung: nur Mandant-eigene
 | 12 | Doppelte Bestätigung (Idempotenz) | `trefferzahl++`, keine zweite aktive Regel |
 | 13 | Storno einer verbuchten BankBuchung | Status `storniert`, GoBD-konforme Storno-Buchung im Journal |
 | 14 | camt.054-Upload | `CamtImport.typ='camt054'`, Status `pending_mahnwesen_spec`, kein Crash, kein `BankBuchung`-Eintrag |
+| 15 | Kreditor-Lastschrift, genau 1 offener OP mit passendem Betrag | Stufe 3b, Status `erkannt`, Konfidenz 1.0, Gegenkonto = 70xxx, `erkannt_kreditor_op` gesetzt |
+| 16 | Kreditor-Lastschrift, mehrere OPs mit passendem Betrag | Stufe 3b, Status `vorschlag`, Konfidenz 0.85, Nutzer wählt OP manuell |
+| 17 | Kreditor-Lastschrift, IBAN bekannt aber kein passender OP | Stufe 3b, Status `vorschlag`, Konfidenz 0.70, Hinweis "OP noch nicht erfasst" |
+| 18 | Kreditor-Lastschrift mit Rechnungsnummer im Verwendungszweck, 1 OP-Treffer | Stufe 3b, Konfidenz 1.0, `erkennungs_begruendung` enthält Rechnungsnummer-Match-Hinweis |
 
 ### 12.3 Edge Cases
 

@@ -10,6 +10,8 @@ import { IbanInput } from '../../components/ui/IbanInput'
 import { useObjektStore } from '../../stores/objekt'
 import type { Objekt, Bankkonto, AutoLaufStatus } from '../../types'
 import { ABTEILUNG_LABELS } from '../../types'
+import { VerteilerExportDialog } from './VerteilerExportDialog'
+import { VerteilerImportDialog } from './VerteilerImportDialog'
 
 const AUTO_LAUF_STATUS_COLOR: Record<AutoLaufStatus, string> = {
   erfolg:          'bg-green-100 text-green-800',
@@ -639,6 +641,8 @@ export function ObjektDetail() {
   const [bankkontenDeleted, setBankkontenDeleted] = useState<string[]>([])
   const [saveError, setSaveError] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
+  const [showVsExport, setShowVsExport] = useState(false)
+  const [showVsImport, setShowVsImport] = useState(false)
 
   const startEdit = () => {
     if (!data) return
@@ -1036,6 +1040,38 @@ export function ObjektDetail() {
         set={set}
         inputCls="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-primary-500"
       />
+
+      {/* ── Verteilerschlüssel Export / Import ───────────────────── */}
+      <div className="bg-white rounded-lg border border-gray-200 p-5 mb-4">
+        <h2 className="font-semibold text-gray-700 mb-3">Verteilerschlüssel</h2>
+        <div className="flex gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={() => setShowVsExport(true)}
+            className="px-4 py-2 text-sm bg-white border border-gray-300 text-gray-700 rounded-lg hover:border-blue-400 hover:text-blue-700 transition-colors"
+          >
+            Verteilerschlüssel exportieren
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowVsImport(true)}
+            className="px-4 py-2 text-sm bg-white border border-gray-300 text-gray-700 rounded-lg hover:border-blue-400 hover:text-blue-700 transition-colors"
+          >
+            Verteilerschlüssel importieren
+          </button>
+        </div>
+      </div>
+
+      {showVsExport && (
+        <VerteilerExportDialog objektId={id!} onClose={() => setShowVsExport(false)} />
+      )}
+      {showVsImport && (
+        <VerteilerImportDialog
+          objektId={id!}
+          onClose={() => setShowVsImport(false)}
+          onSuccess={() => queryClient.invalidateQueries({ queryKey: ['objekte', id] })}
+        />
+      )}
 
       <div className="flex gap-3 mt-4 flex-wrap">
         <Link to={`/buchhaltung?objekt=${id}`} className="text-sm text-primary-600 hover:underline">Buchungsjournal →</Link>

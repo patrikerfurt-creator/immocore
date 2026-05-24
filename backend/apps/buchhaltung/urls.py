@@ -1,3 +1,4 @@
+from django.urls import path
 from rest_framework.routers import DefaultRouter
 from .views import (
     BuchungsartViewSet,
@@ -16,6 +17,11 @@ from .views import (
     WirtschaftsjahrViewSet,
     HausgeldSollstellungslaufViewSet, HausgeldSollstellungViewSet,
     AutoLaufProtokollViewSet,
+)
+from .views_verteiler import (
+    aktive_vs_view, export_view,
+    import_preview_view, import_commit_view,
+    protokoll_view,
 )
 
 router = DefaultRouter()
@@ -46,4 +52,12 @@ router.register(r'hg-laeufe',               HausgeldSollstellungslaufViewSet,  b
 router.register(r'hg-sollstellungen',       HausgeldSollstellungViewSet,       basename='hg-sollstellungen')
 router.register(r'auto-lauf-protokolle',    AutoLaufProtokollViewSet,           basename='auto-lauf-protokolle')
 
-urlpatterns = router.urls
+_VS_PREFIX = 'objekte/<uuid:objekt_id>/verteiler/'
+
+urlpatterns = router.urls + [
+    path(_VS_PREFIX + 'aktive-vs/',         aktive_vs_view,        name='verteiler-aktive-vs'),
+    path(_VS_PREFIX + 'export/',            export_view,           name='verteiler-export'),
+    path(_VS_PREFIX + 'import/preview/',    import_preview_view,   name='verteiler-import-preview'),
+    path(_VS_PREFIX + 'import/commit/',     import_commit_view,    name='verteiler-import-commit'),
+    path(_VS_PREFIX + 'protokoll/',         protokoll_view,        name='verteiler-protokoll'),
+]

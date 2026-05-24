@@ -114,7 +114,7 @@ def render_einzel_pdf(wp: Wirtschaftsplan, einheit) -> bytes:
     wj = wp.wirtschaftsjahr
     objekt = wj.objekt
     heute = timezone.localdate()
-    stichtag = wp.wirkung_ab
+    stichtag = wp.beschluss_datum or heute
 
     anteile_map = {
         a.position_id: a

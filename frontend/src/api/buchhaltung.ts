@@ -212,7 +212,7 @@ export const buchhaltungApi = {
     }).then(r => r.data),
 
   // Kontenplan
-  konten: (objektId: string, params?: { wirtschaftsjahr?: string }) =>
+  konten: (objektId: string, params?: { wirtschaftsjahr?: string; direktes_buchen?: boolean }) =>
     client.get<Konto[]>('/konten/', { params: { objekt: objektId, ...params } }).then(r => r.data),
   getKonto: (id: string) =>
     client.get<Konto>(`/konten/${id}/`).then(r => r.data),

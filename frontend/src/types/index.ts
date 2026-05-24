@@ -359,11 +359,23 @@ export interface BuchungDetailPosition {
   betrag: number
 }
 
+export interface ZugeordneterOP {
+  opos_nr: string
+  periode: string
+  sollstellungs_typ: string
+  betrag_tilgung: number            // Betrag den DIESE Buchung getilgt hat
+  betrag_weitere_zahlungen: number  // Betrag anderer Buchungen auf diese SS (0 wenn nur diese)
+  soll_betrag: number
+  saldo_nach: number                // aktueller Rest der SS (nach allen Zahlungen)
+  vollstaendig_ausgeglichen: boolean
+}
+
 export interface BuchungDetail {
   bu_nr: string
   buchungsdatum: string
   gesamt_betrag: number
   positionen: BuchungDetailPosition[]
+  zugeordnete_ops: ZugeordneterOP[]
 }
 
 export interface Kontoauszug {

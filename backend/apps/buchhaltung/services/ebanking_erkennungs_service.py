@@ -372,7 +372,7 @@ def fuehre_erkennung_aus(ku):
             _save_all(ku, log)
             return ku
 
-    # ---- Stufe 3: IBAN-Match auf Kreditor ----
+    # ---- Stufe 3: IBAN-Match auf Kreditor (Person, Eingänge / kein OP-Kontext) ----
     if ku.auftraggeber_iban:
         from apps.personen.models import Person
 
@@ -396,6 +396,41 @@ def fuehre_erkennung_aus(ku):
             log.stufe_erreicht = '3'
             log.quelle         = 'iban_kreditor'
             log.konfidenz      = Decimal('0.80')
+            _save_all(ku, log)
+            return ku
+
+    # ---- Stufe 3b: Kreditor-Lastschrift OP-Match (nur betrag < 0) ----
+    # Bei Abbuchungen durch Kreditoren per SEPA-Lastschrift:
+    # IBAN → rechnungen.Kreditor → offene KreditorOPs nach Betrag.
+    # Betrag ist das primäre Matching-Kriterium, Rechnungsnummer im
+    # Verwendungszweck dient als Konfidenz-Boost (kein normalisierter Hash).
+    if ku.betrag < 0 and ku.auftraggeber_iban:
+        treffer = _versuche_kreditor_op_match(ku)
+        if treffer:
+            ku.status                 = 'erkannt' if treffer['konfidenz'] == Decimal('1.00') else 'vorschlag'
+            ku.erkannt_gegenkonto     = treffer['kreditorkonto']
+            ku.erkannt_kreditor_op    = treffer['op']
+            ku.erkennungs_quelle      = 'kreditor_op_match'
+            ku.erkennungs_konfidenz   = treffer['konfidenz']
+            ku.erkennungs_begruendung = treffer['begruendung']
+            log.stufe_erreicht        = '3b'
+            log.quelle                = 'kreditor_op_match'
+            log.konfidenz             = treffer['konfidenz']
+            log.gegenkonto_vorschlag  = treffer['kreditorkonto']
+
+            # Auto-Booking nur bei eindeutigem OP-Match (Konfidenz 1.0)
+            auto_aktiv = getattr(
+                getattr(ku.bankkonto, 'objekt', None), 'auto_verbuchen_aktiv', False
+            )
+            if (ku.status == 'erkannt'
+                    and auto_aktiv
+                    and ku.erkannt_gegenkonto):
+                try:
+                    verbuche(ku, verbucht_von=_get_system_user())
+                    log.auto_verbucht = True
+                except Exception as exc:
+                    logger.error("E-Banking Stufe 3b Auto-Booking Fehler: %s", exc)
+
             _save_all(ku, log)
             return ku
 
@@ -445,6 +480,120 @@ def _person_anzeigename(person) -> str:
         return person.firmenname
     parts = [person.vorname, person.nachname]
     return ' '.join(p for p in parts if p) or str(person.id)
+
+
+def _extrahiere_rechnungsnummern(text: str) -> list:
+    """
+    Extrahiert potenzielle Rechnungsnummern aus einem Verwendungszweck.
+    Wird für den Konfidenz-Boost in Stufe 3b verwendet — kein Hash, kein Normalisieren.
+    """
+    if not text:
+        return []
+    patterns = [
+        r'\b(?:re|rg|inv|rech(?:nung)?|nr)[-\s.:]*([A-Z0-9][\w/-]{2,})',
+        r'\b([A-Z]{1,4}-\d{4,})\b',
+    ]
+    refs = []
+    for pat in patterns:
+        refs.extend(re.findall(pat, text, re.IGNORECASE))
+    return [r.strip() for r in refs if r.strip()]
+
+
+def _versuche_kreditor_op_match(ku) -> dict | None:
+    """
+    Stufe 3b: Kreditor-Lastschrift OP-Abgleich.
+
+    Nur für betrag < 0. Matcht auftraggeber_iban → rechnungen.Kreditor →
+    offene KreditorOPs nach Betrag (Toleranz 0.01 €).
+    Rechnungsnummer im Verwendungszweck gibt Konfidenz-Hinweis in der Begründung.
+
+    Rückgabe: dict mit {kreditor, op, kreditorkonto, konfidenz, begruendung} oder None.
+    op ist None wenn mehrere oder kein OP gefunden.
+    """
+    from apps.rechnungen.models import Kreditor
+    from apps.buchhaltung.models import KreditorOP
+    from apps.konten.models import Konto
+
+    if ku.betrag >= 0:
+        return None
+
+    iban = (ku.auftraggeber_iban or '').strip().replace(' ', '')
+    if not iban:
+        return None
+
+    try:
+        kreditor = Kreditor.objects.get(iban=iban, aktiv=True)
+    except (Kreditor.DoesNotExist, Kreditor.MultipleObjectsReturned):
+        return None
+
+    # Kreditorkonto (70xxx) im Kontenplan des Objekts suchen
+    kreditorkonto = None
+    if kreditor.kreditorennummer and ku.objekt:
+        kreditorkonto = Konto.objects.filter(
+            wirtschaftsjahr__objekt=ku.objekt,
+            kontonummer=kreditor.kreditorennummer,
+            aktiv=True,
+        ).order_by('-wirtschaftsjahr__jahr').first()
+
+    betrag_abs = abs(ku.betrag)
+    toleranz = Decimal('0.01')
+
+    ops = list(KreditorOP.objects.filter(
+        kreditor=kreditor,
+        objekt=ku.objekt,
+        status__in=('offen', 'teilbezahlt'),
+        betrag_offen__gte=betrag_abs - toleranz,
+        betrag_offen__lte=betrag_abs + toleranz,
+    ).select_related('rechnung').order_by('faellig_ab'))
+
+    vz_refs = _extrahiere_rechnungsnummern(ku.verwendungszweck or '')
+
+    if len(ops) == 1:
+        op = ops[0]
+        rechnungsnr_match = False
+        if op.rechnung and vz_refs:
+            rechnr = (op.rechnung.rechnungsnummer or '').strip().upper()
+            if any(rechnr and (ref.upper() in rechnr or rechnr in ref.upper())
+                   for ref in vz_refs):
+                rechnungsnr_match = True
+        konfidenz = Decimal('1.00')
+        begruendung = (
+            f"Kreditor-Lastschrift {kreditor.name} — OP-{op.op_nummer} "
+            f"({betrag_abs} €)"
+        )
+        if rechnungsnr_match:
+            begruendung += f" + Rechnungsnummer-Match im Verwendungszweck"
+        return {
+            'kreditor': kreditor,
+            'op': op,
+            'kreditorkonto': kreditorkonto,
+            'konfidenz': konfidenz,
+            'begruendung': begruendung,
+        }
+
+    if len(ops) > 1:
+        return {
+            'kreditor': kreditor,
+            'op': None,
+            'kreditorkonto': kreditorkonto,
+            'konfidenz': Decimal('0.85'),
+            'begruendung': (
+                f"Kreditor-Lastschrift {kreditor.name} — {len(ops)} offene OPs "
+                f"mit Betrag {betrag_abs} €, bitte manuell zuordnen."
+            ),
+        }
+
+    # Kreditor bekannt, aber kein passender OP
+    return {
+        'kreditor': kreditor,
+        'op': None,
+        'kreditorkonto': kreditorkonto,
+        'konfidenz': Decimal('0.70'),
+        'begruendung': (
+            f"Kreditor-Lastschrift {kreditor.name} (IBAN-Match) — kein offener OP "
+            f"mit Betrag {betrag_abs} € gefunden. OP ggf. noch nicht erfasst."
+        ),
+    }
 
 
 def _ki_vorschlag(ku) -> dict | None:

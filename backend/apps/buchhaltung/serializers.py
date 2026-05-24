@@ -12,6 +12,7 @@ from .models import (
     LastschriftLauf,
     HausgeldSollstellungslauf, HausgeldSollstellung, SollstellungSplit,
     AutoLaufProtokoll,
+    VerteilerImportProtokoll,
 )
 
 
@@ -44,6 +45,23 @@ class EinheitVerbrauchSerializer(serializers.ModelSerializer):
         model  = EinheitVerbrauch
         fields = '__all__'
         read_only_fields = ['id']
+
+
+class VerteilerImportProtokollSerializer(serializers.ModelSerializer):
+    importiert_von_name = serializers.SerializerMethodField()
+    wj_jahr = serializers.IntegerField(source='wirtschaftsjahr.jahr', read_only=True, allow_null=True)
+
+    class Meta:
+        model  = VerteilerImportProtokoll
+        fields = [
+            'id', 'objekt', 'wirtschaftsjahr', 'wj_jahr',
+            'vs_code', 'dateiname', 'anzahl_aktualisiert',
+            'importiert_am', 'importiert_von', 'importiert_von_name',
+        ]
+        read_only_fields = ['id', 'importiert_am']
+
+    def get_importiert_von_name(self, obj):
+        return obj.importiert_von.get_full_name() or obj.importiert_von.username
 
 
 class BuchungsartSerializer(serializers.ModelSerializer):

@@ -64,6 +64,8 @@ class KontoViewSet(viewsets.ModelViewSet):
             qs = qs.filter(abrechnungsart=p['abrechnungsart'])
         if p.get('aktiv') is not None:
             qs = qs.filter(aktiv=p['aktiv'] == 'true')
+        if p.get('direktes_buchen') is not None:
+            qs = qs.filter(direktes_buchen=p['direktes_buchen'] == 'true')
         return qs
 
     @action(detail=False, methods=['post'], url_path='weg-vorlage')
@@ -430,10 +432,13 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=['get'], url_path='buchung-detail')
     def buchung_detail(self, request, pk=None):
         """
-        Gibt die Teilbuchungen einer Gesamt-Buchung zurück (Abrechnungsarten-Aufschlüsselung).
+        Gibt die Teilbuchungen einer Gesamt-Buchung zurück (Abrechnungsarten-Aufschlüsselung)
+        sowie die zugeordneten offenen Posten (SollstellungZahlungen), die mit dieser
+        Buchung getilgt wurden.
         Query-Parameter: buchung_id=<UUID der Gesamt-Buchung>
         """
-        from apps.buchhaltung.models import Buchung
+        from collections import defaultdict
+        from apps.buchhaltung.models import Buchung, SollstellungZahlung
 
         buchung_id = request.query_params.get('buchung_id')
         if not buchung_id:
@@ -444,6 +449,7 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
         except Buchung.DoesNotExist:
             return Response({'error': 'Buchung nicht gefunden'}, status=status.HTTP_404_NOT_FOUND)
 
+        # ── Teilbuchungen (Abrechnungsarten-Aufschlüsselung) ──────────────────
         teilbuchungen = (
             gesamt.teilbuchungen
             .select_related('haben_konto', 'soll_unterkonto', 'buchungsart')
@@ -463,11 +469,86 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
                 'betrag': float(t.betrag),
             })
 
+        # ── Zugeordnete Offene Posten (SollstellungZahlung → HausgeldSollstellung) ──
+        # Mehrere SollstellungZahlungen pro Sollstellung möglich (eine je Split),
+        # daher gruppieren und Tilgungsbetrag summieren.
+        sz_qs = (
+            SollstellungZahlung.objects
+            .filter(buchung=gesamt)
+            .select_related('sollstellung')
+            .order_by('sollstellung__periode', 'sollstellung__erstellt_am')
+        )
+
+        gesehen = {}   # ss_id → accumulated
+        for sz in sz_qs:
+            ss = sz.sollstellung
+            ss_id = str(ss.id)
+            if ss_id not in gesehen:
+                gesehen[ss_id] = {
+                    'ss': ss,
+                    'betrag_tilgung': sz.betrag,
+                }
+            else:
+                gesehen[ss_id]['betrag_tilgung'] += sz.betrag
+
+        # Für jede Sollstellung: Gesamtbetrag ALLER Zahlungen ermitteln
+        # (nicht nur die dieser Buchung) um weitere Zahlungen sichtbar zu machen.
+        from decimal import Decimal as D
+        ss_ids = list(gesehen.keys())
+        alle_sz_auf_ss = (
+            SollstellungZahlung.objects
+            .filter(sollstellung_id__in=ss_ids)
+            .values('sollstellung_id', 'buchung_id')
+            .distinct()
+        )
+        # Buchungs-IDs die ZUSÄTZLICH zu dieser Buchung die gleiche SS getilgt haben
+        andere_buchungen = {}   # ss_id → set(buchung_id)
+        for row in alle_sz_auf_ss:
+            ss_id = str(row['sollstellung_id'])
+            buch_id = str(row['buchung_id'])
+            if buch_id != str(gesamt.id):
+                andere_buchungen.setdefault(ss_id, set()).add(buch_id)
+
+        # Betrag der anderen Buchungen je SS
+        from django.db.models import Sum as DSum
+        andere_betraege = {}  # ss_id → Decimal
+        for ss_id, buch_ids in andere_buchungen.items():
+            summe = (
+                SollstellungZahlung.objects
+                .filter(sollstellung_id=ss_id, buchung_id__in=buch_ids)
+                .aggregate(s=DSum('betrag'))['s'] or D('0')
+            )
+            andere_betraege[ss_id] = summe
+
+        typ_labels = {
+            'hausgeld':           'Hausgeld',
+            'sonderumlage':       'Sonderumlage',
+            'abrechnungsergebnis':'Abrechnungsergebnis',
+        }
+        zugeordnete_ops = []
+        for entry in gesehen.values():
+            ss    = entry['ss']
+            ss_id = str(ss.id)
+            tilgung_diese_buchung = D(str(entry['betrag_tilgung']))
+            tilgung_andere        = andere_betraege.get(ss_id, D('0'))
+            aktueller_rest        = ss.soll_betrag - ss.ist_betrag   # 0 wenn ausgeglichen
+            zugeordnete_ops.append({
+                'opos_nr':                   ss.opos_nr,
+                'periode':                   str(ss.periode),
+                'sollstellungs_typ':         typ_labels.get(ss.sollstellungs_typ, ss.sollstellungs_typ),
+                'betrag_tilgung':            float(tilgung_diese_buchung),
+                'betrag_weitere_zahlungen':  float(tilgung_andere),
+                'soll_betrag':               float(ss.soll_betrag),
+                'saldo_nach':                float(aktueller_rest),
+                'vollstaendig_ausgeglichen': ss.status_cached == 'ausgeglichen',
+            })
+
         return Response({
-            'bu_nr': gesamt.belegnr,
-            'buchungsdatum': str(gesamt.buchungsdatum),
-            'gesamt_betrag': float(gesamt.betrag),
-            'positionen': positionen,
+            'bu_nr':          gesamt.belegnr,
+            'buchungsdatum':  str(gesamt.buchungsdatum),
+            'gesamt_betrag':  float(gesamt.betrag),
+            'positionen':     positionen,
+            'zugeordnete_ops': zugeordnete_ops,
         })
 
 

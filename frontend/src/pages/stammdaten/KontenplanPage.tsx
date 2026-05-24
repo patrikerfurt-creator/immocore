@@ -95,6 +95,8 @@ function KontoModal({
       return buchhaltungApi.createKonto(payload)
     },
     onSuccess: () => {
+      // Invalidiert sowohl den vollen Kontenplan-Cache als auch den
+      // gefilterten eBanking-Cache ['konten', objektId, 'direktes_buchen']
       qc.invalidateQueries({ queryKey: ['konten', objektId] })
       onClose()
     },

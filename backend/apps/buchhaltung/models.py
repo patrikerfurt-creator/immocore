@@ -2,7 +2,7 @@ from uuid import uuid4
 from django.conf import settings
 from django.db import models
 from django.db.models import Q
-from apps.objekte.models import Objekt, Einheit, Bankkonto
+from apps.objekte.models import Objekt, Einheit, Bankkonto, Wirtschaftsjahr
 from apps.konten.models import Konto, Personenkonto, Unterkonto
 
 
@@ -402,12 +402,13 @@ class Kontoumsatz(models.Model):
         ('unbekannt',   'Unbekannt (kein Objekt)'),
     ]
     ERKENNUNGS_QUELLE_CHOICES = [
-        ('e2e_id',           'EndToEndId-Match (Nebenbuch)'),
-        ('iban_ev',          'IBAN-Match auf EigentumsVerhältnis'),
-        ('bank_match_regel', 'BankMatchRegel'),
-        ('iban_kreditor',    'IBAN-Match auf Kreditor'),
-        ('ki',               'KI-Vorschlag'),
-        ('keine',            'Keine Erkennung'),
+        ('e2e_id',            'EndToEndId-Match (Nebenbuch)'),
+        ('iban_ev',           'IBAN-Match auf EigentumsVerhältnis'),
+        ('bank_match_regel',  'BankMatchRegel'),
+        ('iban_kreditor',     'IBAN-Match auf Kreditor'),
+        ('kreditor_op_match', 'Kreditor-Lastschrift OP-Abgleich'),
+        ('ki',                'KI-Vorschlag'),
+        ('keine',             'Keine Erkennung'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
@@ -446,6 +447,10 @@ class Kontoumsatz(models.Model):
     )
     erkannt_kreditor = models.ForeignKey(
         'personen.Person', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='kontoumsaetze_erkannt'
+    )
+    erkannt_kreditor_op = models.ForeignKey(
+        'buchhaltung.KreditorOP', on_delete=models.SET_NULL,
         null=True, blank=True, related_name='kontoumsaetze_erkannt'
     )
     erkennungs_quelle = models.CharField(
@@ -1564,3 +1569,31 @@ class Auszahlungslauf(models.Model):
             f"Auszahlung {self.bezeichnung or self.faelligkeitsdatum} "
             f"| {self.objekt.bezeichnung} [{self.status}]"
         )
+
+
+# ---------------------------------------------------------------------------
+# VerteilerImportProtokoll — Audit-Log für VS-Import-Vorgänge (Spec v1.0 Kap. 7)
+# ---------------------------------------------------------------------------
+
+class VerteilerImportProtokoll(models.Model):
+    id                  = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    objekt              = models.ForeignKey(Objekt, on_delete=models.PROTECT, related_name='verteiler_importe')
+    wirtschaftsjahr     = models.ForeignKey(
+        Wirtschaftsjahr, on_delete=models.PROTECT,
+        null=True, blank=True, related_name='verteiler_importe',
+    )
+    vs_code             = models.CharField(max_length=3)
+    dateiname           = models.CharField(max_length=255)
+    anzahl_aktualisiert = models.IntegerField()
+    importiert_am       = models.DateTimeField(auto_now_add=True)
+    importiert_von      = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='verteiler_importe',
+    )
+
+    class Meta:
+        verbose_name        = 'Verteiler-Import-Protokoll'
+        verbose_name_plural = 'Verteiler-Import-Protokolle'
+        ordering            = ['-importiert_am']
+
+    def __str__(self):
+        return f"VS {self.vs_code} @ {self.objekt.bezeichnung} — {self.importiert_am:%d.%m.%Y %H:%M}"

@@ -55,6 +55,33 @@ def _ermittle_bank_sachkonto(ku):
     return None
 
 
+def _ermittle_wirtschaftsjahr(objekt, datum):
+    """
+    Findet das Wirtschaftsjahr für ein gegebenes Datum anhand von beginn_monat.
+    Fallback: neuestes offenes WJ des Objekts.
+    """
+    from datetime import date as date_cls
+    from apps.objekte.models import Wirtschaftsjahr
+
+    if objekt is None or datum is None:
+        return None
+
+    for wj in Wirtschaftsjahr.objects.filter(objekt=objekt).order_by('-jahr'):
+        wj_beginn = date_cls(wj.jahr, wj.beginn_monat, 1)
+        try:
+            wj_ende = date_cls(wj.jahr + 1, wj.beginn_monat, 1)
+        except ValueError:
+            continue
+        if wj_beginn <= datum < wj_ende:
+            return wj
+
+    return (
+        Wirtschaftsjahr.objects.filter(objekt=objekt, status='offen')
+        .order_by('-jahr')
+        .first()
+    )
+
+
 @transaction.atomic
 def verbuche(ku, verbucht_von,
              gegenkonto=None,
@@ -110,6 +137,8 @@ def verbuche(ku, verbucht_von,
             "Kein Bank-Sachkonto (18xxx) für dieses Objekt gefunden."
         )
 
+    wj = _ermittle_wirtschaftsjahr(ku.objekt, ku.buchungsdatum)
+
     betrag_abs = abs(ku.betrag)
 
     if ku.betrag > 0:
@@ -135,6 +164,7 @@ def verbuche(ku, verbucht_von,
         belegnr=f'EB-{ku.buchungsdatum.strftime("%Y%m%d")}-{str(ku.id)[:8].upper()}',
         status='festgeschrieben',
         erstellt_von=verbucht_von,
+        wirtschaftsjahr=wj,
     )
 
     ku.status          = 'verbucht'
@@ -152,7 +182,11 @@ def verbuche(ku, verbucht_von,
 
     # OP-Ausgleich wenn Kreditorkonto (70xxx)
     if gk.kontonummer.startswith('70'):
-        _versuche_op_ausgleich(ku, b, gk, explizit_op_id=kreditor_op_id)
+        # Stufe-3b-Erkennung kann den OP bereits direkt zugeordnet haben
+        op_id = kreditor_op_id or (
+            ku.erkannt_kreditor_op_id if ku.erkannt_kreditor_op_id else None
+        )
+        _versuche_op_ausgleich(ku, b, gk, explizit_op_id=op_id)
 
     return b
 
