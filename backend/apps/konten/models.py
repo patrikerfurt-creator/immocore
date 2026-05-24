@@ -11,7 +11,8 @@ class Konto(models.Model):
         UNTERKONTO = 'unterkonto', 'Unterkonto'
 
     id                  = models.UUIDField(primary_key=True, default=uuid4, editable=False)
-    objekt              = models.ForeignKey(Objekt, on_delete=models.CASCADE, related_name='konten')
+    objekt              = models.ForeignKey(Objekt, on_delete=models.CASCADE, related_name='konten',
+                                            null=True, blank=True)
     kontonummer         = models.CharField(max_length=6)
     kontoname           = models.CharField(max_length=120)
     abrechnungsart      = models.CharField(max_length=3, null=True, blank=True)

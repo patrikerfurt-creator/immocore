@@ -97,8 +97,13 @@ class Bankkonto(models.Model):
     iban         = models.CharField(max_length=34, blank=True)
     bic          = models.CharField(max_length=11, blank=True)
     kontoinhaber = models.CharField(max_length=255, blank=True)
-    reihenfolge  = models.PositiveIntegerField(default=1)
-    aktiv        = models.BooleanField(default=True)
+    reihenfolge      = models.PositiveIntegerField(default=1)
+    aktiv            = models.BooleanField(default=True)
+    zahlungsverkehr  = models.BooleanField(
+        default=False,
+        verbose_name='Zahlungsverkehrskonto',
+        help_text='Standardkonto für ausgehende Zahlungen (SEPA pain.001)',
+    )
 
     class Meta:
         verbose_name        = 'Bankkonto'
