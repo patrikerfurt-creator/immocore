@@ -17,22 +17,74 @@ def erkenne_buchung(bank_import) -> dict | None:
     Versucht einen BankImport-Eintrag einer Buchung zuzuordnen.
     Gibt ein ki_vorschlag-Dict zurück oder None.
 
+    Reihenfolge:
+      Stufe 0: WKZ-Match (Wiederkehrende Buchungen)
+      Stufe 1: Regelbasierte Erkennung (IBAN-Lookup)
+      Stufe 2: KI-Fallback (Claude API)
+
     Vorschlag-Format:
     {
-        "stufe": 1 oder 2,
+        "stufe": 0 | 1 | 2,
+        "typ": "wkz" | None,
         "konfidenz": "hoch" | "mittel" | "niedrig",
-        "personenkonto_id": "...",
-        "unterkonto_id": "...",
-        "soll_konto_id": "...",
-        "haben_konto_id": "...",
-        "begruendung": "..."
+        ...
     }
     """
+    vorschlag = _stufe0_wkz(bank_import)
+    if vorschlag:
+        return vorschlag
+
     vorschlag = _stufe1_regelbasiert(bank_import)
     if vorschlag:
         return vorschlag
 
     return _stufe2_claude(bank_import)
+
+
+def _stufe0_wkz(bank_import) -> dict | None:
+    """
+    Stufe 0: WKZ-Match — prüft Bankabgänge gegen offene WKZ-OPs.
+    Nur für negative Beträge (Bankabgänge / Zahlungsausgänge).
+    """
+    # Nur Bankabgänge (negativer Betrag)
+    try:
+        from decimal import Decimal
+        betrag = Decimal(str(bank_import.betrag))
+    except Exception:
+        return None
+
+    if betrag >= 0:
+        return None  # Eingang → kein WKZ-Abgang
+
+    try:
+        from .wkz.bank_match_service import finde_kandidaten, ist_eindeutiger_auto_match, baue_vorschlag
+    except ImportError:
+        return None
+
+    kandidaten = finde_kandidaten(bank_import)
+    if not kandidaten:
+        return None
+
+    if len(kandidaten) == 1 and ist_eindeutiger_auto_match(kandidaten[0], bank_import):
+        op = kandidaten[0]
+        return {
+            'typ': 'wkz',
+            'stufe': 0,
+            'konfidenz': 'hoch',
+            'wkz_op_id': str(op.id),
+            'vorlage_id': str(op.vorlage_id),
+            'kreditor': str(op.vorlage.kreditor),
+            'periode_von': str(op.periode_von),
+            'periode_bis': str(op.periode_bis),
+            'erwarteter_betrag': str(op.kreditor_op.betrag_ursprung),
+            'begruendung': (
+                f"WKZ-Match: {op.vorlage.bezeichnung} "
+                f"{op.periode_von.strftime('%m/%Y')}–{op.periode_bis.strftime('%m/%Y')}"
+            ),
+        }
+
+    # Mehrdeutige Treffer → Frontoffice-Vorschlag
+    return baue_vorschlag(bank_import, kandidaten)
 
 
 def _stufe1_regelbasiert(bank_import) -> dict | None:

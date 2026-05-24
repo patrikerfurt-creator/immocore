@@ -3,6 +3,11 @@ from datetime import timedelta
 import os
 from dotenv import load_dotenv
 
+try:
+    from celery.schedules import crontab as celery_crontab
+except ImportError:
+    celery_crontab = None
+
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -164,5 +169,9 @@ CELERY_BEAT_SCHEDULE = {
     'dokumente-ordner-scan-alle-5min': {
         'task': 'dokumente.ordner_scan',
         'schedule': 300,
+    },
+    'wkz-ops-taeglich-03uhr': {
+        'task': 'buchhaltung.erzeuge_faellige_wkz_ops',
+        'schedule': celery_crontab(hour=3, minute=0) if celery_crontab else 86400,
     },
 }

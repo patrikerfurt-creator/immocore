@@ -125,6 +125,24 @@ def scan_camt_einstellung(einst) -> dict:
     }
 
 
+@shared_task(name='buchhaltung.erzeuge_faellige_wkz_ops')
+def erzeuge_faellige_wkz_ops_task():
+    """
+    Täglich um 03:00 per Celery Beat: Erzeugt alle fälligen WKZ-OPs
+    für alle aktiven Vorlagen mit Fälligkeit im Vorlauf-Fenster.
+    """
+    from .services.wkz.op_generator_service import erzeuge_faellige_ops
+    ergebnis = erzeuge_faellige_ops(stichtag=timezone.now().date())
+    logger.info(
+        "WKZ-OP-Task abgeschlossen: %s erzeugt, %s Fehler",
+        ergebnis.erzeugt, len(ergebnis.fehler),
+    )
+    return {
+        'erzeugt': ergebnis.erzeugt,
+        'fehler': ergebnis.fehler,
+    }
+
+
 @shared_task(name='buchhaltung.camt_ordner_scan')
 def camt_ordner_scan(einstellung_id: str | None = None):
     """Wird von Celery Beat alle 2 Stunden oder manuell angestoßen."""
