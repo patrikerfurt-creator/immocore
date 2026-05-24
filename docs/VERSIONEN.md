@@ -61,6 +61,7 @@
 | 27.04.2026 | Import-Sicherheit (Abw. 007): Alle direkten Datei-Imports auf Vorschau→Bestätigen umgestellt. `EinheitViewSet`: neuer `csv-vorschau`-Endpunkt + `csv-import` akzeptiert nur noch vorgeprüfte Rows. `KontoumsatzViewSet`: neuer `camt-vorschau`-Endpunkt + `camt-upload` akzeptiert nur noch geparste Transaktionen. `BankImportViewSet` (Legacy) analog. |
 | 30.04.2026 | **Mitarbeiter-Zuordnung mit Aufgabe:** `MitarbeiterObjektZuordnung` um `aufgabe`-Feld erweitert (Migration 0003). Aufgabe = Rolle des Mitarbeiters im spezifischen Objekt (z.B. Objektmanagement, Buchhaltung), muss in den Abteilungen des Mitarbeiters enthalten sein. Frontend: ObjektDetail zeigt Aufgabe farbig hervorgehoben, per-Mitarbeiter-Auswahl beim Zuordnen, nachträgliche Änderung inline. Bugfix: Render-Fallback-Wert wurde im Click-Handler nicht gespiegelt (Mitarbeiter mit einer Abteilung konnten nicht zugeordnet werden). |
 | 30.04.2026 | **Freigabelimits Konfiguration:** Globale Standard-Freigabelimits über neues `FreigabelimitDefault`-Modell (Singleton, rechnungen/Migration 0004) und Endpunkt `GET/PUT /api/v1/freigabelimits-standard/`. Neue Rolle `objektmanager` überall eingebaut — `_bestimme_rolle()` erkennt Mitarbeiter mit Abteilung `objektmanagement` automatisch. Standard-Werte: ≤500 € automatisch · ≤5.000 € Objektmanager · >5.000 € Geschäftsführer. Einstellungen-Seite: neuer Tab "Freigabelimits" für globale Defaults (bearbeitbar, Stufen hinzufügen/entfernen). ObjektDetail: neuer Abschnitt "Freigabelimits" für objektspezifische Abweichungen. Abw. 002 teilweise behoben (Konfiguration ✅, automatische Enforcement beim Freigeben noch ausstehend). |
+| 24.05.2026 | **WKZ-Modul (Wiederkehrende Buchungen) vollständig implementiert** auf Branch `feature/WKZ`. Migrations 0015 (buchhaltung) + 0011 (rechnungen): 4 neue Models. Services: vorlage_service (Anlage, Freigabe-Workflow, Statusübergänge, ersetze_vorlage), op_generator_service (monatliche–jährliche Perioden, Wochenend-Regel, Idempotenz, Celery-Task 03:00), bank_match_service (IBAN/MREF, Toleranz-Fenster, Auto-Match), buchungs_service (Kassenprinzip §28 WEG, Sammelbuchung + Teilbuchungen). Buchungserkennung um Stufe-0-WKZ erweitert. DRF: 5 ViewSets + 7 Serializer-Klassen, 11 URLs. Frontend: wkz.ts (15 API-Endpoints), VorlagenListe, VorlageWizard (4 Schritte), VorlageDetail, OPDetail, Forecast. Tests: **50/50 grün** (Vorlage 13, OP-Generator 12, Bank-Match 13, Buchung 12). |
 
 ---
 
@@ -123,4 +124,4 @@
 
 ---
 
-*Zuletzt aktualisiert: 30.04.2026*
+*Zuletzt aktualisiert: 24.05.2026*
