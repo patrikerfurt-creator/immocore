@@ -17,6 +17,9 @@ class Objekt(models.Model):
     objektnummer             = models.CharField(max_length=20, unique=True, blank=True)
     objekt_typ               = models.CharField(max_length=10, choices=OBJEKT_TYP_CHOICES)
     bezeichnung              = models.CharField(max_length=255)
+    kurzbezeichnung          = models.CharField(max_length=50, blank=True, default='',
+                                                verbose_name='Kurzbezeichnung',
+                                                help_text='Kurzkürzel für SEPA-Verwendungszweck, z. B. "WEG-RottPlatz14"')
     strasse                  = models.CharField(max_length=255)
     plz                      = models.CharField(max_length=10)
     ort                      = models.CharField(max_length=100)

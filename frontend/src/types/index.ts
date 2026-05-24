@@ -36,6 +36,7 @@ export interface ObjektList {
   id: string
   objektnummer: string
   bezeichnung: string
+  kurzbezeichnung: string
   objekt_typ: ObjektTyp
   strasse: string
   plz: string

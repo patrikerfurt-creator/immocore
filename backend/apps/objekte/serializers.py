@@ -75,4 +75,4 @@ class ObjektListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Objekt
-        fields = ['id', 'objektnummer', 'bezeichnung', 'objekt_typ', 'strasse', 'plz', 'ort', 'status', 'eingaenge']
+        fields = ['id', 'objektnummer', 'bezeichnung', 'kurzbezeichnung', 'objekt_typ', 'strasse', 'plz', 'ort', 'status', 'eingaenge']
