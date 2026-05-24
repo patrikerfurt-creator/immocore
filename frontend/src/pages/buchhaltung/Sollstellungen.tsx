@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { buchhaltungApi } from '../../api/buchhaltung'
+import { wirtschaftsjahreApi } from '../../api/wirtschaftsjahre'
 import { Badge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import { useObjektStore } from '../../stores/objekt'
@@ -20,7 +21,28 @@ export function Sollstellungen() {
   const [showWizard, setShowWizard] = useState(false)
   const [step, setStep] = useState<WizardStep>('auswahl')
   const [periode, setPeriode] = useState('')  // YYYY-MM
+  const [wirtschaftsjahrId, setWirtschaftsjahrId] = useState('')
   const [vorschau, setVorschau] = useState<HausgeldSimulationVorschau | null>(null)
+
+  // Auto-select the WJ that covers the given period (12-month window from beginn_monat)
+  function wjFuerPeriode(periodeStr: string) {
+    if (!periodeStr || !wirtschaftsjahre?.length) return undefined
+    const [py, pm] = periodeStr.split('-').map(Number)
+    const pval = py * 12 + pm
+    return wirtschaftsjahre.find(wj => {
+      const start = wj.jahr * 12 + wj.beginn_monat
+      return pval >= start && pval <= start + 11
+    })
+  }
+
+  function handlePeriodeChange(val: string) {
+    setPeriode(val)
+    if (val) {
+      const match = wjFuerPeriode(val)
+      if (match) setWirtschaftsjahrId(match.id)
+      else setWirtschaftsjahrId('')
+    }
+  }
   const [expandedLauf, setExpandedLauf] = useState<string | null>(null)
   const [fehler, setFehler] = useState<string | null>(null)
   const qc = useQueryClient()
@@ -31,8 +53,14 @@ export function Sollstellungen() {
     enabled: !!objektId,
   })
 
+  const { data: wirtschaftsjahre } = useQuery({
+    queryKey: ['wirtschaftsjahre', objektId],
+    queryFn: () => wirtschaftsjahreApi.list({ objekt: objektId ?? undefined }),
+    enabled: !!objektId,
+  })
+
   const simMut = useMutation({
-    mutationFn: (data: { objekt_id: string; periode: string }) =>
+    mutationFn: (data: { objekt_id: string; periode: string; wirtschaftsjahr_id?: string }) =>
       buchhaltungApi.simulierenHausgeld(data),
     onSuccess: (data) => {
       setVorschau(data)
@@ -43,7 +71,7 @@ export function Sollstellungen() {
   })
 
   const erstellenMut = useMutation({
-    mutationFn: (data: { objekt_id: string; periode: string }) =>
+    mutationFn: (data: { objekt_id: string; periode: string; wirtschaftsjahr_id?: string }) =>
       buchhaltungApi.erstellenHausgeld(data),
     onSuccess: () => {
       setShowWizard(false)
@@ -78,12 +106,20 @@ export function Sollstellungen() {
 
   function handleSimulieren() {
     if (!objektId || !periode) return
-    simMut.mutate({ objekt_id: objektId, periode })
+    simMut.mutate({
+      objekt_id: objektId,
+      periode,
+      ...(wirtschaftsjahrId ? { wirtschaftsjahr_id: wirtschaftsjahrId } : {}),
+    })
   }
 
   function handleErstellen() {
     if (!objektId || !periode) return
-    erstellenMut.mutate({ objekt_id: objektId, periode })
+    erstellenMut.mutate({
+      objekt_id: objektId,
+      periode,
+      ...(wirtschaftsjahrId ? { wirtschaftsjahr_id: wirtschaftsjahrId } : {}),
+    })
   }
 
   function handleStornieren(lauf: HausgeldSollstellungslauf) {
@@ -104,7 +140,7 @@ export function Sollstellungen() {
     <div>
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Sollstellungen (Hausgeld)</h1>
-        <Button onClick={() => { setShowWizard(true); setStep('auswahl'); setVorschau(null); setFehler(null) }}>
+        <Button onClick={() => { setShowWizard(true); setStep('auswahl'); setVorschau(null); setFehler(null); setWirtschaftsjahrId('') }}>
           + Neuer Lauf
         </Button>
       </div>
@@ -132,15 +168,38 @@ export function Sollstellungen() {
           {step === 'auswahl' && (
             <div className="space-y-4">
               <h2 className="font-semibold text-gray-800">Monat wählen</h2>
-              <div className="max-w-xs">
-                <label className="block text-sm text-gray-600 mb-1">Periode (Monat/Jahr)</label>
-                <input
-                  type="month"
-                  value={periode}
-                  onChange={e => setPeriode(e.target.value)}
-                  className="border rounded px-3 py-2 text-sm w-full"
-                />
+              <div className="grid grid-cols-2 gap-4 max-w-lg">
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">Wirtschaftsjahr</label>
+                  <select
+                    value={wirtschaftsjahrId}
+                    onChange={e => setWirtschaftsjahrId(e.target.value)}
+                    className="border rounded px-3 py-2 text-sm w-full"
+                  >
+                    <option value="">— bitte wählen —</option>
+                    {(wirtschaftsjahre ?? []).map(wj => (
+                      <option key={wj.id} value={wj.id}>
+                        {wj.jahr} {wj.status === 'abgeschlossen' ? '(abgeschlossen)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">Periode (Monat/Jahr)</label>
+                  <input
+                    type="month"
+                    value={periode}
+                    onChange={e => handlePeriodeChange(e.target.value)}
+                    className="border rounded px-3 py-2 text-sm w-full"
+                  />
+                </div>
               </div>
+              {periode && !wjFuerPeriode(periode) && (
+                <div className="text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2 text-xs">
+                  Kein Wirtschaftsjahr deckt {new Date(periode + '-01T12:00:00').toLocaleDateString('de-DE', { month: '2-digit', year: 'numeric' })} ab.
+                  {wirtschaftsjahrId ? '' : ' Bitte manuell ein WJ wählen oder zuerst ein Folgejahr anlegen.'}
+                </div>
+              )}
               <div className="flex gap-3">
                 <Button
                   onClick={handleSimulieren}
@@ -242,6 +301,7 @@ export function Sollstellungen() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b">
               <tr>
+                <th className="text-left px-4 py-3 text-gray-600">WJ</th>
                 <th className="text-left px-4 py-3 text-gray-600">Periode</th>
                 <th className="text-left px-4 py-3 text-gray-600">Typ</th>
                 <th className="text-right px-4 py-3 text-gray-600">Anzahl</th>
@@ -254,7 +314,7 @@ export function Sollstellungen() {
             <tbody>
               {(laeufe ?? []).length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="text-center py-8 text-gray-400">
+                  <td colSpan={8} className="text-center py-8 text-gray-400">
                     Keine Läufe vorhanden
                   </td>
                 </tr>
@@ -265,6 +325,9 @@ export function Sollstellungen() {
                     className="border-t hover:bg-gray-50 cursor-pointer"
                     onClick={() => setExpandedLauf(expandedLauf === lauf.id ? null : lauf.id)}
                   >
+                    <td className="px-4 py-3 text-gray-500 font-mono text-xs">
+                      {lauf.wirtschaftsjahr_jahr ?? '—'}
+                    </td>
                     <td className="px-4 py-3 font-mono">
                       {lauf.periode ? new Date(lauf.periode + 'T12:00:00').toLocaleDateString('de-DE', { month: '2-digit', year: 'numeric' }) : '—'}
                     </td>
@@ -315,7 +378,7 @@ export function Sollstellungen() {
                   </tr>
                   {expandedLauf === lauf.id && (
                     <tr key={`${lauf.id}-detail`} className="bg-blue-50">
-                      <td colSpan={7} className="px-6 py-3 text-xs text-gray-700 space-y-1">
+                      <td colSpan={8} className="px-6 py-3 text-xs text-gray-700 space-y-1">
                         {lauf.freigabe_user_name && (
                           <div>Freigegeben von: <strong>{lauf.freigabe_user_name}</strong>
                             {lauf.freigegeben_am && ` am ${new Date(lauf.freigegeben_am).toLocaleString('de-DE')}`}

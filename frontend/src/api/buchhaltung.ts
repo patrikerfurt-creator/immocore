@@ -81,9 +81,9 @@ export const buchhaltungApi = {
     client.get<HausgeldSollstellungslauf[]>('/hg-laeufe/', {
       params: { ...(objektId ? { objekt: objektId } : {}), ...params },
     }).then(r => r.data),
-  simulierenHausgeld: (data: { objekt_id: string; periode: string }) =>
+  simulierenHausgeld: (data: { objekt_id: string; periode: string; wirtschaftsjahr_id?: string }) =>
     client.post<HausgeldSimulationVorschau>('/hg-laeufe/simulieren/', data).then(r => r.data),
-  erstellenHausgeld: (data: { objekt_id: string; periode: string }) =>
+  erstellenHausgeld: (data: { objekt_id: string; periode: string; wirtschaftsjahr_id?: string }) =>
     client.post<HausgeldSollstellungslauf>('/hg-laeufe/erstellen/', data).then(r => r.data),
   freigebenHausgeld: (id: string) =>
     client.post<HausgeldSollstellungslauf>(`/hg-laeufe/${id}/freigeben/`).then(r => r.data),

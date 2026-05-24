@@ -1433,29 +1433,44 @@ class HausgeldSollstellungslaufViewSet(viewsets.ModelViewSet):
     def simulieren(self, request):
         """Vorschau ohne DB-Commit."""
         from .services.sollstellungslauf_service import simuliere_hausgeld_monat
-        from apps.objekte.models import Objekt
+        from apps.objekte.models import Objekt, Wirtschaftsjahr
         from django.core.exceptions import ValidationError as DjVE
         try:
             objekt  = Objekt.objects.get(pk=request.data.get('objekt_id'))
             periode = self._parse_periode(request.data.get('periode'))
         except (Objekt.DoesNotExist, ValueError) as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        wj = None
+        if wj_id := request.data.get('wirtschaftsjahr_id'):
+            try:
+                wj = Wirtschaftsjahr.objects.get(pk=wj_id, objekt=objekt)
+            except Wirtschaftsjahr.DoesNotExist:
+                return Response({'error': 'Wirtschaftsjahr nicht gefunden'}, status=status.HTTP_400_BAD_REQUEST)
         vorschau = simuliere_hausgeld_monat(objekt, periode)
+        if wj:
+            vorschau['wirtschaftsjahr_id'] = str(wj.pk)
+            vorschau['wirtschaftsjahr_jahr'] = wj.jahr
         return Response(vorschau)
 
     @action(detail=False, methods=['post'], url_path='erstellen')
     def erstellen(self, request):
         """Lauf-Datensatz mit Status 'vorschau' anlegen."""
         from .services.sollstellungslauf_service import erstelle_lauf_aus_vorschau
-        from apps.objekte.models import Objekt
+        from apps.objekte.models import Objekt, Wirtschaftsjahr
         from django.core.exceptions import ValidationError as DjVE
         try:
             objekt  = Objekt.objects.get(pk=request.data.get('objekt_id'))
             periode = self._parse_periode(request.data.get('periode'))
         except (Objekt.DoesNotExist, ValueError) as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        wj = None
+        if wj_id := request.data.get('wirtschaftsjahr_id'):
+            try:
+                wj = Wirtschaftsjahr.objects.get(pk=wj_id, objekt=objekt)
+            except Wirtschaftsjahr.DoesNotExist:
+                return Response({'error': 'Wirtschaftsjahr nicht gefunden'}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            lauf = erstelle_lauf_aus_vorschau(objekt, periode, request.user)
+            lauf = erstelle_lauf_aus_vorschau(objekt, periode, request.user, wirtschaftsjahr=wj)
         except DjVE as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(HausgeldSollstellungslaufSerializer(lauf).data, status=status.HTTP_201_CREATED)

@@ -481,20 +481,27 @@ class HausgeldSollstellungSerializer(HausgeldSollstellungListSerializer):
 
 
 class HausgeldSollstellungslaufSerializer(serializers.ModelSerializer):
-    objekt_bezeichnung  = serializers.CharField(source='objekt.bezeichnung', read_only=True)
-    erstellt_von_name   = serializers.SerializerMethodField()
-    freigabe_user_name  = serializers.SerializerMethodField()
+    objekt_bezeichnung      = serializers.CharField(source='objekt.bezeichnung', read_only=True)
+    erstellt_von_name       = serializers.SerializerMethodField()
+    freigabe_user_name      = serializers.SerializerMethodField()
+    wirtschaftsjahr_jahr    = serializers.SerializerMethodField()
 
     class Meta:
         model  = HausgeldSollstellungslauf
         fields = [
             'id', 'objekt', 'objekt_bezeichnung', 'typ', 'periode', 'status',
+            'wirtschaftsjahr', 'wirtschaftsjahr_jahr',
             'anzahl_sollstellungen', 'summe', 'fehler_details',
             'erstellt_am', 'erstellt_von', 'erstellt_von_name',
             'freigabe_user', 'freigabe_user_name', 'freigegeben_am',
             'commited_am', 'storniert_am', 'storniert_grund',
         ]
         read_only_fields = ['id', 'erstellt_am', 'commited_am', 'freigegeben_am']
+
+    def get_wirtschaftsjahr_jahr(self, obj):
+        if obj.wirtschaftsjahr_id:
+            return obj.wirtschaftsjahr.jahr
+        return None
 
     def get_erstellt_von_name(self, obj):
         try:

@@ -927,6 +927,8 @@ export interface HausgeldSollstellungslauf {
   typ: 'hausgeld_monat' | 'sonderumlage' | 'abrechnungsergebnis_jahr'
   periode: string
   status: 'vorschau' | 'freigegeben' | 'commited' | 'storniert'
+  wirtschaftsjahr: string | null
+  wirtschaftsjahr_jahr: number | null
   anzahl_sollstellungen: number
   summe: string
   erstellt_am: string

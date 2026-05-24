@@ -706,11 +706,6 @@ export function EBanking() {
           Import-Fehler: {(scanMut.error as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Unbekannter Fehler'}
         </div>
       )}
-      {uploadMut.isError && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
-          Fehler beim Import: {(uploadMut.error as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Unbekannter Fehler'}
-        </div>
-      )}
 
       {/* Tabs */}
       <div className="flex gap-1 border-b mb-4">
