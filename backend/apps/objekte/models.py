@@ -42,6 +42,21 @@ class Objekt(models.Model):
         related_name='vertretene_objekte',
         verbose_name='Betreuer-Vertretung',
     )
+    bundesland               = models.CharField(
+        max_length=50, blank=True, default='',
+        verbose_name='Bundesland',
+        help_text='Bundesland für Feiertags-Berechnung (Auto-Pipeline)',
+    )
+    auto_pipeline_aktiv      = models.BooleanField(
+        default=False,
+        verbose_name='Auto-Pipeline aktiv',
+        help_text='Automatische monatliche Hausgeld-Sollstellung + SEPA-Lastschrift',
+    )
+    auto_verbuchen_aktiv     = models.BooleanField(
+        default=False,
+        verbose_name='Auto-Verbuchen aktiv',
+        help_text='Bankabgänge automatisch verbuchen wenn eindeutiger WKZ-Match',
+    )
 
     class Meta:
         verbose_name        = 'Objekt'
