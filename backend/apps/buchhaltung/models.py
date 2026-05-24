@@ -45,6 +45,11 @@ class Buchungsart(models.Model):
     default_konto_soll_pattern = models.CharField(max_length=20, blank=True)
     default_konto_haben_pattern = models.CharField(max_length=20, blank=True)
     aktiv = models.BooleanField(default=True)
+    # WJ-Branch-Felder (vorhanden in DB, für Kompatibilität im Modell abgebildet)
+    erloeskonto_default_nr = models.CharField(max_length=10, blank=True, default='')
+    tilgungs_prioritaet = models.IntegerField(null=True, blank=True)
+    bankkonto_typ = models.CharField(max_length=25, blank=True, null=True)
+    buchungstyp = models.CharField(max_length=20, blank=True, null=True)
 
     class Meta:
         verbose_name = 'Buchungsart'
@@ -96,6 +101,10 @@ class Buchung(models.Model):
         Personenkonto, on_delete=models.SET_NULL, null=True, blank=True,
         related_name='hauptbuchungen'
     )
+    kreditor = models.ForeignKey(
+        'rechnungen.Kreditor', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='buchungen'
+    )
     # Sammelbuchung-Struktur: parent=None → Gesamtbuchung, parent gesetzt → Teilbuchung
     parent_buchung = models.ForeignKey(
         'self', on_delete=models.CASCADE, null=True, blank=True,
@@ -107,7 +116,7 @@ class Buchung(models.Model):
     wertstellungsdatum = models.DateField(null=True, blank=True)
     buchungstext = models.TextField(blank=True)
     verwendungszweck = models.TextField(blank=True)
-    wirtschaftsjahr = models.IntegerField(null=True, blank=True)
+    wirtschaftsjahr = models.IntegerField(null=True, blank=True, db_column='wirtschaftsjahr_nr')
     kostenstelle = models.CharField(max_length=20, blank=True)
     beleg_referenz = models.CharField(max_length=255, blank=True)
     storno_von = models.ForeignKey(
@@ -882,6 +891,11 @@ class LastschriftLauf(models.Model):
 # ---------------------------------------------------------------------------
 
 class KreditorOP(models.Model):
+    HERKUNFT_CHOICES = [
+        ('eingangsrechnung', 'Eingangsrechnung'),
+        ('wkz_vorlage',      'Wiederkehrende Buchung'),
+        ('manuell',          'Manuell'),
+    ]
     STATUS_CHOICES = [
         ('offen',       'Offen'),
         ('bezahlt',     'Bezahlt'),
@@ -889,33 +903,38 @@ class KreditorOP(models.Model):
         ('storniert',   'Storniert'),
     ]
 
-    op_nummer       = models.IntegerField(unique=True, db_index=True)
-    rechnung        = models.OneToOneField(
+    op_nummer        = models.IntegerField(unique=True, db_index=True)
+    rechnung         = models.OneToOneField(
         'rechnungen.Rechnung', on_delete=models.PROTECT,
         related_name='kreditor_op', null=True, blank=True,
     )
-    kreditor        = models.ForeignKey(
+    kreditor         = models.ForeignKey(
         'rechnungen.Kreditor', on_delete=models.PROTECT,
         related_name='offene_posten',
     )
-    objekt          = models.ForeignKey(
+    objekt           = models.ForeignKey(
         Objekt, on_delete=models.PROTECT,
         related_name='kreditor_ops',
     )
-    buchung         = models.ForeignKey(
+    buchung          = models.ForeignKey(
         Buchung, on_delete=models.PROTECT,
         related_name='kreditor_op_erstellung',
+        null=True, blank=True,  # nullable für WKZ (Buchung entsteht erst bei Bankabgang)
     )
-    zahlung_buchung = models.ForeignKey(
+    zahlung_buchung  = models.ForeignKey(
         Buchung, on_delete=models.SET_NULL,
         null=True, blank=True,
         related_name='kreditor_op_zahlung',
     )
-    betrag_ursprung = models.DecimalField(max_digits=12, decimal_places=2)
-    betrag_offen    = models.DecimalField(max_digits=12, decimal_places=2)
-    faellig_ab      = models.DateField()
-    status          = models.CharField(max_length=20, choices=STATUS_CHOICES, default='offen')
-    erstellt_am     = models.DateTimeField(auto_now_add=True)
+    betrag_ursprung  = models.DecimalField(max_digits=12, decimal_places=2)
+    betrag_offen     = models.DecimalField(max_digits=12, decimal_places=2)
+    faellig_ab       = models.DateField()
+    verwendungszweck = models.TextField(blank=True)
+    herkunft         = models.CharField(
+        max_length=20, choices=HERKUNFT_CHOICES, default='eingangsrechnung',
+    )
+    status           = models.CharField(max_length=20, choices=STATUS_CHOICES, default='offen')
+    erstellt_am      = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         verbose_name        = 'Kreditor-OP'
@@ -924,3 +943,212 @@ class KreditorOP(models.Model):
 
     def __str__(self):
         return f"OP-{self.op_nummer} | {self.kreditor} | {self.betrag_offen} € | {self.status}"
+
+
+# ---------------------------------------------------------------------------
+# WKZ — Wiederkehrende Buchungen (Vorlagen + OPs)
+# ---------------------------------------------------------------------------
+
+class WiederkehrendeBuchungVorlage(models.Model):
+    RHYTHMUS_CHOICES = [
+        ('monatlich',     'Monatlich'),
+        ('zweimonatlich', 'Zweimonatlich'),
+        ('quartalsweise', 'Quartalsweise'),
+        ('halbjaehrlich', 'Halbjährlich'),
+        ('jaehrlich',     'Jährlich'),
+        ('frei',          'Frei (manuell)'),
+    ]
+    BEI_WOCHENENDE_CHOICES = [
+        ('vor',          'Vorverschieben (Freitag)'),
+        ('zurueck',      'Zurückverschieben (Montag)'),
+        ('unveraendert', 'Unverändert'),
+    ]
+    TYP_CHOICES = [
+        ('bescheid', 'Bescheid'),
+        ('vertrag',  'Vertrag'),
+    ]
+    STATUS_CHOICES = [
+        ('entwurf',  'Entwurf'),
+        ('aktiv',    'Aktiv'),
+        ('pausiert', 'Pausiert'),
+        ('beendet',  'Beendet'),
+    ]
+
+    id                   = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    objekt               = models.ForeignKey(
+        Objekt, on_delete=models.PROTECT, related_name='wkz_vorlagen',
+    )
+    kreditor             = models.ForeignKey(
+        'rechnungen.Kreditor', on_delete=models.PROTECT, related_name='wkz_vorlagen',
+    )
+    bezeichnung          = models.CharField(max_length=200)
+    typ                  = models.CharField(max_length=10, choices=TYP_CHOICES)
+    betrag_gesamt        = models.DecimalField(max_digits=14, decimal_places=2)
+    rhythmus             = models.CharField(max_length=15, choices=RHYTHMUS_CHOICES)
+    erste_faelligkeit    = models.DateField()
+    bei_wochenende       = models.CharField(
+        max_length=12, choices=BEI_WOCHENENDE_CHOICES, default='zurueck',
+    )
+    vorlauf_tage         = models.IntegerField(default=7)
+    toleranz_betrag      = models.DecimalField(max_digits=14, decimal_places=2, default='5.00')
+    toleranz_tage        = models.IntegerField(default=14)
+    sepa_mandat_id       = models.CharField(max_length=35, blank=True)
+    bescheid_pflicht     = models.BooleanField(default=True)
+    gueltig_ab           = models.DateField()
+    gueltig_bis          = models.DateField(null=True, blank=True)
+    status               = models.CharField(max_length=10, choices=STATUS_CHOICES, default='entwurf')
+    freigegeben_am       = models.DateTimeField(null=True, blank=True)
+    freigegeben_von      = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        null=True, blank=True, related_name='freigegebene_wkz_vorlagen',
+    )
+    freigabe_jahresbetrag = models.DecimalField(
+        max_digits=14, decimal_places=2, null=True, blank=True,
+    )
+    ersetzt_vorlage      = models.ForeignKey(
+        'self', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='nachfolger_vorlagen',
+    )
+    erstellt_am          = models.DateTimeField(auto_now_add=True)
+    erstellt_von         = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='erstellte_wkz_vorlagen',
+    )
+    geaendert_am         = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name        = 'Wiederkehrende Buchung (Vorlage)'
+        verbose_name_plural = 'Wiederkehrende Buchungen (Vorlagen)'
+        ordering            = ['objekt', 'bezeichnung']
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(betrag_gesamt__gt=0),
+                name='wkz_vorlage_betrag_positiv',
+            ),
+            models.CheckConstraint(
+                check=models.Q(gueltig_bis__isnull=True) | models.Q(gueltig_bis__gte=models.F('gueltig_ab')),
+                name='wkz_vorlage_gueltig_bis_nach_ab',
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.bezeichnung} | {self.objekt} [{self.status}]"
+
+    @property
+    def perioden_pro_jahr(self):
+        mapping = {
+            'monatlich': 12, 'zweimonatlich': 6, 'quartalsweise': 4,
+            'halbjaehrlich': 2, 'jaehrlich': 1,
+        }
+        return mapping.get(self.rhythmus)  # None bei 'frei'
+
+    @property
+    def jahresbetrag(self):
+        ppj = self.perioden_pro_jahr
+        if ppj is None:
+            return None
+        return self.betrag_gesamt * ppj
+
+    @property
+    def naechste_faelligkeit(self):
+        """Erster Fälligkeitstermin ohne bestehenden WKZ-OP."""
+        from dateutil.relativedelta import relativedelta
+        from datetime import timedelta
+        schritt_map = {
+            'monatlich': 1, 'zweimonatlich': 2, 'quartalsweise': 3,
+            'halbjaehrlich': 6, 'jaehrlich': 12,
+        }
+        if self.rhythmus == 'frei':
+            return None
+        schritt = schritt_map.get(self.rhythmus, 1)
+        anker = self.erste_faelligkeit
+        i = 0
+        while True:
+            faellig = anker + relativedelta(months=schritt * i)
+            if self.gueltig_bis and faellig > self.gueltig_bis:
+                return None
+            exists = self.ops.filter(faellig_am=faellig).exists()
+            if not exists:
+                return faellig
+            i += 1
+            if i > 500:
+                return None
+
+
+class WiederkehrendeBuchungSplit(models.Model):
+    id          = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    vorlage     = models.ForeignKey(
+        WiederkehrendeBuchungVorlage, on_delete=models.CASCADE, related_name='splits',
+    )
+    kontonummer = models.CharField(max_length=8)
+    bezeichnung = models.CharField(max_length=200)
+    betrag      = models.DecimalField(max_digits=14, decimal_places=2)
+    reihenfolge = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        verbose_name        = 'WKZ-Split'
+        verbose_name_plural = 'WKZ-Splits'
+        ordering            = ['reihenfolge', 'kontonummer']
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(betrag__gt=0),
+                name='wkz_split_betrag_positiv',
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.kontonummer} {self.bezeichnung} — {self.betrag} €"
+
+
+class WiederkehrendeBuchungOP(models.Model):
+    STATUS_CHOICES = [
+        ('erzeugt',             'Erzeugt'),
+        ('bescheid_fehlt',      'Bescheid fehlt'),
+        ('bankabgang_erfolgt',  'Bankabgang erfolgt'),
+        ('abweichend_geklaert', 'Abweichend (geklärt)'),
+        ('verworfen',           'Verworfen'),
+    ]
+
+    id                         = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    vorlage                    = models.ForeignKey(
+        WiederkehrendeBuchungVorlage, on_delete=models.PROTECT, related_name='ops',
+    )
+    kreditor_op                = models.ForeignKey(
+        KreditorOP, on_delete=models.PROTECT, related_name='wkz_op',
+    )
+    periode_von                = models.DateField()
+    periode_bis                = models.DateField()
+    faellig_am                 = models.DateField()
+    erzeugt_am                 = models.DateTimeField(auto_now_add=True)
+    bescheid_hochgeladen_am    = models.DateTimeField(null=True, blank=True)
+    bescheid_hochgeladen_von   = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        null=True, blank=True, related_name='wkz_bescheid_uploads',
+    )
+    status                     = models.CharField(
+        max_length=22, choices=STATUS_CHOICES, default='erzeugt',
+    )
+    bank_match_buchung         = models.ForeignKey(
+        Buchung, on_delete=models.PROTECT,
+        null=True, blank=True, related_name='wkz_ops',
+    )
+    abweichung_betrag          = models.DecimalField(
+        max_digits=14, decimal_places=2, null=True, blank=True,
+    )
+    klaerungs_grund            = models.TextField(blank=True)
+
+    class Meta:
+        verbose_name        = 'WKZ-OP'
+        verbose_name_plural = 'WKZ-OPs'
+        ordering            = ['-faellig_am']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['vorlage', 'periode_von', 'periode_bis'],
+                name='wkz_op_unique_periode_je_vorlage',
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"WKZ-OP {self.vorlage.bezeichnung} "
+            f"{self.periode_von}–{self.periode_bis} [{self.status}]"
+        )

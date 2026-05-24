@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { buchhaltungApi } from '../../api/buchhaltung'
+import { rechnungenApi } from '../../api/rechnungen'
 import { useObjektStore } from '../../stores/objekt'
 import { Button } from '../../components/ui/Button'
-import type { Konto, Buchungsart } from '../../types'
+import type { Konto, Buchungsart, PersonenkontoSaldo, Kreditor, Buchung } from '../../types'
 
 const EUR = (v: number | string) =>
   Number(v).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })
@@ -13,14 +14,30 @@ function today() {
   return new Date().toISOString().slice(0, 10)
 }
 
+type KontoTyp = 'sachkonto' | 'personenkonto' | 'kreditorenkonto'
+
+const TYP_LABELS: Record<KontoTyp, string> = {
+  sachkonto: 'Sachkonto',
+  personenkonto: 'Personenkonto',
+  kreditorenkonto: 'Kreditor',
+}
+
 interface FormState {
   buchungsart: string
   buchungsdatum: string
   belegnr: string
   buchungstext: string
   betrag: string
+  // Soll-Seite
+  soll_typ: KontoTyp
   soll_konto: string
+  soll_personenkonto: string
+  soll_kreditor: string
+  // Haben-Seite
+  haben_typ: KontoTyp
   haben_konto: string
+  haben_personenkonto: string
+  haben_kreditor: string
 }
 
 const EMPTY: FormState = {
@@ -29,10 +46,98 @@ const EMPTY: FormState = {
   belegnr: '',
   buchungstext: '',
   betrag: '',
+  soll_typ: 'sachkonto',
   soll_konto: '',
+  soll_personenkonto: '',
+  soll_kreditor: '',
+  haben_typ: 'sachkonto',
   haben_konto: '',
+  haben_personenkonto: '',
+  haben_kreditor: '',
 }
 
+// ── Typ-Wähler Tabs ─────────────────────────────────────────────────────────
+interface TypSelectorProps {
+  seite: 'soll' | 'haben'
+  currentTyp: KontoTyp
+  onChange: (typ: KontoTyp) => void
+}
+
+function TypSelector({ seite, currentTyp, onChange }: TypSelectorProps) {
+  return (
+    <div className="flex gap-1 mb-2">
+      {(['sachkonto', 'personenkonto', 'kreditorenkonto'] as KontoTyp[]).map(typ => (
+        <button
+          key={typ}
+          type="button"
+          onClick={() => onChange(typ)}
+          className={`px-2 py-0.5 text-xs rounded font-medium transition-colors ${
+            currentTyp === typ
+              ? seite === 'soll'
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-700 text-white'
+              : 'bg-white text-gray-500 hover:bg-gray-100 border border-gray-200'
+          }`}
+        >
+          {TYP_LABELS[typ]}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+// ── Konto-Dropdown ───────────────────────────────────────────────────────────
+interface KontoDropdownProps {
+  seite: 'soll' | 'haben'
+  typ: KontoTyp
+  value: string
+  onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void
+  aktiveKonten: Konto[]
+  personenkonten: PersonenkontoSaldo[]
+  kreditoren: Kreditor[]
+}
+
+function KontoDropdown({
+  seite, typ, value, onChange,
+  aktiveKonten, personenkonten, kreditoren,
+}: KontoDropdownProps) {
+  const ringClass = seite === 'soll' ? 'focus:ring-blue-500' : 'focus:ring-gray-500'
+  const base = `border rounded-lg px-3 py-2 text-sm w-full bg-white focus:outline-none focus:ring-2 ${ringClass}`
+
+  if (typ === 'sachkonto') {
+    return (
+      <select value={value} onChange={onChange} className={base}>
+        <option value="">— Sachkonto wählen —</option>
+        {aktiveKonten.map(k => (
+          <option key={k.id} value={k.id}>{k.kontonummer} — {k.kontoname}</option>
+        ))}
+      </select>
+    )
+  }
+
+  if (typ === 'personenkonto') {
+    return (
+      <select value={value} onChange={onChange} className={base}>
+        <option value="">— Personenkonto wählen —</option>
+        {personenkonten.map(p => (
+          <option key={p.id} value={p.id}>{p.kontonummer} — {p.eigentuemer_name}</option>
+        ))}
+      </select>
+    )
+  }
+
+  // kreditorenkonto
+  return (
+    <select value={value} onChange={onChange} className={base}>
+      <option value="">— Kreditor wählen —</option>
+      {kreditoren.map(k => (
+        <option key={k.id} value={k.id}>{k.kreditorennummer} — {k.name}</option>
+      ))}
+    </select>
+  )
+}
+
+// ── Hauptkomponente ──────────────────────────────────────────────────────────
 export function Dialogbuchhaltung() {
   const objektId = useObjektStore(s => s.selectedId)
   const qc = useQueryClient()
@@ -80,6 +185,20 @@ export function Dialogbuchhaltung() {
     enabled: !!objektId,
   })
 
+  const { data: personenkonten } = useQuery({
+    queryKey: ['personenkonten-saldo', objektId],
+    queryFn: () => buchhaltungApi.personenkontenMitSaldo(objektId!),
+    enabled: !!objektId,
+    select: (data: PersonenkontoSaldo[]) => data.filter(p => p.status === 'aktiv'),
+  })
+
+  const { data: kreditoren } = useQuery({
+    queryKey: ['kreditoren-dialog'],
+    queryFn: () => rechnungenApi.kreditoren(),
+    enabled: !!objektId,
+    select: (data: Kreditor[]) => data.filter(k => k.aktiv),
+  })
+
   const { data: letzteZehn } = useQuery({
     queryKey: ['buchungen-dialog', objektId],
     queryFn: () =>
@@ -95,6 +214,29 @@ export function Dialogbuchhaltung() {
     qc.invalidateQueries({ queryKey: ['buchungsstapel', objektId] })
   }
 
+  function buildPayload(f: FormState) {
+    return {
+      objekt: objektId!,
+      buchungsart: f.buchungsart || undefined,
+      buchungsdatum: f.buchungsdatum,
+      belegnr: f.belegnr,
+      buchungstext: f.buchungstext,
+      betrag: f.betrag as unknown as number,
+      soll_konto: f.soll_typ === 'sachkonto' ? f.soll_konto || undefined : undefined,
+      haben_konto: f.haben_typ === 'sachkonto' ? f.haben_konto || undefined : undefined,
+      personenkonto: f.soll_typ === 'personenkonto'
+        ? f.soll_personenkonto || undefined
+        : f.haben_typ === 'personenkonto'
+          ? f.haben_personenkonto || undefined
+          : undefined,
+      kreditor: f.soll_typ === 'kreditorenkonto'
+        ? f.soll_kreditor || undefined
+        : f.haben_typ === 'kreditorenkonto'
+          ? f.haben_kreditor || undefined
+          : undefined,
+    }
+  }
+
   const buchenMut = useMutation({
     mutationFn: async () => {
       let stapelId = aktuellerStapel?.id ?? null
@@ -104,14 +246,7 @@ export function Dialogbuchhaltung() {
         setAktuellerStapelId(stapelId)
       }
       return buchhaltungApi.createBuchung({
-        objekt: objektId!,
-        buchungsart: form.buchungsart || undefined,
-        buchungsdatum: form.buchungsdatum,
-        belegnr: form.belegnr,
-        buchungstext: form.buchungstext,
-        betrag: form.betrag as unknown as number,
-        soll_konto: form.soll_konto || undefined,
-        haben_konto: form.haben_konto || undefined,
+        ...buildPayload(form),
         stapel: stapelId,
       } as never)
     },
@@ -125,15 +260,7 @@ export function Dialogbuchhaltung() {
 
   const aktualisierenMut = useMutation({
     mutationFn: () =>
-      buchhaltungApi.updateBuchung(editingId!, {
-        buchungsart: form.buchungsart || undefined,
-        buchungsdatum: form.buchungsdatum,
-        belegnr: form.belegnr,
-        buchungstext: form.buchungstext,
-        betrag: form.betrag as unknown as number,
-        soll_konto: form.soll_konto || undefined,
-        haben_konto: form.haben_konto || undefined,
-      } as never),
+      buchhaltungApi.updateBuchung(editingId!, buildPayload(form) as never),
     onSuccess: () => {
       invalidateAll()
       setEditingId(null)
@@ -144,16 +271,22 @@ export function Dialogbuchhaltung() {
   })
 
   function handleEditClick(buchungId: string) {
-    buchhaltungApi.getBuchung(buchungId).then((b: Record<string, unknown>) => {
+    buchhaltungApi.getBuchung(buchungId).then((b: Buchung) => {
       setEditingId(buchungId)
       setForm({
-        buchungsart: (b.buchungsart as string) ?? '',
-        buchungsdatum: (b.buchungsdatum as string) ?? today(),
-        belegnr: (b.belegnr as string) ?? '',
-        buchungstext: (b.buchungstext as string) ?? '',
+        buchungsart: b.buchungsart ?? '',
+        buchungsdatum: b.buchungsdatum ?? today(),
+        belegnr: b.belegnr ?? '',
+        buchungstext: b.buchungstext ?? '',
         betrag: String(b.betrag ?? ''),
-        soll_konto: (b.soll_konto as string) ?? '',
-        haben_konto: (b.haben_konto as string) ?? '',
+        soll_typ: 'sachkonto',
+        soll_konto: b.soll_konto ?? '',
+        soll_personenkonto: '',
+        soll_kreditor: '',
+        haben_typ: 'sachkonto',
+        haben_konto: b.haben_konto ?? '',
+        haben_personenkonto: '',
+        haben_kreditor: '',
       })
     })
   }
@@ -163,19 +296,46 @@ export function Dialogbuchhaltung() {
     setForm(EMPTY)
   }
 
-const set = (field: keyof FormState) => (
+  const set = (field: keyof FormState) => (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) => setForm(prev => ({ ...prev, [field]: e.target.value }))
 
   const aktiveKonten = (konten ?? []).filter(
     (k: Konto) => k.aktiv && k.kontoart === 'standard'
   )
+  const aktivePersonenkonten = personenkonten ?? []
+  const aktiveKreditoren = kreditoren ?? []
+
+  // Anzeige-Hilfsfunktionen
+  function kontoNummer(seite: 'soll' | 'haben'): string {
+    const typ = seite === 'soll' ? form.soll_typ : form.haben_typ
+    if (typ === 'sachkonto') {
+      const id = seite === 'soll' ? form.soll_konto : form.haben_konto
+      return aktiveKonten.find(k => k.id === id)?.kontonummer ?? ''
+    }
+    if (typ === 'personenkonto') {
+      const id = seite === 'soll' ? form.soll_personenkonto : form.haben_personenkonto
+      return aktivePersonenkonten.find(p => p.id === id)?.kontonummer ?? ''
+    }
+    const id = seite === 'soll' ? form.soll_kreditor : form.haben_kreditor
+    return aktiveKreditoren.find(k => k.id === id)?.kreditorennummer ?? ''
+  }
+
+  const sollGesetzt =
+    (form.soll_typ === 'sachkonto' && !!form.soll_konto) ||
+    (form.soll_typ === 'personenkonto' && !!form.soll_personenkonto) ||
+    (form.soll_typ === 'kreditorenkonto' && !!form.soll_kreditor)
+
+  const habenGesetzt =
+    (form.haben_typ === 'sachkonto' && !!form.haben_konto) ||
+    (form.haben_typ === 'personenkonto' && !!form.haben_personenkonto) ||
+    (form.haben_typ === 'kreditorenkonto' && !!form.haben_kreditor)
 
   const kannBuchen =
     !!objektId &&
     !!form.buchungsdatum &&
-    !!form.soll_konto &&
-    !!form.haben_konto &&
+    sollGesetzt &&
+    habenGesetzt &&
     !!form.betrag &&
     Number(form.betrag) > 0
 
@@ -281,31 +441,44 @@ const set = (field: keyof FormState) => (
         </div>
 
         {/* Zeile 2: Soll / Betrag / Haben — T-Konten-Layout */}
-        <div className="grid grid-cols-[1fr_auto_1fr] gap-3 items-end mb-5">
+        <div className="grid grid-cols-[1fr_auto_1fr] gap-3 items-start mb-5">
+
+          {/* SOLL */}
           <div className="bg-blue-50 rounded-lg p-4 border border-blue-100">
             <label className="block text-xs font-semibold text-blue-700 uppercase tracking-wide mb-2">
               Soll *
             </label>
-            <select
-              value={form.soll_konto}
-              onChange={set('soll_konto')}
-              className="border rounded-lg px-3 py-2 text-sm w-full bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">— Konto wählen —</option>
-              {aktiveKonten.map((k: Konto) => (
-                <option key={k.id} value={k.id}>
-                  {k.kontonummer} — {k.kontoname}
-                </option>
-              ))}
-            </select>
-            {form.soll_konto && (
+            <TypSelector
+              seite="soll"
+              currentTyp={form.soll_typ}
+              onChange={typ => setForm(prev => ({ ...prev, soll_typ: typ, soll_konto: '', soll_personenkonto: '', soll_kreditor: '' }))}
+            />
+            <KontoDropdown
+              seite="soll"
+              typ={form.soll_typ}
+              value={
+                form.soll_typ === 'sachkonto' ? form.soll_konto
+                  : form.soll_typ === 'personenkonto' ? form.soll_personenkonto
+                  : form.soll_kreditor
+              }
+              onChange={
+                form.soll_typ === 'sachkonto' ? set('soll_konto')
+                  : form.soll_typ === 'personenkonto' ? set('soll_personenkonto')
+                  : set('soll_kreditor')
+              }
+              aktiveKonten={aktiveKonten}
+              personenkonten={aktivePersonenkonten}
+              kreditoren={aktiveKreditoren}
+            />
+            {sollGesetzt && (
               <div className="mt-2 text-xs text-blue-600 font-mono">
-                {aktiveKonten.find((k: Konto) => k.id === form.soll_konto)?.kontonummer}
+                {kontoNummer('soll')}
               </div>
             )}
           </div>
 
-          <div className="flex flex-col items-center gap-1 pb-1">
+          {/* Betrag (mittig) */}
+          <div className="flex flex-col items-center gap-1 pt-8">
             <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide">
               Betrag *
             </label>
@@ -321,25 +494,36 @@ const set = (field: keyof FormState) => (
             <span className="text-xs text-gray-400">EUR</span>
           </div>
 
+          {/* HABEN */}
           <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
             <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
               Haben *
             </label>
-            <select
-              value={form.haben_konto}
-              onChange={set('haben_konto')}
-              className="border rounded-lg px-3 py-2 text-sm w-full bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">— Konto wählen —</option>
-              {aktiveKonten.map((k: Konto) => (
-                <option key={k.id} value={k.id}>
-                  {k.kontonummer} — {k.kontoname}
-                </option>
-              ))}
-            </select>
-            {form.haben_konto && (
+            <TypSelector
+              seite="haben"
+              currentTyp={form.haben_typ}
+              onChange={typ => setForm(prev => ({ ...prev, haben_typ: typ, haben_konto: '', haben_personenkonto: '', haben_kreditor: '' }))}
+            />
+            <KontoDropdown
+              seite="haben"
+              typ={form.haben_typ}
+              value={
+                form.haben_typ === 'sachkonto' ? form.haben_konto
+                  : form.haben_typ === 'personenkonto' ? form.haben_personenkonto
+                  : form.haben_kreditor
+              }
+              onChange={
+                form.haben_typ === 'sachkonto' ? set('haben_konto')
+                  : form.haben_typ === 'personenkonto' ? set('haben_personenkonto')
+                  : set('haben_kreditor')
+              }
+              aktiveKonten={aktiveKonten}
+              personenkonten={aktivePersonenkonten}
+              kreditoren={aktiveKreditoren}
+            />
+            {habenGesetzt && (
               <div className="mt-2 text-xs text-gray-500 font-mono">
-                {aktiveKonten.find((k: Konto) => k.id === form.haben_konto)?.kontonummer}
+                {kontoNummer('haben')}
               </div>
             )}
           </div>
@@ -360,14 +544,14 @@ const set = (field: keyof FormState) => (
         </div>
 
         {/* Vorschau */}
-        {form.soll_konto && form.haben_konto && form.betrag && (
+        {sollGesetzt && habenGesetzt && form.betrag && (
           <div className="mb-4 px-4 py-3 bg-gray-50 rounded-lg text-sm text-gray-600 border">
             <span className="font-mono font-semibold text-blue-700">
-              {aktiveKonten.find((k: Konto) => k.id === form.soll_konto)?.kontonummer}
+              {kontoNummer('soll')}
             </span>
             {' '}an{' '}
             <span className="font-mono font-semibold text-gray-700">
-              {aktiveKonten.find((k: Konto) => k.id === form.haben_konto)?.kontonummer}
+              {kontoNummer('haben')}
             </span>
             {' — '}
             <span className="font-semibold tabular-nums">{EUR(form.betrag)}</span>
@@ -440,41 +624,49 @@ const set = (field: keyof FormState) => (
                   Noch keine Buchungen vorhanden
                 </td>
               </tr>
-            ) : (letzteZehn ?? []).map(b => (
-              <tr
-                key={b.id}
-                className={`border-t hover:bg-gray-50 ${editingId === b.id ? 'bg-amber-50' : ''}`}
-              >
-                <td className="px-4 py-2.5 text-gray-500 whitespace-nowrap">{DATUM(b.buchungsdatum)}</td>
-                <td className="px-4 py-2.5 text-gray-400 text-xs">{b.buchungsart_kuerzel || '—'}</td>
-                <td className="px-4 py-2.5 font-mono text-xs text-blue-700">{b.soll_konto_nr || '—'}</td>
-                <td className="px-4 py-2.5 font-mono text-xs text-gray-600">{b.haben_konto_nr || '—'}</td>
-                <td className="px-4 py-2.5 text-gray-700 truncate max-w-[12rem]">{b.buchungstext || '—'}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums font-medium">{EUR(b.betrag)}</td>
-                <td className="px-4 py-2.5">
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                    b.status === 'festgeschrieben'
-                      ? 'bg-green-100 text-green-700'
-                      : b.status === 'storniert'
-                      ? 'bg-red-100 text-red-600'
-                      : 'bg-yellow-100 text-yellow-700'
-                  }`}>
-                    {b.status}
-                  </span>
-                </td>
-                <td className="px-2 py-2.5 text-center">
-                  {b.status === 'entwurf' && editingId !== b.id && (
-                    <button
-                      onClick={() => handleEditClick(b.id)}
-                      title="Buchung bearbeiten"
-                      className="text-gray-400 hover:text-blue-600 transition-colors"
-                    >
-                      ✏️
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
+            ) : (letzteZehn ?? []).map(b => {
+              const bExt = b as typeof b & {
+                personenkonto_nr?: string
+                kreditor_name?: string
+              }
+              const sollAnzeige = b.soll_konto_nr || bExt.personenkonto_nr || '—'
+              const habenAnzeige = b.haben_konto_nr || bExt.kreditor_name || '—'
+              return (
+                <tr
+                  key={b.id}
+                  className={`border-t hover:bg-gray-50 ${editingId === b.id ? 'bg-amber-50' : ''}`}
+                >
+                  <td className="px-4 py-2.5 text-gray-500 whitespace-nowrap">{DATUM(b.buchungsdatum)}</td>
+                  <td className="px-4 py-2.5 text-gray-400 text-xs">{b.buchungsart_kuerzel || '—'}</td>
+                  <td className="px-4 py-2.5 font-mono text-xs text-blue-700">{sollAnzeige}</td>
+                  <td className="px-4 py-2.5 font-mono text-xs text-gray-600">{habenAnzeige}</td>
+                  <td className="px-4 py-2.5 text-gray-700 truncate max-w-[12rem]">{b.buchungstext || '—'}</td>
+                  <td className="px-4 py-2.5 text-right tabular-nums font-medium">{EUR(b.betrag)}</td>
+                  <td className="px-4 py-2.5">
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                      b.status === 'festgeschrieben'
+                        ? 'bg-green-100 text-green-700'
+                        : b.status === 'storniert'
+                        ? 'bg-red-100 text-red-600'
+                        : 'bg-yellow-100 text-yellow-700'
+                    }`}>
+                      {b.status}
+                    </span>
+                  </td>
+                  <td className="px-2 py-2.5 text-center">
+                    {b.status === 'entwurf' && editingId !== b.id && (
+                      <button
+                        onClick={() => handleEditClick(b.id)}
+                        title="Buchung bearbeiten"
+                        className="text-gray-400 hover:text-blue-600 transition-colors"
+                      >
+                        ✏️
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>

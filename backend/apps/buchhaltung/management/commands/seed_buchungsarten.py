@@ -8,10 +8,10 @@ from apps.buchhaltung.models import Buchungsart
 
 BA_KATALOG = [
     # nr, kuerzel, bezeichnung, einzelabr, gesamt, ruecklage, umlage, beleg, beschluss, system, soll_pat, haben_pat
-    ('001', 'SAVO-S', 'Saldenvortrag Sachkonten',                   'nein', False, False, 'gesperrt', False, False, True,  '', ''),
-    ('002', 'SAVO-P', 'Saldenvortrag Personenkonten',               'nein', False, False, 'gesperrt', False, False, True,  '', ''),
-    ('003', 'SAVO-K', 'Saldenvortrag Kreditoren',                   'nein', False, False, 'gesperrt', False, False, True,  '', ''),
-    ('004', 'SAVO-B', 'Saldenvortrag Bankkonten',                   'nein', False, False, 'gesperrt', False, False, True,  '', ''),
+    ('001', 'SAVO-S', 'Saldenvortrag Sachkonten',                   'nein', False, False, 'gesperrt', False, False, False, '', ''),
+    ('002', 'SAVO-P', 'Saldenvortrag Personenkonten',               'nein', False, False, 'gesperrt', False, False, False, '', ''),
+    ('003', 'SAVO-K', 'Saldenvortrag Kreditoren',                   'nein', False, False, 'gesperrt', False, False, False, '', ''),
+    ('004', 'SAVO-B', 'Saldenvortrag Bankkonten',                   'nein', False, False, 'gesperrt', False, False, False, '', ''),
     ('010', 'HGV',    'Sollstellung Hausgeldvorauszahlung',          'ja',   True,  False, 'gesperrt', False, False, True,  '', ''),
     ('011', 'RLZ',    'Sollstellung Rücklagenzuführung',             'nein', False, True,  'gesperrt', False, False, True,  '.911', ''),
     ('012', 'SU',     'Sonderumlage',                                'ja',   True,  False, 'pflicht',  True,  True,  True,  '', ''),

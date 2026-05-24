@@ -106,12 +106,17 @@ export const buchhaltungApi = {
   // Kontoumsätze (neue CAMT-Importe)
   kontoumsaetze: (params?: Record<string, string>) =>
     client.get<Kontoumsatz[]>('/kontoumsaetze/', { params }).then(r => r.data),
-  camtUpload: (objektId: string, file: File) => {
+  camtUpload: async (objektId: string, file: File) => {
     const form = new FormData()
     form.append('objekt', objektId)
     form.append('datei', file)
-    return client.post('/kontoumsaetze/camt-upload/', form, {
+    const vorschau = await client.post('/kontoumsaetze/camt-vorschau/', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
+    }).then(r => r.data)
+    return client.post('/kontoumsaetze/camt-upload/', {
+      objekt: objektId,
+      transaktionen: vorschau.transaktionen,
+      import_datei: file.name,
     }).then(r => r.data)
   },
   umsatzZuordnen: (id: string, buchungId: string) =>

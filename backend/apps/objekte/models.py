@@ -17,6 +17,9 @@ class Objekt(models.Model):
     objektnummer             = models.CharField(max_length=20, unique=True, blank=True)
     objekt_typ               = models.CharField(max_length=10, choices=OBJEKT_TYP_CHOICES)
     bezeichnung              = models.CharField(max_length=255)
+    kurzbezeichnung          = models.CharField(max_length=50, blank=True, default='',
+                                                verbose_name='Kurzbezeichnung',
+                                                help_text='Kurzkürzel für SEPA-Verwendungszweck, z. B. "WEG-RottPlatz14"')
     strasse                  = models.CharField(max_length=255)
     plz                      = models.CharField(max_length=10)
     ort                      = models.CharField(max_length=100)
@@ -38,6 +41,21 @@ class Objekt(models.Model):
         null=True, blank=True,
         related_name='vertretene_objekte',
         verbose_name='Betreuer-Vertretung',
+    )
+    bundesland               = models.CharField(
+        max_length=50, blank=True, default='',
+        verbose_name='Bundesland',
+        help_text='Bundesland für Feiertags-Berechnung (Auto-Pipeline)',
+    )
+    auto_pipeline_aktiv      = models.BooleanField(
+        default=False,
+        verbose_name='Auto-Pipeline aktiv',
+        help_text='Automatische monatliche Hausgeld-Sollstellung + SEPA-Lastschrift',
+    )
+    auto_verbuchen_aktiv     = models.BooleanField(
+        default=False,
+        verbose_name='Auto-Verbuchen aktiv',
+        help_text='Bankabgänge automatisch verbuchen wenn eindeutiger WKZ-Match',
     )
 
     class Meta:
@@ -79,8 +97,13 @@ class Bankkonto(models.Model):
     iban         = models.CharField(max_length=34, blank=True)
     bic          = models.CharField(max_length=11, blank=True)
     kontoinhaber = models.CharField(max_length=255, blank=True)
-    reihenfolge  = models.PositiveIntegerField(default=1)
-    aktiv        = models.BooleanField(default=True)
+    reihenfolge      = models.PositiveIntegerField(default=1)
+    aktiv            = models.BooleanField(default=True)
+    zahlungsverkehr  = models.BooleanField(
+        default=False,
+        verbose_name='Zahlungsverkehrskonto',
+        help_text='Standardkonto für ausgehende Zahlungen (SEPA pain.001)',
+    )
 
     class Meta:
         verbose_name        = 'Bankkonto'

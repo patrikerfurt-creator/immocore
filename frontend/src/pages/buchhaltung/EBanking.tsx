@@ -373,6 +373,11 @@ export function EBanking() {
           {(uploadMut.data as { erkannt: number }).erkannt} erkannt
         </div>
       )}
+      {uploadMut.isError && (
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
+          Fehler beim Import: {(uploadMut.error as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Unbekannter Fehler'}
+        </div>
+      )}
 
       <div className="flex gap-3 mb-4">
         <select

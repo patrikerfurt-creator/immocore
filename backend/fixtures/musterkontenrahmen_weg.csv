@@ -4,6 +4,7 @@ kontonummer;kontoname;abrechnungsart;direktes_buchen;verteilerschluessel;kontoar
 13650;DCL-Debitor;;nein;;standard;nein;
 13700;Ungeklärte Posten;;ja;;standard;nein;
 14600;Bankübertrag / Geldtransit;;ja;;standard;nein;
+15900;Schwebende ER;;ja;;standard;nein;
 16000;Kasse;;ja;;standard;nein;
 18000;Bank 1;;nein;;standard;nein;
 18911;Bank 2 Rücklage 1;;nein;;standard;nein;

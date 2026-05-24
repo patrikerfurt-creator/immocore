@@ -29,6 +29,8 @@ interface FormState {
   nachname: string
   vorname2: string
   nachname2: string
+  briefanrede: string
+  briefanrede2: string
   email: string
   telefon: string
   adresse: string
@@ -45,6 +47,8 @@ function toFormState(p?: Person): FormState {
     nachname: p?.nachname ?? '',
     vorname2: p?.vorname2 ?? '',
     nachname2: p?.nachname2 ?? '',
+    briefanrede: p?.briefanrede ?? '',
+    briefanrede2: p?.briefanrede2 ?? '',
     email: p?.email ?? '',
     telefon: p?.telefon ?? '',
     adresse: (p as unknown as Record<string, string>)?.adresse ?? '',
@@ -180,6 +184,20 @@ export function PersonForm({ person }: Props) {
                 placeholder="Müller"
               />
             </div>
+          )}
+          <Input
+            label="Briefanrede"
+            value={form.briefanrede}
+            onChange={e => set('briefanrede', e.target.value)}
+            placeholder='z.B. "Sehr geehrter Herr Müller"'
+          />
+          {PAAR_ANREDEN.has(form.anrede) && (
+            <Input
+              label="Briefanrede 2. Person"
+              value={form.briefanrede2}
+              onChange={e => set('briefanrede2', e.target.value)}
+              placeholder='z.B. "Sehr geehrte Frau Müller"'
+            />
           )}
         </div>
       )}

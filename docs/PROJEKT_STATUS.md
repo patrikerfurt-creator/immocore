@@ -81,13 +81,19 @@
 
 | App | Letzte Migration | Status |
 |-----|-----------------|--------|
-| buchhaltung | 0013_lastschriftlauf_buchungen_erstellt | ✅ angewendet |
+| buchhaltung | 0015_wkz_models | ✅ angewendet |
 | konten | aktuell | ✅ |
 | objekte | aktuell | ✅ |
 | personen | aktuell | ✅ |
 | mitarbeiter | 0003_mitarbeiterobjektzuordnung_aufgabe | ✅ angewendet |
-| rechnungen | 0004_freigabelimitdefault | ✅ angewendet |
+| rechnungen | 0011_wkz_models | ✅ angewendet |
 | prozesse | aktuell | ✅ |
+
+**WKZ-Models (0015 / rechnungen 0011):**
+- `WiederkehrendeBuchungVorlage` — Vertrag/Bescheid, rhythmus, erste_faelligkeit, Wochenend-Regel, Vorlauf-Tage, Toleranz, gueltig_ab/bis, SEPA-Mandat-ID
+- `WiederkehrendeBuchungSplit` — kontonummer, betrag, reihenfolge; M2M zur Vorlage
+- `WiederkehrendeBuchungOP` — Fälligkeits-OP pro Periode, Status-Lifecycle (offen→bankabgang_erfolgt/abweichend_geklaert/verworfen)
+- `KreditorOP` — Offener Posten je Kreditor + Objekt (herkunft: wkz_vorlage / manuell)
 
 ---
 
@@ -98,7 +104,11 @@
 | Sollstellungslauf | `services/sollstellung.py` | ✅ | Gesamt-Buchung + Teilbuchungen + OffenerPosten |
 | SEPA Lastschrift | `services/sepa_lastschrift.py` | ✅ | pain.008.003.02 XML, gruppiert nach Fälligkeitsdatum + SeqTp |
 | Mahnwesen | `services/mahnwesen.py` | ✅ | Berechnung Gebühren + Basiszinsen; keine Frontend-Page |
-| Buchungserkennung KI | `services/buchungserkennung.py` | ✅ | Stufe 1 regelbasiert (IBAN), Stufe 2 Claude API |
+| Buchungserkennung KI | `services/buchungserkennung.py` | ✅ | Stufe 0 WKZ, Stufe 1 regelbasiert (IBAN), Stufe 2 Claude API |
+| WKZ Vorlage-Service | `services/wkz/vorlage_service.py` | ✅ | Anlage, Split-Validierung, Freigabe-Workflow, Pausieren/Reaktivieren, Beenden, Versionierung |
+| WKZ OP-Generator | `services/wkz/op_generator_service.py` | ✅ | Fälligkeitsberechnung, Wochenend-Regel, Idempotenz, Celery-Task tägl. 03:00 Uhr |
+| WKZ Bank-Match | `services/wkz/bank_match_service.py` | ✅ | IBAN-/MREF-Erkennung, Toleranz-Fenster (Betrag + Tage), Auto-Match <1% |
+| WKZ Buchungs-Service | `services/wkz/buchungs_service.py` | ✅ | Kassenprinzip-Aufwandsbuchung (Sammelbuchung + Teilbuchungen), verbuche_mit_anpassung |
 | Rechnungs-OCR | `rechnungen/services/invoice_parser.py` | ✅ | PyMuPDF + Tesseract-Fallback + Claude API |
 | Rechnungsverarbeitung | `rechnungen/services/verarbeitung.py` | ✅ | 5-stufige Duplikaterkennung, Kreditor-Abgleich, Objekt-Erkennung |
 | Zinsen | `services/zinsen.py` | ✅ | Basiszinssatz-Abfrage |
@@ -136,6 +146,11 @@
 | `/lastschrift-laeufe/` | CRUD + xml (pain.008 Download + Buchungen erstellen) | ✅ |
 | `/rechnungen/` | CRUD + ki-ocr + freigeben + ablehnen + buchen + sepa-export | ✅ |
 | `/kreditoren/` | CRUD + deaktivieren | ✅ |
+| `/wkz-vorlagen/` | CRUD + einreichen + freigeben + pausieren + reaktivieren + beenden + ersetzen + forecast | ✅ |
+| `/wkz-ops/` | ReadOnly + verwerfen + manuell-verbuchen | ✅ |
+| `/objekte/<pk>/wkz-vorlagen/` | gefiltert nach Objekt | ✅ |
+| `/objekte/<pk>/wkz-forecast/` | 90-Tage-Liquiditätsvorschau | ✅ |
+| `/kreditoren/<pk>/wkz-vorlagen/` | Vorlagen eines Kreditors über alle Objekte | ✅ |
 | `/freigabelimits-standard/` | GET + PUT (globale Standard-Freigabelimits) | ✅ |
 | `/mitarbeiter-zuordnungen/` | GET + POST + PATCH (aufgabe) + DELETE | ✅ |
 | `/prozesse/` | start + schritte + schritt-speichern + abbrechen | ✅ |
@@ -189,6 +204,7 @@
 | | Kontoauszug (Sachkonto) | ✅ | Gegenkonto-Anzeige inkl. Personenkonto |
 | | Sollstellungen | ✅ | Simulation, Freigabe, Ausführung |
 | | Mahnwesen | ❌ | Model + API vorhanden, Frontend-Page fehlt |
+| | **Wiederkehrende Buchungen (WKZ)** | ✅ | VorlagenListe, VorlageWizard (4 Schritte), VorlageDetail, OPDetail, Forecast |
 | **Rechnungen** | RechnungenListe + DetailModal | ✅ | KI-OCR, Freigabe, BuchungsForm |
 | | KreditorenListe | ✅ | Inline-Editformular, Deaktivieren |
 | **Zahlungsverkehr** | Lastschrift | ✅ | SEPA pain.008; Protokoll, Buchungen beim XML-Download |

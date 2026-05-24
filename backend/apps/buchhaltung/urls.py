@@ -1,3 +1,4 @@
+from django.urls import path
 from rest_framework.routers import DefaultRouter
 from .views import (
     BuchungsartViewSet,
@@ -13,6 +14,12 @@ from .views import (
     BankImportViewSet,
     JahresabrechnungViewSet, EinzelAbrechnungViewSet,
     LastschriftLaufViewSet,
+)
+from .views_wkz import (
+    WKZVorlageViewSet,
+    WKZOPViewSet,
+    WKZForecastViewSet,
+    KreditorWKZVorlagenViewSet,
 )
 
 router = DefaultRouter()
@@ -38,4 +45,26 @@ router.register(r'jahresabrechnungen', JahresabrechnungViewSet, basename='jahres
 router.register(r'einzelabrechnungen', EinzelAbrechnungViewSet, basename='einzelabrechnungen')
 router.register(r'lastschrift-laeufe', LastschriftLaufViewSet, basename='lastschrift-laeufe')
 
-urlpatterns = router.urls
+# WKZ-Vorlagen (flache Endpunkte)
+router.register(r'wkz-vorlagen', WKZVorlageViewSet, basename='wkz-vorlagen')
+router.register(r'wkz-ops', WKZOPViewSet, basename='wkz-ops')
+
+urlpatterns = router.urls + [
+    # Nested: /objekte/{objekt_pk}/wkz-vorlagen/ und /objekte/{objekt_pk}/wkz-forecast/
+    path(
+        'objekte/<str:objekt_pk>/wkz-vorlagen/',
+        WKZVorlageViewSet.as_view({'get': 'list', 'post': 'create'}),
+        name='objekt-wkz-vorlagen',
+    ),
+    path(
+        'objekte/<str:objekt_pk>/wkz-forecast/',
+        WKZForecastViewSet.as_view({'get': 'list'}),
+        name='objekt-wkz-forecast',
+    ),
+    # /kreditoren/{kreditor_pk}/wkz-vorlagen/
+    path(
+        'kreditoren/<str:kreditor_pk>/wkz-vorlagen/',
+        KreditorWKZVorlagenViewSet.as_view({'get': 'list'}),
+        name='kreditor-wkz-vorlagen',
+    ),
+]

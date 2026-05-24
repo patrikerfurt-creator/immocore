@@ -36,6 +36,7 @@ export interface ObjektList {
   id: string
   objektnummer: string
   bezeichnung: string
+  kurzbezeichnung: string
   objekt_typ: ObjektTyp
   strasse: string
   plz: string
@@ -107,10 +108,13 @@ export interface Person extends PersonList {
   nachname: string
   vorname2: string
   nachname2: string
+  briefanrede: string
+  briefanrede2: string
   firmenname: string
   strasse: string
   plz: string
   ort: string
+  adresse: string
   ibans: string[]
 }
 
