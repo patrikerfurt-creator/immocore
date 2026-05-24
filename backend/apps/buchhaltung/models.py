@@ -45,6 +45,11 @@ class Buchungsart(models.Model):
     default_konto_soll_pattern = models.CharField(max_length=20, blank=True)
     default_konto_haben_pattern = models.CharField(max_length=20, blank=True)
     aktiv = models.BooleanField(default=True)
+    # WJ-Branch-Felder (vorhanden in DB, für Kompatibilität im Modell abgebildet)
+    erloeskonto_default_nr = models.CharField(max_length=10, blank=True, default='')
+    tilgungs_prioritaet = models.IntegerField(null=True, blank=True)
+    bankkonto_typ = models.CharField(max_length=25, blank=True, null=True)
+    buchungstyp = models.CharField(max_length=20, blank=True, null=True)
 
     class Meta:
         verbose_name = 'Buchungsart'
@@ -96,6 +101,10 @@ class Buchung(models.Model):
         Personenkonto, on_delete=models.SET_NULL, null=True, blank=True,
         related_name='hauptbuchungen'
     )
+    kreditor = models.ForeignKey(
+        'rechnungen.Kreditor', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='buchungen'
+    )
     # Sammelbuchung-Struktur: parent=None → Gesamtbuchung, parent gesetzt → Teilbuchung
     parent_buchung = models.ForeignKey(
         'self', on_delete=models.CASCADE, null=True, blank=True,
@@ -107,7 +116,7 @@ class Buchung(models.Model):
     wertstellungsdatum = models.DateField(null=True, blank=True)
     buchungstext = models.TextField(blank=True)
     verwendungszweck = models.TextField(blank=True)
-    wirtschaftsjahr = models.IntegerField(null=True, blank=True)
+    wirtschaftsjahr = models.IntegerField(null=True, blank=True, db_column='wirtschaftsjahr_nr')
     kostenstelle = models.CharField(max_length=20, blank=True)
     beleg_referenz = models.CharField(max_length=255, blank=True)
     storno_von = models.ForeignKey(
