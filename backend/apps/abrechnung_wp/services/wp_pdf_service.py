@@ -15,7 +15,49 @@ from apps.personen.models import EigentumsVerhaeltnis
 from django.db.models import Q
 
 
+# ---------------------------------------------------------------------------
+# Interne Helfer
+# ---------------------------------------------------------------------------
+
+def _build_vs_cache(objekt) -> dict:
+    """Lädt alle aktiven VS für das Objekt in einen {schluessel: vs_obj}-Cache (1 Query)."""
+    return {
+        vs.schluessel: vs
+        for vs in Verteilerschluessel.objects.filter(objekt=objekt, aktiv=True)
+    }
+
+
+def _build_ev_name_map(einheit_ids: list, stichtag: date) -> dict:
+    """Gibt {einheit_id: eigentümer_name} zurück — 2 Queries statt N×2."""
+    evs = (
+        EigentumsVerhaeltnis.objects
+        .filter(einheit_id__in=einheit_ids, beginn__lte=stichtag)
+        .filter(Q(ende__isnull=True) | Q(ende__gte=stichtag))
+        .select_related('person')
+        .order_by('einheit_id', '-beginn')
+    )
+    result: dict = {}
+    for ev in evs:
+        if ev.einheit_id not in result:
+            result[ev.einheit_id] = ev.person.name
+
+    # Fallback für Einheiten ohne aktives EV → neuestes EV
+    missing = [eid for eid in einheit_ids if eid not in result]
+    if missing:
+        for ev in (
+            EigentumsVerhaeltnis.objects
+            .filter(einheit_id__in=missing)
+            .select_related('person')
+            .order_by('einheit_id', '-beginn')
+        ):
+            if ev.einheit_id not in result:
+                result[ev.einheit_id] = ev.person.name
+
+    return result
+
+
 def _vs_bezeichnung(vs_code: str, objekt) -> str:
+    """Einzelabfrage — nur noch für standalone-Nutzung außerhalb der Bulk-Funktionen."""
     vs = Verteilerschluessel.objects.filter(objekt=objekt, schluessel=vs_code, aktiv=True).first()
     return vs.bezeichnung if vs else vs_code
 
@@ -26,6 +68,7 @@ def _bewirtschaftungs_iban(objekt) -> str:
 
 
 def _eigentuemer_name(einheit, stichtag: date) -> str:
+    """Einzelabfrage — für standalone-Nutzung oder Fallback."""
     ev = EigentumsVerhaeltnis.objects.filter(
         einheit=einheit,
         beginn__lte=stichtag,
@@ -40,6 +83,10 @@ def _eigentuemer_name(einheit, stichtag: date) -> str:
     return ev_latest.person.name if ev_latest else '—'
 
 
+# ---------------------------------------------------------------------------
+# Öffentliche Render-Funktionen
+# ---------------------------------------------------------------------------
+
 def render_gesamt_pdf(wp: Wirtschaftsplan) -> bytes:
     """Rendert den Gesamtwirtschaftsplan als PDF-Bytes."""
     wp = Wirtschaftsplan.objects.select_related(
@@ -53,6 +100,9 @@ def render_gesamt_pdf(wp: Wirtschaftsplan) -> bytes:
     objekt = wj.objekt
     heute = timezone.localdate()
 
+    # VS-Bezeichnungen in einem Query laden (statt N einzelne Abfragen pro Position)
+    vs_cache = _build_vs_cache(objekt)
+
     positionen_ctx = []
     gesamt = Decimal('0')
     hausgeld = Decimal('0')
@@ -60,10 +110,11 @@ def render_gesamt_pdf(wp: Wirtschaftsplan) -> bytes:
 
     for pos in wp.positionen.filter(betrag__gt=0).order_by('konto__kontonummer'):
         monatlich = (pos.betrag / Decimal('12')).quantize(Decimal('0.01'))
+        vs_obj = vs_cache.get(pos.vs_code)
         positionen_ctx.append({
             'konto': pos.konto,
             'vs_code': pos.vs_code,
-            'vs_bezeichnung': _vs_bezeichnung(pos.vs_code, objekt),
+            'vs_bezeichnung': vs_obj.bezeichnung if vs_obj else pos.vs_code,
             'betrag': pos.betrag,
             'monatlich': monatlich,
         })
@@ -104,24 +155,91 @@ def render_gesamt_pdf(wp: Wirtschaftsplan) -> bytes:
 
 def render_einzel_pdf(wp: Wirtschaftsplan, einheit) -> bytes:
     """Rendert den Einzelwirtschaftsplan für eine Einheit als PDF-Bytes."""
-    wp = Wirtschaftsplan.objects.select_related(
+    wp_loaded = Wirtschaftsplan.objects.select_related(
         'wirtschaftsjahr__objekt'
     ).prefetch_related(
         'positionen__konto',
         'positionen__anteile__einheit',
     ).get(pk=wp.pk)
 
+    objekt = wp_loaded.wirtschaftsjahr.objekt
+    stichtag = wp_loaded.beschluss_datum or timezone.localdate()
+    vs_cache = _build_vs_cache(objekt)
+    ev_map = _build_ev_name_map([einheit.id], stichtag)
+
+    return _render_einzel_pdf_intern(wp_loaded, einheit, vs_cache, ev_map)
+
+
+def render_einzel_bulk_zip(wp: Wirtschaftsplan) -> bytes:
+    """
+    Erzeugt ein ZIP-Archiv mit einem Einzel-PDF je Einheit.
+
+    Optimiert: WP wird einmal aus der DB geladen; VS-Cache und Eigentümer-Map
+    werden einmalig aufgebaut und an alle Render-Aufrufe weitergereicht.
+    Damit entfallen ~(50 × 3) redundante DB-Roundtrips und ~500 VS-Abfragen.
+    """
+    from apps.objekte.models import Einheit
+
+    # WP einmal laden — nicht N-mal in render_einzel_pdf()
+    wp_loaded = Wirtschaftsplan.objects.select_related(
+        'wirtschaftsjahr__objekt'
+    ).prefetch_related(
+        'positionen__konto',
+        'positionen__anteile__einheit',
+    ).get(pk=wp.pk)
+
+    objekt = wp_loaded.wirtschaftsjahr.objekt
+    wj = wp_loaded.wirtschaftsjahr
+    stichtag = wp_loaded.beschluss_datum or timezone.localdate()
+
+    einheit_ids = list(
+        WirtschaftsplanAnteil.objects.filter(
+            position__wirtschaftsplan=wp
+        ).values_list('einheit_id', flat=True).distinct()
+    )
+    einheiten = list(Einheit.objects.filter(pk__in=einheit_ids).order_by('einheit_nr'))
+
+    # Caches einmal aufbauen — kein DB-Hit mehr im Render-Loop
+    vs_cache = _build_vs_cache(objekt)
+    ev_map = _build_ev_name_map([e.id for e in einheiten], stichtag)
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for einheit in einheiten:
+            pdf_bytes = _render_einzel_pdf_intern(wp_loaded, einheit, vs_cache, ev_map)
+            filename = f"EWP_{objekt.kurzbezeichnung or objekt.id}_{einheit.einheit_nr}_{wj.jahr}.pdf"
+            filename = filename.replace(' ', '_').replace('/', '-')
+            zf.writestr(filename, pdf_bytes)
+
+    buf.seek(0)
+    return buf.read()
+
+
+# ---------------------------------------------------------------------------
+# Interne Render-Funktion (Kern-Logik, cache-basiert)
+# ---------------------------------------------------------------------------
+
+def _render_einzel_pdf_intern(
+    wp: Wirtschaftsplan,
+    einheit,
+    vs_cache: dict,
+    ev_map: dict,
+) -> bytes:
+    """
+    Innere Render-Funktion. Erwartet einen bereits geladenen WP (mit Prefetch)
+    sowie vorberechnete vs_cache und ev_map — kein zusätzlicher DB-Roundtrip
+    für VS-Bezeichnungen oder Eigentümer-Namen.
+    """
     wj = wp.wirtschaftsjahr
     objekt = wj.objekt
     heute = timezone.localdate()
-    stichtag = wp.beschluss_datum or heute
 
     anteile_map = {
         a.position_id: a
         for a in WirtschaftsplanAnteil.objects.filter(
             position__wirtschaftsplan=wp,
             einheit=einheit,
-        ).select_related('position__konto')
+        )
     }
 
     positionen_ctx = []
@@ -136,9 +254,7 @@ def render_einzel_pdf(wp: Wirtschaftsplan, einheit) -> bytes:
 
         vs_gesamt = anteil.vs_anteil_gesamt
         vs_einheit = anteil.vs_anteil_einheit
-        vs_obj = Verteilerschluessel.objects.filter(
-            objekt=objekt, schluessel=pos.vs_code, aktiv=True
-        ).first()
+        vs_obj = vs_cache.get(pos.vs_code)
         einheit_label = vs_obj.einheit if (vs_obj and vs_obj.einheit) else ''
 
         if vs_obj and vs_obj.vs_typ in ('kopf', 'direkt'):
@@ -161,9 +277,7 @@ def render_einzel_pdf(wp: Wirtschaftsplan, einheit) -> bytes:
 
         ba = pos.konto.abrechnungsart or '900'
         if ba not in ba_splits:
-            ba_bez = '900' if ba == '900' else f'Rücklage {ba}'
-            if ba == '900':
-                ba_bez = 'Hausgeld lfd. Bewirtschaftung'
+            ba_bez = 'Hausgeld lfd. Bewirtschaftung' if ba == '900' else f'Rücklage {ba}'
             ba_splits[ba] = {'bezeichnung': ba_bez, 'jahresanteil': Decimal('0'), 'monatsbetrag': Decimal('0')}
         ba_splits[ba]['jahresanteil'] += anteil.betrag_anteil
         ba_splits[ba]['monatsbetrag'] += anteil.monatsbetrag_anteil
@@ -175,7 +289,7 @@ def render_einzel_pdf(wp: Wirtschaftsplan, einheit) -> bytes:
         'wj': wj,
         'objekt': objekt,
         'einheit': einheit,
-        'eigentuemer_name': _eigentuemer_name(einheit, stichtag),
+        'eigentuemer_name': ev_map.get(einheit.id, '—'),
         'positionen': positionen_ctx,
         'gesamt_jahresbetrag': gesamt_jahresbetrag,
         'gesamt_anteil': gesamt_anteil,
@@ -190,32 +304,6 @@ def render_einzel_pdf(wp: Wirtschaftsplan, einheit) -> bytes:
     return _html_to_pdf(html)
 
 
-def render_einzel_bulk_zip(wp: Wirtschaftsplan) -> bytes:
-    """Erzeugt ein ZIP-Archiv mit einem Einzel-PDF je Einheit."""
-    from apps.objekte.models import Einheit
-
-    wp_obj = Wirtschaftsplan.objects.select_related('wirtschaftsjahr__objekt').get(pk=wp.pk)
-    objekt = wp_obj.wirtschaftsjahr.objekt
-    wj = wp_obj.wirtschaftsjahr
-
-    einheit_ids = WirtschaftsplanAnteil.objects.filter(
-        position__wirtschaftsplan=wp
-    ).values_list('einheit_id', flat=True).distinct()
-
-    einheiten = Einheit.objects.filter(pk__in=einheit_ids).order_by('einheit_nr')
-
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
-        for einheit in einheiten:
-            pdf_bytes = render_einzel_pdf(wp, einheit)
-            filename = f"EWP_{objekt.kurzbezeichnung or objekt.id}_{einheit.einheit_nr}_{wj.jahr}.pdf"
-            filename = filename.replace(' ', '_').replace('/', '-')
-            zf.writestr(filename, pdf_bytes)
-
-    buf.seek(0)
-    return buf.read()
-
-
 def _html_to_pdf(html: str) -> bytes:
-    from weasyprint import HTML, CSS
+    from weasyprint import HTML
     return HTML(string=html, base_url=None).write_pdf()

@@ -37,8 +37,9 @@ def simuliere_hausgeld_monat(objekt, periode: date) -> dict:
     warnungen = []
     gesamtsumme = Decimal('0')
 
+    ba_lookup = _lade_buchungsarten_lookup()
     for ev in aktive_evs:
-        betraege = _aktuelle_betraege(ev, periode)
+        betraege = _aktuelle_betraege(ev, periode, ba_lookup)
         if not betraege:
             warnungen.append(
                 f"{ev.person.name} / {ev.einheit.einheit_nr}: keine Hausgeld-Beträge in der Historie"
@@ -127,8 +128,9 @@ def _fuehre_lauf_aus(lauf: HausgeldSollstellungslauf, user) -> HausgeldSollstell
     fehler_details = []
     warnungen      = []
 
+    ba_lookup = _lade_buchungsarten_lookup()
     for ev in aktive_evs:
-        betraege  = _aktuelle_betraege(ev, periode)
+        betraege  = _aktuelle_betraege(ev, periode, ba_lookup)
         soll_summe = sum(betraege.values(), Decimal('0'))
         if soll_summe <= 0:
             warnungen.append({
@@ -180,11 +182,19 @@ def _fuehre_lauf_aus(lauf: HausgeldSollstellungslauf, user) -> HausgeldSollstell
     return lauf
 
 
-def _aktuelle_betraege(ev, periode: date) -> dict:
+def _lade_buchungsarten_lookup() -> dict:
+    """Gibt {str(nr): Buchungsart} für alle Buchungsarten zurück (1 Query)."""
+    return {str(ba.nr): ba for ba in Buchungsart.objects.all()}
+
+
+def _aktuelle_betraege(ev, periode: date, ba_lookup: dict | None = None) -> dict:
     """
     Gibt {Buchungsart: Decimal} zurück für alle BAs mit positivem Betrag.
     Liest aus HausgeldHistorie (ba-Feld) für den Stichtag der Periode.
     Fallback auf abrechnungsart wenn ba nicht gesetzt.
+
+    ba_lookup: optional vorgeladener {str(nr): Buchungsart}-Cache.
+    Wenn übergeben, entfällt der Fallback-DB-Hit pro Historien-Eintrag.
     """
     from apps.personen.models import HausgeldHistorie
     result = {}
@@ -204,7 +214,10 @@ def _aktuelle_betraege(ev, periode: date) -> dict:
         # Nimm ba FK wenn gesetzt, sonst abrechnungsart als Fallback-Mapping
         ba_obj = h.ba
         if ba_obj is None and h.abrechnungsart:
-            ba_obj = Buchungsart.objects.filter(nr=h.abrechnungsart.code).first()
+            if ba_lookup is not None:
+                ba_obj = ba_lookup.get(str(h.abrechnungsart.code))
+            else:
+                ba_obj = Buchungsart.objects.filter(nr=h.abrechnungsart.code).first()
         if ba_obj is None:
             continue
         if ba_obj.pk in seen:
