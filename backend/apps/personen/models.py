@@ -14,6 +14,11 @@ class SEPAMandat(models.Model):
     bic = models.CharField(max_length=11, blank=True)
     unterzeichnet_am = models.DateField()
     aktiv = models.BooleanField(default=True)
+    sequence_type = models.CharField(
+        max_length=4, default='RCUR', blank=True,
+        verbose_name='Sequenztyp',
+        help_text='FRST = Erstlastschrift, RCUR = Folgelastschrift',
+    )
 
     class Meta:
         verbose_name = 'SEPA-Mandat'
@@ -52,6 +57,16 @@ class Person(models.Model):
     nachname = models.CharField(max_length=100, blank=True)
     vorname2 = models.CharField(max_length=100, blank=True)
     nachname2 = models.CharField(max_length=100, blank=True)
+    briefanrede = models.CharField(
+        max_length=255, blank=True, default='',
+        verbose_name='Briefanrede',
+        help_text='z.B. "Sehr geehrte Frau Müller"',
+    )
+    briefanrede2 = models.CharField(
+        max_length=255, blank=True, default='',
+        verbose_name='Briefanrede 2. Person',
+        help_text='Briefanrede der zweiten Person (bei Eheleuten)',
+    )
     firmenname = models.CharField(max_length=255, blank=True)
     email = models.EmailField(blank=True)
     telefon = models.CharField(max_length=50, blank=True)
@@ -135,6 +150,15 @@ class HausgeldHistorie(models.Model):
     betrag = models.DecimalField(max_digits=10, decimal_places=2)
     gueltig_ab = models.DateField()
     kontoart = models.CharField(max_length=10, blank=True, default='', help_text='z.B. .900, .911, .912, .940')
+    quelle = models.CharField(
+        max_length=20, default='import', blank=True,
+        verbose_name='Quelle',
+        help_text='Woher kommt dieser Eintrag: wizard, import, beschluss',
+    )
+    bemerkung = models.CharField(
+        max_length=255, blank=True, default='',
+        verbose_name='Bemerkung',
+    )
     erstellt_von = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
         related_name='hausgeld_historien'
