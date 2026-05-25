@@ -48,15 +48,18 @@ def run_objekt(objekt, periode: date, user) -> AutoLaufProtokoll:
     """
     ausgefuehrt_am = timezone.now()
 
-    # 1. Idempotenz
+    # 1. Idempotenz — blockiert unabhängig von lauf_quelle
+    #    (verhindert Doppellauf auch wenn zuvor manuell ein Lauf erzeugt wurde)
     existierender_lauf = HausgeldSollstellungslauf.objects.filter(
         objekt=objekt,
         periode=periode,
-        lauf_quelle='autopilot',
         status='commited',
     ).first()
     if existierender_lauf:
-        logger.info('%s: Auto-Lauf für %s bereits vorhanden — übersprungen.', objekt.objektnummer, periode)
+        logger.info(
+            '%s: Committeter Lauf für %s bereits vorhanden (Quelle: %s) — übersprungen.',
+            objekt.objektnummer, periode, existierender_lauf.lauf_quelle,
+        )
         return _protokoll_uebersprungen(objekt, periode, ausgefuehrt_am, existierender_lauf)
 
     warnungen = []

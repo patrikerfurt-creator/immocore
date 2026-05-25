@@ -1296,10 +1296,12 @@ class HausgeldSollstellungslauf(models.Model):
         verbose_name_plural = 'Hausgeld-Sollstellungsläufe'
         ordering            = ['-periode', 'objekt']
         constraints = [
+            # Ein committeter Lauf pro Objekt+Periode — unabhängig von lauf_quelle.
+            # Verhindert Doppelläufe auch wenn erst manuell, dann per Autopilot gestartet.
             models.UniqueConstraint(
-                fields=['objekt', 'periode', 'lauf_quelle'],
+                fields=['objekt', 'periode'],
                 condition=models.Q(status='commited'),
-                name='unique_commited_lauf_pro_periode_quelle',
+                name='unique_commited_lauf_pro_objekt_periode',
             ),
         ]
 

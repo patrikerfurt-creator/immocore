@@ -73,7 +73,17 @@ def simuliere_hausgeld_monat(objekt, periode: date) -> dict:
 
 @transaction.atomic
 def erstelle_lauf_aus_vorschau(objekt, periode: date, user, wirtschaftsjahr=None) -> HausgeldSollstellungslauf:
-    """Legt Lauf-Datensatz mit Status='vorschau' an, ohne Sollstellungen zu erzeugen."""
+    """Legt Lauf-Datensatz mit Status='vorschau' an, ohne Sollstellungen zu erzeugen.
+
+    Wirft ValidationError wenn bereits ein committeter Lauf existiert.
+    """
+    bestehender = pruefe_duplikat_lauf(objekt, periode)
+    if bestehender:
+        raise ValidationError(
+            f"Für {objekt.objektnummer} / Periode {periode.strftime('%m/%Y')} existiert bereits "
+            f"ein committeter Sollstellungslauf (ID {bestehender.id}). "
+            f"Für eine Korrektursollstellung muss der bestehende Lauf zuerst storniert werden."
+        )
     vorschau = simuliere_hausgeld_monat(objekt, periode)
     lauf = HausgeldSollstellungslauf.objects.create(
         objekt=objekt,
@@ -220,6 +230,61 @@ def _aktuelle_betraege(ev, periode: date) -> dict:
     return result
 
 
+def pruefe_duplikat_lauf(objekt, periode: date) -> 'HausgeldSollstellungslauf | None':
+    """
+    Gibt den bestehenden commiteten Lauf zurück, wenn einer existiert —
+    unabhängig von lauf_quelle. None wenn noch keiner vorhanden.
+    """
+    return HausgeldSollstellungslauf.objects.filter(
+        objekt=objekt,
+        periode=periode,
+        status='commited',
+    ).exclude(status='storniert').first()
+
+
+def berechne_korrekturbedarf(bestehender_lauf: 'HausgeldSollstellungslauf') -> dict:
+    """
+    Vergleicht die Soll-Beträge des bestehenden Laufs mit den aktuell
+    gültigen Hausgeld-Historien. Gibt zurück:
+    {
+        'korrektur_benoetigt': bool,
+        'aenderungen': [{'ev': str, 'alt': Decimal, 'neu': Decimal}, ...]
+    }
+    """
+    objekt  = bestehender_lauf.objekt
+    periode = bestehender_lauf.periode
+
+    aktive_evs = EigentumsVerhaeltnis.objects.filter(
+        einheit__objekt=objekt,
+        beginn__lte=periode,
+    ).exclude(ende__lt=periode).select_related('einheit', 'person')
+
+    # Ist-Stand: Summe der nicht storonierten Sollstellungen je EV
+    bestehend = {}
+    for ss in bestehender_lauf.sollstellungen.filter(storniert_am__isnull=True):
+        ev_id = str(ss.eigentumsverhaeltnis_id)
+        bestehend[ev_id] = bestehend.get(ev_id, Decimal('0')) + ss.soll_betrag
+
+    # Soll-Stand: aktuelle Beträge aus Historien
+    aenderungen = []
+    for ev in aktive_evs:
+        betraege = _aktuelle_betraege(ev, periode)
+        neu = sum(betraege.values(), Decimal('0'))
+        alt = bestehend.get(str(ev.pk), Decimal('0'))
+        if abs(neu - alt) > Decimal('0.01'):
+            aenderungen.append({
+                'ev': f'{ev.person.name} / {ev.einheit.einheit_nr}',
+                'alt': alt,
+                'neu': neu,
+                'differenz': neu - alt,
+            })
+
+    return {
+        'korrektur_benoetigt': bool(aenderungen),
+        'aenderungen': aenderungen,
+    }
+
+
 @transaction.atomic
 def run_hausgeld_monat(
     objekt,
@@ -232,12 +297,28 @@ def run_hausgeld_monat(
     Direkter Einschritt-Commit (für Tests / Migrationen / Management-Commands
     und den Auto-Pipeline-Service).
 
+    Wirft ValidationError wenn für Objekt+Periode bereits ein committeter Lauf
+    existiert (unabhängig von lauf_quelle). Damit werden Doppelläufe
+    zuverlässig verhindert — egal ob der erste Lauf manuell oder per Autopilot
+    erzeugt wurde.
+
+    Für eine Korrektursollstellung (wenn sich Beträge geändert haben) muss
+    der bestehende Lauf vorher storniert werden.
+
     skip_freigabe=True überspringt den Vier-Augen-Check (nur für Autopilot).
     lauf_quelle='autopilot' kennzeichnet maschinell erzeugte Läufe.
 
     Produktiv-Weg für manuellen Betrieb:
       erstelle_lauf_aus_vorschau → freigeben_lauf → commiten_lauf.
     """
+    bestehender = pruefe_duplikat_lauf(objekt, periode)
+    if bestehender:
+        raise ValidationError(
+            f"Für {objekt.objektnummer} / Periode {periode.strftime('%m/%Y')} existiert bereits "
+            f"ein committeter Sollstellungslauf (ID {bestehender.id}, Quelle: {bestehender.lauf_quelle}). "
+            f"Für eine Korrektursollstellung den bestehenden Lauf zuerst stornieren."
+        )
+
     lauf = HausgeldSollstellungslauf.objects.create(
         objekt=objekt,
         typ='hausgeld_monat',
