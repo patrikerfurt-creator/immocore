@@ -1590,7 +1590,14 @@ class AutoLaufProtokollViewSet(viewsets.ReadOnlyModelViewSet):
         qs = AutoLaufProtokoll.objects.select_related('objekt')
         if objekt_id := self.request.query_params.get('objekt'):
             qs = qs.filter(objekt_id=objekt_id)
-        return qs.order_by('-ausgefuehrt_am')[:100]
+        return qs.order_by('-ausgefuehrt_am')
+
+    def list(self, request, *args, **kwargs):
+        """Liste limitiert auf 100 Einträge."""
+        from rest_framework.response import Response as DRFResponse
+        qs = self.filter_queryset(self.get_queryset())[:100]
+        serializer = self.get_serializer(qs, many=True)
+        return DRFResponse(serializer.data)
 
     @action(detail=False, methods=['get'], url_path='einstellungen')
     def einstellungen(self, request):

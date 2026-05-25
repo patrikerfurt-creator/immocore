@@ -470,7 +470,7 @@ class HausgeldSollstellungListSerializer(serializers.ModelSerializer):
 
     def get_ev_einheit_nr(self, obj):
         try:
-            return obj.eigentumsverhaeltnis.einheit.einheitennummer
+            return obj.eigentumsverhaeltnis.einheit.einheit_nr
         except Exception:
             return None
 
