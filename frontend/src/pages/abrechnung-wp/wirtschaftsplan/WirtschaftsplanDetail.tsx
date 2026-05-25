@@ -1,6 +1,18 @@
+import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { wirtschaftsplanApi } from '../../../api/wirtschaftsplan'
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = window.URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  window.URL.revokeObjectURL(url)
+}
 
 const STATUS_LABEL: Record<string, string> = {
   entwurf: 'Entwurf',
@@ -28,6 +40,44 @@ export function WirtschaftsplanDetail() {
     queryKey: ['wp-detail', id],
     queryFn: () => wirtschaftsplanApi.get(id!),
     enabled: !!id,
+  })
+
+  const [beschlussOffen, setBeschlussOffen] = useState(false)
+  const [beschlussDatum, setBeschlussDatum] = useState(new Date().toISOString().split('T')[0])
+  const [top, setTop] = useState('')
+  const [bemerkung, setBemerkung] = useState('')
+  const [beschlussError, setBeschlussError] = useState<string | null>(null)
+
+  const [pdfLoading, setPdfLoading] = useState<string | null>(null)
+
+  const handlePdfGesamt = async () => {
+    setPdfLoading('gesamt')
+    try {
+      const blob = await wirtschaftsplanApi.pdfGesamt(id!)
+      downloadBlob(blob, `WP_${wp?.wirtschaftsjahr_jahr}.pdf`)
+    } finally {
+      setPdfLoading(null)
+    }
+  }
+
+  const handlePdfBulk = async () => {
+    setPdfLoading('bulk')
+    try {
+      const blob = await wirtschaftsplanApi.pdfEinzeln(id!, { bulk: true })
+      downloadBlob(blob, `Einzelwirtschaftsplaene_${wp?.wirtschaftsjahr_jahr}.zip`)
+    } finally {
+      setPdfLoading(null)
+    }
+  }
+
+  const beschlussMut = useMutation({
+    mutationFn: () => wirtschaftsplanApi.beschluss(id!, { beschluss_datum: beschlussDatum, top, bemerkung }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['wp-detail', id] })
+      qc.invalidateQueries({ queryKey: ['wirtschaftsplaene'] })
+      setBeschlussOffen(false)
+    },
+    onError: (e: any) => setBeschlussError(e?.response?.data?.detail ?? 'Fehler beim Beschluss'),
   })
 
   const korrekturbeschlussMut = useMutation({
@@ -63,6 +113,20 @@ export function WirtschaftsplanDetail() {
           </span>
         </div>
         <div className="flex gap-2">
+          <button
+            onClick={handlePdfGesamt}
+            disabled={pdfLoading === 'gesamt'}
+            className="px-3 py-1.5 border border-gray-300 text-sm rounded hover:bg-gray-50 disabled:opacity-50"
+          >
+            {pdfLoading === 'gesamt' ? '...' : '📄 Gesamt-PDF'}
+          </button>
+          <button
+            onClick={handlePdfBulk}
+            disabled={pdfLoading === 'bulk'}
+            className="px-3 py-1.5 border border-gray-300 text-sm rounded hover:bg-gray-50 disabled:opacity-50"
+          >
+            {pdfLoading === 'bulk' ? '...' : '📦 Einzelpläne (ZIP)'}
+          </button>
           {istBearbeitbar && (
             <button
               onClick={() => navigate(`/abrechnung-wp/wirtschaftsplan/wizard?objekt=${wp.objekt_id}&wp=${wp.id}`)}
@@ -138,6 +202,77 @@ export function WirtschaftsplanDetail() {
           <p className="text-lg font-semibold">{(Number(wp.gesamtsumme) / 12).toLocaleString('de-DE', { minimumFractionDigits: 2 })} €</p>
         </div>
       </div>
+
+      {/* Beschluss-Panel (nur bei Entwurf) */}
+      {istBearbeitbar && (
+        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+          <div className="px-5 py-3 border-b border-gray-200 flex items-center justify-between">
+            <span className="font-medium text-gray-700 text-sm">Beschluss durchführen</span>
+            {!beschlussOffen && (
+              <button
+                onClick={() => setBeschlussOffen(true)}
+                className="px-3 py-1.5 bg-green-600 text-white text-sm rounded hover:bg-green-700"
+              >
+                Beschluss durchführen
+              </button>
+            )}
+          </div>
+          {beschlussOffen && (
+            <div className="p-5 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Beschluss-Datum *</label>
+                  <input
+                    type="date"
+                    value={beschlussDatum}
+                    onChange={e => setBeschlussDatum(e.target.value)}
+                    className="border border-gray-300 rounded px-3 py-2 text-sm w-full"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Tagesordnungspunkt (optional)</label>
+                  <input
+                    type="text"
+                    value={top}
+                    onChange={e => setTop(e.target.value)}
+                    placeholder="z.B. TOP 5 ETV 14.03.2026"
+                    className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Bemerkung (optional)</label>
+                <textarea
+                  value={bemerkung}
+                  onChange={e => setBemerkung(e.target.value)}
+                  rows={2}
+                  className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                />
+              </div>
+              {beschlussError && (
+                <div className="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-2 rounded">
+                  {beschlussError}
+                </div>
+              )}
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() => { setBeschlussOffen(false); setBeschlussError(null) }}
+                  className="px-3 py-1.5 border border-gray-300 text-sm rounded hover:bg-gray-50"
+                >
+                  Abbrechen
+                </button>
+                <button
+                  onClick={() => beschlussMut.mutate()}
+                  disabled={!beschlussDatum || beschlussMut.isPending}
+                  className="px-4 py-1.5 bg-green-600 text-white text-sm rounded hover:bg-green-700 disabled:opacity-50"
+                >
+                  {beschlussMut.isPending ? 'Buche...' : 'Beschluss bestätigen'}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Positionen */}
       {wp.positionen.length > 0 && (

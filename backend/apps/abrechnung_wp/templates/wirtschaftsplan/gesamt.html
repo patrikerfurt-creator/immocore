@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<style>
+  @page {
+    size: A4;
+    margin: 2cm 2cm 2.5cm 2cm;
+    @bottom-left {
+      content: element(page-footer-left);
+      font-size: 7pt;
+      color: #888;
+    }
+    @bottom-right {
+      content: "Seite " counter(page) " von " counter(pages);
+      font-size: 7pt;
+      color: #888;
+    }
+  }
+
+  body {
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 10pt;
+    color: #333;
+    margin: 0;
+    padding: 0;
+  }
+
+  #page-footer-left {
+    position: running(page-footer-left);
+    font-size: 7pt;
+    color: #888;
+  }
+
+  .letterhead {
+    display: table;
+    width: 100%;
+    border-bottom: 2px solid #1a3c5e;
+    padding-bottom: 8pt;
+    margin-bottom: 16pt;
+  }
+  .letterhead-left { display: table-cell; vertical-align: bottom; }
+  .letterhead-right { display: table-cell; vertical-align: bottom; text-align: right; }
+
+  .company-name {
+    font-size: 13pt;
+    font-weight: bold;
+    color: #1a3c5e;
+  }
+  .company-addr {
+    font-size: 8pt;
+    color: #666;
+    margin-top: 2pt;
+  }
+
+  .entwurf-banner {
+    background: #fff3cd;
+    border: 1pt solid #ffc107;
+    padding: 5pt 10pt;
+    margin-bottom: 14pt;
+    font-size: 9pt;
+    color: #856404;
+  }
+
+  .doc-title {
+    font-size: 17pt;
+    font-weight: bold;
+    color: #1a3c5e;
+    margin: 12pt 0 2pt 0;
+  }
+  .doc-subtitle {
+    font-size: 11pt;
+    color: #555;
+    margin: 0 0 14pt 0;
+  }
+
+  .meta-grid {
+    display: table;
+    width: 60%;
+    margin-bottom: 18pt;
+    border-collapse: collapse;
+  }
+  .meta-row { display: table-row; }
+  .meta-label {
+    display: table-cell;
+    font-size: 9pt;
+    color: #777;
+    padding: 2pt 12pt 2pt 0;
+    white-space: nowrap;
+  }
+  .meta-value {
+    display: table-cell;
+    font-size: 9pt;
+    font-weight: bold;
+    padding: 2pt 0;
+  }
+
+  table.positionen {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  table.positionen th {
+    background: #1a3c5e;
+    color: #fff;
+    padding: 5pt 7pt;
+    font-size: 9pt;
+    text-align: left;
+  }
+  table.positionen th.r { text-align: right; }
+  table.positionen td {
+    padding: 4pt 7pt;
+    font-size: 9pt;
+    border-bottom: 0.5pt solid #e8e8e8;
+  }
+  table.positionen td.r {
+    text-align: right;
+    font-family: "Courier New", monospace;
+  }
+  table.positionen td.mono { font-family: "Courier New", monospace; }
+  table.positionen tr:nth-child(even) td { background: #f7f9fc; }
+  table.positionen tfoot td {
+    border-top: 1.5pt solid #1a3c5e;
+    font-weight: bold;
+    background: #edf1f7;
+    padding: 5pt 7pt;
+    font-size: 9pt;
+  }
+  table.positionen tfoot td.r {
+    text-align: right;
+    font-family: "Courier New", monospace;
+  }
+
+  .summary-box {
+    margin-top: 16pt;
+    padding: 8pt 12pt;
+    background: #edf1f7;
+    border-left: 3pt solid #1a3c5e;
+  }
+  .sum-row {
+    display: table;
+    width: 100%;
+    padding: 2.5pt 0;
+  }
+  .sum-label {
+    display: table-cell;
+    font-size: 9pt;
+    color: #555;
+  }
+  .sum-val {
+    display: table-cell;
+    font-size: 9pt;
+    text-align: right;
+    font-family: "Courier New", monospace;
+    width: 120pt;
+  }
+  .sum-row.total .sum-label { font-weight: bold; font-size: 10pt; color: #1a3c5e; }
+  .sum-row.total .sum-val   { font-weight: bold; font-size: 10pt; color: #1a3c5e; }
+  .sum-divider {
+    border-top: 0.5pt solid #bbb;
+    margin: 3pt 0;
+  }
+</style>
+</head>
+<body>
+
+<div id="page-footer-left">Erstellt am {{ erstellt_am }}{% if ist_entwurf %} — Entwurf, vorbehaltlich Beschlussfassung{% endif %}</div>
+
+<div class="letterhead">
+  <div class="letterhead-left">
+    <div class="company-name">Demme Immobilien Verwaltung GmbH</div>
+    <div class="company-addr">Coventrystraße 32 · 65934 Frankfurt am Main</div>
+  </div>
+</div>
+
+{% if ist_entwurf %}
+<div class="entwurf-banner">
+  ▲ ENTWURF — Vorbehaltlich Beschlussfassung in der Eigentümerversammlung
+</div>
+{% endif %}
+
+<div class="doc-title">WIRTSCHAFTSPLAN {{ wj.jahr }}</div>
+<div class="doc-subtitle">{{ objekt.bezeichnung }}</div>
+
+<div class="meta-grid">
+  <div class="meta-row">
+    <div class="meta-label">Objekt</div>
+    <div class="meta-value">{{ objekt.objektnummer }} — {{ objekt.bezeichnung }}</div>
+  </div>
+  <div class="meta-row">
+    <div class="meta-label">Anschrift</div>
+    <div class="meta-value">{{ objekt.strasse }}, {{ objekt.plz }} {{ objekt.ort }}</div>
+  </div>
+  <div class="meta-row">
+    <div class="meta-label">Wirtschaftsjahr</div>
+    <div class="meta-value">{{ wj.jahr }}</div>
+  </div>
+  <div class="meta-row">
+    <div class="meta-label">Wirkung ab</div>
+    <div class="meta-value">{{ wirkung_ab }}</div>
+  </div>
+  {% if not ist_entwurf %}
+  <div class="meta-row">
+    <div class="meta-label">Beschluss vom</div>
+    <div class="meta-value">
+      {{ beschluss_datum }}{% if wp.beschluss_tagesordnungspunkt %} ({{ wp.beschluss_tagesordnungspunkt }}){% endif %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<table class="positionen">
+  <thead>
+    <tr>
+      <th style="width:70pt">Konto-Nr.</th>
+      <th>Bezeichnung</th>
+      <th style="width:130pt">Verteilerschlüssel</th>
+      <th class="r" style="width:90pt">Jahresbetrag (€)</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for pos in positionen %}
+    <tr>
+      <td class="mono">{{ pos.kontonummer }}</td>
+      <td>{{ pos.kontoname }}</td>
+      <td>{{ pos.vs_code }} {{ pos.vs_bezeichnung }}</td>
+      <td class="r">{{ pos.betrag }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+  <tfoot>
+    <tr>
+      <td colspan="3">GESAMTSUMME</td>
+      <td class="r">{{ gesamtsumme }}</td>
+    </tr>
+  </tfoot>
+</table>
+
+<div class="summary-box">
+  <div class="sum-row">
+    <div class="sum-label">davon laufende Bewirtschaftung (Hausgeld)</div>
+    <div class="sum-val">{{ summe_hausgeld }} €</div>
+  </div>
+  <div class="sum-row">
+    <div class="sum-label">davon Rücklagenzuführung</div>
+    <div class="sum-val">{{ summe_ruecklage }} €</div>
+  </div>
+  <div class="sum-divider"></div>
+  <div class="sum-row total">
+    <div class="sum-label">Monatliches Gesamt-Soll der WEG</div>
+    <div class="sum-val">{{ monatssoll }} €</div>
+  </div>
+</div>
+
+</body>
+</html>

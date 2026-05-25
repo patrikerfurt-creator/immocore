@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { wirtschaftsplanApi, WirtschaftsplanDetail, WpKonto } from '../../../api/wirtschaftsplan'
+import { wirtschaftsplanApi, WpKonto } from '../../../api/wirtschaftsplan'
 import { objekteApi } from '../../../api/objekte'
 
-type Step = 1 | 2 | 3 | 4 | 5
+type Step = 1 | 2 | 3 | 4
 
 interface Step1Data {
   wirtschaftsjahr_id: string
@@ -254,23 +254,31 @@ function Schritt3({
   onZurueck,
 }: { wpId: string; onWeiter: () => void; onZurueck: () => void }) {
   const qc = useQueryClient()
-  const { data: konten = [], isLoading } = useQuery({
-    queryKey: ['wp-konten', wpId],
-    queryFn: () => wirtschaftsplanApi.konten(wpId),
+
+  // WP-Detail liefert positionen mit summe_anteile und differenz
+  const { data: wp, isLoading } = useQuery({
+    queryKey: ['wp-detail', wpId],
+    queryFn: () => wirtschaftsplanApi.get(wpId),
   })
 
   const freigebeMut = useMutation({
     mutationFn: (kontoId: string) => wirtschaftsplanApi.freigabeTrotzDiff(wpId, kontoId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['wp-konten', wpId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['wp-detail', wpId] })
+      qc.invalidateQueries({ queryKey: ['wp-konten', wpId] })
+    },
   })
 
-  const mitBetrag = konten.filter(k => parseFloat(k.betrag) > 0)
-  const alleFreigegeben = mitBetrag.every(k => k.verteilung_validiert || k.verteilung_freigegeben_trotz_diff)
+  const positionen = (wp?.positionen ?? []).filter(p => parseFloat(p.betrag) > 0)
+  const alleFreigegeben = positionen.every(
+    p => p.verteilung_validiert || p.verteilung_freigegeben_trotz_diff
+  )
 
   return (
     <div className="space-y-4">
       <p className="text-xs text-gray-500">
         Differenzen entstehen durch kaufmännische Rundung. Bis 0,10 € automatisch toleriert.
+        Größere Differenzen können manuell freigegeben werden.
       </p>
       {isLoading ? (
         <p className="text-sm text-gray-400">Lade...</p>
@@ -288,26 +296,40 @@ function Schritt3({
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {mitBetrag.map(k => {
+              {positionen.map(pos => {
+                const diff = pos.differenz
+                const absDiff = Math.abs(diff)
+                const diffColor = absDiff <= 0.10 ? 'text-green-600' : absDiff <= 1.00 ? 'text-amber-600' : 'text-red-600'
                 return (
-                  <tr key={k.id}>
+                  <tr key={pos.id}>
                     <td className="px-3 py-2">
-                      <span className="font-mono text-xs text-gray-500 mr-2">{k.kontonummer}</span>
-                      {k.kontoname}
+                      <span className="font-mono text-xs text-gray-500 mr-2">{pos.konto_nr}</span>
+                      {pos.konto_name}
                     </td>
-                    <td className="px-3 py-2 text-xs">{k.vs_code}</td>
-                    <td className="px-3 py-2 text-right font-mono">{fmt(k.betrag)}</td>
-                    <td className="px-3 py-2 text-right font-mono text-gray-500">—</td>
-                    <td className="px-3 py-2 text-right font-mono text-gray-500">—</td>
+                    <td className="px-3 py-2 text-xs">{pos.vs_code}</td>
+                    <td className="px-3 py-2 text-right font-mono">{fmt(pos.betrag)}</td>
+                    <td className="px-3 py-2 text-right font-mono">{fmt(pos.summe_anteile)}</td>
+                    <td className={`px-3 py-2 text-right font-mono ${diffColor}`}>
+                      {diff > 0 ? '+' : ''}{fmt(diff)}
+                    </td>
                     <td className="px-3 py-2 text-center">
-                      <StatusAmpel konto={k} />
-                      {!k.verteilung_validiert && !k.verteilung_freigegeben_trotz_diff && k.hat_vs && parseFloat(k.betrag) > 0 && (
-                        <button
-                          onClick={() => freigebeMut.mutate(k.id)}
-                          className="ml-2 text-xs text-amber-600 hover:underline"
-                        >
-                          Freigeben
-                        </button>
+                      {pos.verteilung_validiert ? (
+                        <span className="text-green-500">🟢</span>
+                      ) : pos.verteilung_freigegeben_trotz_diff ? (
+                        <span className="text-yellow-500" title="Manuell freigegeben">🟡</span>
+                      ) : (
+                        <>
+                          <span className={absDiff <= 1.00 ? 'text-yellow-500' : 'text-red-500'}>
+                            {absDiff <= 1.00 ? '🟡' : '🔴'}
+                          </span>
+                          <button
+                            onClick={() => freigebeMut.mutate(pos.konto)}
+                            disabled={freigebeMut.isPending}
+                            className="ml-2 text-xs text-amber-600 hover:underline"
+                          >
+                            Freigeben
+                          </button>
+                        </>
                       )}
                     </td>
                   </tr>
@@ -315,6 +337,12 @@ function Schritt3({
               })}
             </tbody>
           </table>
+
+          {positionen.length === 0 && (
+            <p className="text-sm text-gray-400 text-center py-4">
+              Noch keine Positionen mit Betrag &gt; 0.
+            </p>
+          )}
 
           <div className="flex justify-between pt-2">
             <button
@@ -325,9 +353,9 @@ function Schritt3({
             </button>
             <button
               onClick={onWeiter}
-              disabled={!alleFreigegeben}
+              disabled={!alleFreigegeben || positionen.length === 0}
               className="px-4 py-2 bg-primary-600 text-white text-sm rounded hover:bg-primary-700 disabled:opacity-50"
-              title={!alleFreigegeben ? 'Alle Positionen müssen validiert sein' : ''}
+              title={!alleFreigegeben ? 'Alle Positionen müssen validiert oder freigegeben sein' : ''}
             >
               Weiter →
             </button>
@@ -405,9 +433,9 @@ function Schritt4({
             </button>
             <button
               onClick={onWeiter}
-              className="px-4 py-2 bg-primary-600 text-white text-sm rounded hover:bg-primary-700"
+              className="px-4 py-2 bg-green-600 text-white text-sm rounded hover:bg-green-700"
             >
-              Weiter →
+              Entwurf anzeigen →
             </button>
           </div>
         </>
@@ -416,106 +444,8 @@ function Schritt4({
   )
 }
 
-// ─── Schritt 5: Beschluss durchführen ───────────────────────────────────────
-function Schritt5({
-  wp,
-  onZurueck,
-  onBeschluss,
-}: { wp: WirtschaftsplanDetail; onZurueck: () => void; onBeschluss: () => void }) {
-  const [beschlussDatum, setBeschlussDatum] = useState(new Date().toISOString().split('T')[0])
-  const [top, setTop] = useState('')
-  const [bemerkung, setBemerkung] = useState('')
-  const [error, setError] = useState<string | null>(null)
-
-  const beschlussMut = useMutation({
-    mutationFn: () => wirtschaftsplanApi.beschluss(wp.id, {
-      beschluss_datum: beschlussDatum,
-      top,
-      bemerkung,
-    }),
-    onSuccess: () => onBeschluss(),
-    onError: (e: any) => setError(e?.response?.data?.detail ?? 'Fehler beim Beschluss'),
-  })
-
-  return (
-    <div className="space-y-6">
-      <div className="bg-gray-50 rounded p-4 text-sm space-y-2">
-        <div className="flex justify-between">
-          <span className="text-gray-500">Wirtschaftsjahr</span>
-          <span className="font-medium">{wp.wirtschaftsjahr_jahr}</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-gray-500">Wirkung ab</span>
-          <span className="font-medium">{wp.wirkung_ab}</span>
-        </div>
-        <div className="flex justify-between border-t border-gray-200 pt-2">
-          <span className="text-gray-500">Gesamtvolumen (Jahres-WP)</span>
-          <span className="font-bold">{Number(wp.gesamtsumme).toLocaleString('de-DE', { minimumFractionDigits: 2 })} €</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-gray-500">Monatlich gesamt</span>
-          <span className="font-medium">{(Number(wp.gesamtsumme) / 12).toLocaleString('de-DE', { minimumFractionDigits: 2 })} €</span>
-        </div>
-      </div>
-
-      <div className="space-y-4">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Beschluss-Datum *</label>
-          <input
-            type="date"
-            value={beschlussDatum}
-            onChange={e => setBeschlussDatum(e.target.value)}
-            className="border border-gray-300 rounded px-3 py-2 text-sm"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Tagesordnungspunkt (optional)</label>
-          <input
-            type="text"
-            value={top}
-            onChange={e => setTop(e.target.value)}
-            placeholder="z.B. TOP 5 ETV 14.03.2026"
-            className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Bemerkung (optional)</label>
-          <textarea
-            value={bemerkung}
-            onChange={e => setBemerkung(e.target.value)}
-            rows={2}
-            className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
-          />
-        </div>
-      </div>
-
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-2 rounded">
-          {error}
-        </div>
-      )}
-
-      <div className="flex justify-between pt-2">
-        <button
-          onClick={onZurueck}
-          className="px-4 py-2 border border-gray-300 text-sm rounded hover:bg-gray-50"
-        >
-          ← Zurück
-        </button>
-        <button
-          onClick={() => beschlussMut.mutate()}
-          disabled={!beschlussDatum || beschlussMut.isPending}
-          className="px-4 py-2 bg-green-600 text-white text-sm rounded hover:bg-green-700 disabled:opacity-50"
-        >
-          {beschlussMut.isPending ? 'Buche...' : 'Beschluss durchführen'}
-        </button>
-      </div>
-    </div>
-  )
-}
-
 // ─── Haupt-Wizard ────────────────────────────────────────────────────────────
-const STEP_LABELS = ['Wirtschaftsjahr', 'Konten', 'Verteilung', 'Vorschau', 'Beschluss']
+const STEP_LABELS = ['Wirtschaftsjahr', 'Konten', 'Verteilung', 'Vorschau']
 
 export function WirtschaftsplanWizard() {
   const navigate = useNavigate()
@@ -526,12 +456,6 @@ export function WirtschaftsplanWizard() {
 
   const [step, setStep] = useState<Step>(existingWpId ? 2 : 1)
   const [wpId, setWpId] = useState<string | null>(existingWpId)
-
-  const { data: wp } = useQuery({
-    queryKey: ['wp-detail', wpId],
-    queryFn: () => wirtschaftsplanApi.get(wpId!),
-    enabled: !!wpId,
-  })
 
   const erstellenMut = useMutation({
     mutationFn: (d: { wirtschaftsjahr_id: string; wirkung_ab: string }) =>
@@ -547,7 +471,7 @@ export function WirtschaftsplanWizard() {
     erstellenMut.mutate(d)
   }
 
-  const handleBeschluss = () => {
+  const handleEntwurfFertig = () => {
     qc.invalidateQueries({ queryKey: ['wirtschaftsplaene'] })
     navigate(`/abrechnung-wp/wirtschaftsplan/${wpId}`)
   }
@@ -604,15 +528,8 @@ export function WirtschaftsplanWizard() {
         {step === 4 && wpId && (
           <Schritt4
             wpId={wpId}
-            onWeiter={() => setStep(5)}
+            onWeiter={handleEntwurfFertig}
             onZurueck={() => setStep(3)}
-          />
-        )}
-        {step === 5 && wp && (
-          <Schritt5
-            wp={wp}
-            onZurueck={() => setStep(4)}
-            onBeschluss={handleBeschluss}
           />
         )}
 

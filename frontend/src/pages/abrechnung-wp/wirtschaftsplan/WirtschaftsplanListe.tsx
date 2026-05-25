@@ -37,7 +37,7 @@ export function WirtschaftsplanListe() {
         <h1 className="text-xl font-semibold text-gray-800">Wirtschaftspläne</h1>
         {selectedId && (
           <button
-            onClick={() => navigate(`/abrechnung-wp/wirtschaftsplan/neu?objekt=${selectedId}`)}
+            onClick={() => navigate(`/abrechnung-wp/wirtschaftsplan/wizard?objekt=${selectedId}`)}
             className="px-3 py-1.5 bg-primary-600 text-white text-sm rounded hover:bg-primary-700"
           >
             + Neuer Wirtschaftsplan

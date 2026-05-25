@@ -2,6 +2,7 @@ import logging
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError
+from django.http import HttpResponse
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -221,3 +222,57 @@ class WirtschaftsplanViewSet(viewsets.ModelViewSet):
         except ValidationError as e:
             return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(WirtschaftsplanDetailSerializer(neu).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['get'], url_path='pdf/gesamt')
+    def pdf_gesamt(self, request, pk=None):
+        """Gesamtwirtschaftsplan als PDF."""
+        wp = self.get_object()
+        try:
+            from .services.wp_pdf_service import render_gesamt_pdf
+            pdf_bytes = render_gesamt_pdf(wp)
+        except Exception as e:
+            logger.exception('Fehler bei render_gesamt_pdf: %s', e)
+            return Response({'detail': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        fname = f"WP_{wp.wirtschaftsjahr.objekt.objektnummer}_{wp.wirtschaftsjahr.jahr}.pdf"
+        response = HttpResponse(pdf_bytes, content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="{fname}"'
+        return response
+
+    @action(detail=True, methods=['get'], url_path='pdf/einzeln')
+    def pdf_einzeln(self, request, pk=None):
+        """Einzelwirtschaftsplan als PDF (einheit_id=...) oder ZIP (bulk=1)."""
+        wp = self.get_object()
+        einheit_id = request.query_params.get('einheit_id')
+        bulk = request.query_params.get('bulk', '0') == '1'
+        try:
+            from .services.wp_pdf_service import render_einzel_pdf, render_einzel_bulk_zip
+            from apps.objekte.models import Einheit
+            if bulk:
+                data = render_einzel_bulk_zip(wp)
+                fname = (
+                    f"Einzelwirtschaftsplaene_"
+                    f"{wp.wirtschaftsjahr.objekt.objektnummer}_"
+                    f"{wp.wirtschaftsjahr.jahr}.zip"
+                )
+                response = HttpResponse(data, content_type='application/zip')
+                response['Content-Disposition'] = f'attachment; filename="{fname}"'
+                return response
+            if not einheit_id:
+                return Response(
+                    {'detail': 'einheit_id oder bulk=1 erforderlich.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            einheit = Einheit.objects.get(id=einheit_id)
+            data = render_einzel_pdf(wp, einheit)
+            fname = (
+                f"EWP_{wp.wirtschaftsjahr.objekt.objektnummer}_"
+                f"{einheit.einheit_nr}_{wp.wirtschaftsjahr.jahr}.pdf"
+            )
+            response = HttpResponse(data, content_type='application/pdf')
+            response['Content-Disposition'] = f'attachment; filename="{fname}"'
+            return response
+        except Einheit.DoesNotExist:
+            return Response({'detail': 'Einheit nicht gefunden.'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.exception('Fehler bei render_einzel_pdf: %s', e)
+            return Response({'detail': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

@@ -108,4 +108,16 @@ export const wirtschaftsplanApi = {
 
   korrekturbeschluss: (id: string) =>
     client.post<WirtschaftsplanDetail>(`/wirtschaftsplaene/${id}/korrekturbeschluss/`).then(r => r.data),
+
+  pdfGesamt: (id: string) =>
+    client.get(`/wirtschaftsplaene/${id}/pdf/gesamt/`, { responseType: 'blob' }).then(r => r.data as Blob),
+
+  pdfEinzeln: (id: string, params: { einheit_id?: string; bulk?: boolean }) =>
+    client.get(`/wirtschaftsplaene/${id}/pdf/einzeln/`, {
+      params: {
+        ...(params.einheit_id ? { einheit_id: params.einheit_id } : {}),
+        ...(params.bulk ? { bulk: '1' } : {}),
+      },
+      responseType: 'blob',
+    }).then(r => r.data as Blob),
 }
