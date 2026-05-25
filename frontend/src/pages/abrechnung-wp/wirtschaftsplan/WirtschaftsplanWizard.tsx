@@ -112,6 +112,8 @@ function Schritt1({ objektId, onWeiter }: { objektId: string; onWeiter: (d: Step
   )
 }
 
+const VERBRAUCH_VS = new Set(['140', '141', '142', '143', '144', '145'])
+
 // ─── Schritt 2: Konten und Beträge eingeben ─────────────────────────────────
 function Schritt2({
   wpId,
@@ -120,25 +122,53 @@ function Schritt2({
 }: { wpId: string; onWeiter: () => void; onZurueck: () => void }) {
   const qc = useQueryClient()
   const [betraege, setBetraege] = useState<Record<string, string>>({})
+  const [vorjahrPrefills, setVorjahrPrefills] = useState<Set<string>>(new Set())
   const debounceRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+  const vorjahrSavedRef = useRef(false)
 
   const { data: konten = [], isLoading } = useQuery({
     queryKey: ['wp-konten', wpId],
     queryFn: () => wirtschaftsplanApi.konten(wpId),
   })
 
-  // Initialbeträge aus vorhandenen Positionen laden
-  useEffect(() => {
-    const init: Record<string, string> = {}
-    konten.forEach(k => { init[k.id] = k.betrag === '0.00' ? '' : k.betrag })
-    setBetraege(init)
-  }, [konten])
-
   const upsertMut = useMutation({
     mutationFn: ({ kontoId, betrag }: { kontoId: string; betrag: string }) =>
       wirtschaftsplanApi.positionUpsert(wpId, { konto_id: kontoId, betrag }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['wp-konten', wpId] }),
   })
+
+  // Initialbeträge aus vorhandenen Positionen laden; Vorjahr für VS 140–145 vorbelegen
+  useEffect(() => {
+    if (konten.length === 0) return
+    const init: Record<string, string> = {}
+    const prefillIds = new Set<string>()
+    const toSave: Array<{ kontoId: string; betrag: string }> = []
+
+    konten.forEach(k => {
+      const hatPosition = k.betrag !== '0.00' && k.betrag !== '0'
+      if (hatPosition) {
+        init[k.id] = k.betrag
+      } else if (k.vs_code && VERBRAUCH_VS.has(k.vs_code) && k.vorjahr_betrag) {
+        init[k.id] = k.vorjahr_betrag
+        prefillIds.add(k.id)
+        if (!vorjahrSavedRef.current) {
+          toSave.push({ kontoId: k.id, betrag: k.vorjahr_betrag })
+        }
+      } else {
+        init[k.id] = ''
+      }
+    })
+
+    setBetraege(init)
+    setVorjahrPrefills(prefillIds)
+
+    if (toSave.length > 0 && !vorjahrSavedRef.current) {
+      vorjahrSavedRef.current = true
+      toSave.forEach(({ kontoId, betrag }) => {
+        upsertMut.mutate({ kontoId, betrag })
+      })
+    }
+  }, [konten])
 
   const deleteMut = useMutation({
     mutationFn: (kontoId: string) => wirtschaftsplanApi.positionLoeschen(wpId, kontoId),
@@ -192,15 +222,24 @@ function Schritt2({
                       {k.vs_code ?? <span className="text-red-500">kein VS</span>}
                     </td>
                     <td className="px-3 py-2 text-right">
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={betraege[k.id] ?? ''}
-                        onChange={e => handleBetragChange(k.id, e.target.value)}
-                        placeholder="0,00"
-                        className="w-32 text-right border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:border-primary-500"
-                      />
+                      <div className="flex items-center justify-end gap-1">
+                        {vorjahrPrefills.has(k.id) && !k.position_id && (
+                          <span className="text-xs text-amber-600 whitespace-nowrap" title="Vorjahreswert">VJ</span>
+                        )}
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={betraege[k.id] ?? ''}
+                          onChange={e => handleBetragChange(k.id, e.target.value)}
+                          placeholder="0,00"
+                          className={`w-32 text-right border rounded px-2 py-1 text-sm focus:outline-none focus:border-primary-500 ${
+                            vorjahrPrefills.has(k.id) && !k.position_id
+                              ? 'border-amber-300 bg-amber-50'
+                              : 'border-gray-300'
+                          }`}
+                        />
+                      </div>
                     </td>
                     <td className="px-3 py-2 text-center">
                       <StatusAmpel konto={k} />

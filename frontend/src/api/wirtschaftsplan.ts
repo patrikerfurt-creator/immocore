@@ -64,6 +64,7 @@ export interface WpKonto {
   betrag: string
   verteilung_validiert: boolean
   verteilung_freigegeben_trotz_diff: boolean
+  vorjahr_betrag: string | null
 }
 
 export interface VorschauZeile {

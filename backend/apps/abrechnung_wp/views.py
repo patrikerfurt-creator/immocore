@@ -90,6 +90,22 @@ class WirtschaftsplanViewSet(viewsets.ModelViewSet):
         wj = wp.wirtschaftsjahr
 
         from apps.konten.models import Konto, KontoVerteilerSchluessel
+
+        # Vorjahres-WP für VS 140–145 Defaultwerte
+        VERBRAUCH_VS = {'140', '141', '142', '143', '144', '145'}
+        vorjahr_wp = (
+            Wirtschaftsplan.objects
+            .filter(wirtschaftsjahr__objekt=wj.objekt, wirtschaftsjahr__jahr=wj.jahr - 1)
+            .exclude(status='aufgehoben')
+            .order_by('-erstellt_am')
+            .prefetch_related('positionen__konto')
+            .first()
+        )
+        vorjahr_betraege: dict = {}
+        if vorjahr_wp:
+            for pos in vorjahr_wp.positionen.all():
+                vorjahr_betraege[pos.konto.kontonummer] = str(pos.betrag)
+
         konten_qs = Konto.objects.filter(
             wirtschaftsjahr=wj,
             kontoart__in=['standard', 'summierung'],
@@ -111,6 +127,10 @@ class WirtschaftsplanViewSet(viewsets.ModelViewSet):
             # Bereits vorhandene Position für dieses Konto?
             position = wp.positionen.filter(konto=k).first()
 
+            vorjahr_betrag = None
+            if vs_code in VERBRAUCH_VS and k.kontonummer in vorjahr_betraege:
+                vorjahr_betrag = vorjahr_betraege[k.kontonummer]
+
             result.append({
                 'id': str(k.id),
                 'kontonummer': k.kontonummer,
@@ -123,6 +143,7 @@ class WirtschaftsplanViewSet(viewsets.ModelViewSet):
                 'betrag': str(position.betrag) if position else '0.00',
                 'verteilung_validiert': position.verteilung_validiert if position else False,
                 'verteilung_freigegeben_trotz_diff': position.verteilung_freigegeben_trotz_diff if position else False,
+                'vorjahr_betrag': vorjahr_betrag,
             })
 
         return Response(result)
