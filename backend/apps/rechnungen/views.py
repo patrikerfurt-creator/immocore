@@ -143,7 +143,8 @@ class KreditorViewSet(viewsets.ModelViewSet):
         wkz_qs = (
             KreditorOP.objects
             .filter(kreditor=kreditor, herkunft='wkz_vorlage')
-            .select_related('objekt', 'wkz_op__vorlage')
+            .select_related('objekt')
+            .prefetch_related('wkz_op')
             .order_by('-faellig_ab')
         )
         if objekt_id:
@@ -152,7 +153,7 @@ class KreditorViewSet(viewsets.ModelViewSet):
             wkz_qs = wkz_qs.filter(faellig_ab__year=jahr)
 
         for op in wkz_qs:
-            wkz_op = getattr(op, 'wkz_op', None)
+            wkz_op = op.wkz_op.first()
             positionen.append({
                 'id': str(op.id),
                 'herkunft': 'wkz',
