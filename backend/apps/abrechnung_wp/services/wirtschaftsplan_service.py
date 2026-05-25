@@ -298,26 +298,35 @@ def _aktiver_vs_code(konto) -> str | None:
     return konto.verteilerschluessel or None
 
 
+VERBRAUCH_CODES = frozenset({'140', '141', '142', '143', '144', '145'})
+
+
 def _ermittle_vs_basis(vs_code: str, objekt, wj) -> dict:
     """
     Ermittelt VS-Basis für die Verteilungsberechnung.
     Returns: {'gesamt': Decimal, 'per_einheit': {str(einheit_id): Decimal}}
     Spec Kap. 6.1.
+
+    Priorität für Verbrauch-VS (140–145):
+      1. EinheitVerbrauch des aktuellen WJ (gemessene Werte, falls vorhanden)
+      2. VerteilerschluesselWert des aktuellen WJ (WJ-spezifisch schlägt Zeitlos)
+      3. Falls gesamt == 0: Vorjahres-VerteilerschluesselWert (WJ-1)
+      4. Falls immer noch 0: EinheitVerbrauch des Vorjahres (WJ-1)
     """
     per_einheit = {}
     gesamt = Decimal('0')
 
+    # Für Verbrauch-VS: gemessene EinheitVerbrauch des aktuellen WJ zuerst prüfen
+    if vs_code in VERBRAUCH_CODES:
+        for v in EinheitVerbrauch.objects.filter(wirtschaftsjahr=wj, vs_code=vs_code):
+            if v.wert:
+                per_einheit[str(v.einheit_id)] = v.wert
+                gesamt += v.wert
+        if gesamt > 0:
+            return {'gesamt': gesamt, 'per_einheit': per_einheit}
+
     vs = Verteilerschluessel.objects.filter(objekt=objekt, schluessel=vs_code, aktiv=True).first()
     if vs is None:
-        # Versuche Verbrauchswerte direkt
-        verbraeuche = EinheitVerbrauch.objects.filter(
-            wirtschaftsjahr=wj, vs_code=vs_code
-        )
-        if verbraeuche.exists():
-            for v in verbraeuche:
-                if v.wert:
-                    per_einheit[str(v.einheit_id)] = v.wert
-                    gesamt += v.wert
         return {'gesamt': gesamt, 'per_einheit': per_einheit}
 
     # Lade zeitlose UND WJ-spezifische Werte; WJ-spezifisch hat Vorrang pro Einheit.
@@ -337,6 +346,38 @@ def _ermittle_vs_basis(vs_code: str, objekt, wj) -> dict:
         if w.wert:
             per_einheit[str(w.einheit_id)] = w.wert
             gesamt += w.wert
+
+    # Verbrauch-VS ohne positive Werte → Vorjahr als Planungsbasis verwenden
+    if gesamt == 0 and vs_code in VERBRAUCH_CODES:
+        return _vorjahr_verbrauch_basis(vs, vs_code, objekt, wj)
+
+    return {'gesamt': gesamt, 'per_einheit': per_einheit}
+
+
+def _vorjahr_verbrauch_basis(vs, vs_code: str, objekt, wj) -> dict:
+    """Fallback auf Vorjahres-Verbrauchsdaten (WJ-1) für Planungszwecke."""
+    per_einheit: dict = {}
+    gesamt = Decimal('0')
+
+    # 1. VerteilerschluesselWert des Vorjahres
+    for w in VerteilerschluesselWert.objects.filter(
+        schluessel=vs, beteiligt=True, wirtschaftsjahr=wj.jahr - 1
+    ):
+        if w.wert:
+            per_einheit[str(w.einheit_id)] = w.wert
+            gesamt += w.wert
+    if gesamt > 0:
+        return {'gesamt': gesamt, 'per_einheit': per_einheit}
+
+    # 2. EinheitVerbrauch des Vorjahres
+    try:
+        vorjahr_wj = Wirtschaftsjahr.objects.get(objekt=objekt, jahr=wj.jahr - 1)
+        for v in EinheitVerbrauch.objects.filter(wirtschaftsjahr=vorjahr_wj, vs_code=vs_code):
+            if v.wert:
+                per_einheit[str(v.einheit_id)] = v.wert
+                gesamt += v.wert
+    except Wirtschaftsjahr.DoesNotExist:
+        pass
 
     return {'gesamt': gesamt, 'per_einheit': per_einheit}
 
