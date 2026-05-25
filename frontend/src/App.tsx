@@ -38,6 +38,11 @@ import { MassenimportWEG } from './pages/massenimport/MassenimportWEG'
 import { Lastschrift } from './pages/zahlungsverkehr/Lastschrift'
 import { Zahlungen } from './pages/zahlungsverkehr/Zahlungen'
 import { MitarbeiterPage } from './pages/mitarbeiter/MitarbeiterPage'
+import VorlagenListe from './pages/buchhaltung/wkz/VorlagenListe'
+import VorlageDetail from './pages/buchhaltung/wkz/VorlageDetail'
+import VorlageWizard from './pages/buchhaltung/wkz/VorlageWizard'
+import OPDetail from './pages/buchhaltung/wkz/OPDetail'
+import Forecast from './pages/buchhaltung/wkz/Forecast'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -94,6 +99,11 @@ export default function App() {
             <Route path="massenimport/weg" element={<MassenimportWEG />} />
             <Route path="zahlungsverkehr/lastschrift" element={<Lastschrift />} />
             <Route path="zahlungsverkehr/zahlungen" element={<Zahlungen />} />
+            <Route path="buchhaltung/wkz-vorlagen" element={<VorlagenListe />} />
+            <Route path="buchhaltung/wkz-vorlagen/neu" element={<VorlageWizard />} />
+            <Route path="buchhaltung/wkz-vorlagen/:id" element={<VorlageDetail />} />
+            <Route path="buchhaltung/wkz-ops/:id" element={<OPDetail />} />
+            <Route path="buchhaltung/wkz-forecast" element={<Forecast />} />
             <Route path="mitarbeiter" element={<MitarbeiterPage />} />
             <Route path="einstellungen" element={<Einstellungen />} />
             <Route path="*" element={<Navigate to="/" replace />} />

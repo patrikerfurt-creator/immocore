@@ -25,6 +25,7 @@ const buchhaltungItems: NavItemDef[] = [
   { to: '/buchhaltung/auto-pipeline', label: 'Auto-Pipeline',     icon: '🤖' },
   { to: '/buchhaltung/kontoauszug',    label: 'Kontoauszug',       icon: '📋', objektAware: true },
   { to: '/buchhaltung/ebanking',       label: 'E-Banking',         icon: '🏦', objektAware: true },
+  { to: '/buchhaltung/wkz-vorlagen',   label: 'WKZ',               icon: '🔁', objektAware: true },
   { to: '/rechnungen',                        label: 'Rechnungen',        icon: '🧾', objektAware: true },
   { to: '/admin/rechnungen/match-regeln',     label: 'Match-Regeln',      icon: '🔗' },
   { to: '/buchhaltung',                       label: 'Buchungsjournal',   icon: '📒', objektAware: true },
@@ -44,7 +45,7 @@ const otherItems: NavItemDef[] = [
 ]
 
 const stammdatenPaths = stammdatenItems.map(i => i.to)
-const buchhaltungPaths = [...buchhaltungItems.map(i => i.to), '/rechnungen']
+const buchhaltungPaths = [...buchhaltungItems.map(i => i.to), '/rechnungen', '/buchhaltung/wkz-ops']
 const zahlungsverkehrPaths = zahlungsverkehrItems.map(i => i.to)
 
 function resolvedTo(item: NavItemDef, selectedId: string | null) {
