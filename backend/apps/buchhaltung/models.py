@@ -1735,3 +1735,36 @@ class WirtschaftsplanKorrekturPaar(models.Model):
 
     def __str__(self):
         return f"WP-Paar {self.periode} — {self.beschluss}"
+
+
+# ---------------------------------------------------------------------------
+# SEPA-Zahlungslauf-Protokoll (Ausgangsüberweisungen pain.001)
+# ---------------------------------------------------------------------------
+
+class SepaZahlungslauf(models.Model):
+    """
+    Protokolleintrag für jeden generierten SEPA-Überweisungslauf (pain.001).
+    Wird automatisch beim Export in rechnungen/views.py erstellt.
+    """
+    id                  = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    faelligkeitsdatum   = models.DateField()
+    anzahl_rechnungen   = models.IntegerField(default=0)
+    summe               = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    dateiname           = models.CharField(max_length=255, blank=True, default='')
+    # Snapshot: Liste der enthaltenen Rechnungen [{id, nr, kreditor, betrag, objekt}]
+    positionen          = models.JSONField(default=list, blank=True)
+    buchungs_fehler     = models.JSONField(default=list, blank=True)
+    uebersprungen       = models.JSONField(default=list, blank=True)
+    erstellt_am         = models.DateTimeField(auto_now_add=True)
+    erstellt_von        = models.ForeignKey(
+        'auth.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='sepa_zahlungslaeufe',
+    )
+
+    class Meta:
+        verbose_name        = 'SEPA-Zahlungslauf'
+        verbose_name_plural = 'SEPA-Zahlungsläufe'
+        ordering            = ['-erstellt_am']
+
+    def __str__(self):
+        return f"SEPA-ZL {self.faelligkeitsdatum} — {self.anzahl_rechnungen} Rechnungen — {self.summe} €"

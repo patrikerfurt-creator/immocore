@@ -23,6 +23,7 @@ from .models import (
     LastschriftLauf,
     HausgeldSollstellungslauf, HausgeldSollstellung,
     AutoLaufProtokoll,
+    SepaZahlungslauf,
 )
 from .serializers import (
     BuchungsartSerializer,
@@ -40,6 +41,7 @@ from .serializers import (
     HausgeldSollstellungslaufSerializer,
     HausgeldSollstellungSerializer, HausgeldSollstellungListSerializer,
     AutoLaufProtokollSerializer,
+    SepaZahlungslaufSerializer,
 )
 from .services.camt053 import parse_camt053
 from .services.buchungserkennung import erkenne_buchung, lerne_aus_buchung
@@ -1941,3 +1943,12 @@ class KreditorOPViewSet(viewsets.ReadOnlyModelViewSet):
         else:
             qs = qs.filter(status__in=['offen', 'teilbezahlt'])
         return qs.order_by('faellig_ab')
+
+
+class SepaZahlungslaufViewSet(viewsets.ReadOnlyModelViewSet):
+    """SEPA-Zahlungslauf-Protokolle (Ausgangsüberweisungen pain.001) — read-only."""
+    serializer_class   = SepaZahlungslaufSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return SepaZahlungslauf.objects.select_related('erstellt_von').order_by('-erstellt_am')[:200]

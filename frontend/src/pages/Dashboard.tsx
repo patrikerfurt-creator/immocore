@@ -224,7 +224,7 @@ export function Dashboard() {
         </div>
       </div>
 
-      {username === 'admin' && <ResetTestdatenButton />}
+      {(username === 'admin' || username === 'p.maurer' || username === 'p.maurer@demme-immobilien.de') && <ResetTestdatenButton />}
     </div>
   )
 }

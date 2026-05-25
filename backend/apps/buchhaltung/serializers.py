@@ -12,6 +12,7 @@ from .models import (
     LastschriftLauf,
     HausgeldSollstellungslauf, HausgeldSollstellung, SollstellungSplit,
     AutoLaufProtokoll,
+    SepaZahlungslauf,
 )
 
 
@@ -561,4 +562,26 @@ class AutoLaufProtokollSerializer(serializers.ModelSerializer):
             'anzahl_evs_geplant', 'anzahl_evs_erfolgreich', 'anzahl_evs_uebersprungen',
             'summe_sollstellungen', 'summe_lastschrift',
             'datei_pfad', 'warnungen', 'fehler',
+        ]
+
+
+class SepaZahlungslaufSerializer(serializers.ModelSerializer):
+    erstellt_von_name = serializers.SerializerMethodField()
+
+    def get_erstellt_von_name(self, obj):
+        if obj.erstellt_von:
+            return obj.erstellt_von.get_full_name() or obj.erstellt_von.username
+        return ''
+
+    class Meta:
+        model = SepaZahlungslauf
+        fields = [
+            'id', 'faelligkeitsdatum', 'anzahl_rechnungen', 'summe',
+            'dateiname', 'positionen', 'buchungs_fehler', 'uebersprungen',
+            'erstellt_am', 'erstellt_von', 'erstellt_von_name',
+        ]
+        read_only_fields = [
+            'id', 'faelligkeitsdatum', 'anzahl_rechnungen', 'summe',
+            'dateiname', 'positionen', 'buchungs_fehler', 'uebersprungen',
+            'erstellt_am', 'erstellt_von', 'erstellt_von_name',
         ]
