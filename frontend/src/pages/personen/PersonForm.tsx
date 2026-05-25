@@ -68,8 +68,6 @@ interface FormState {
   telefon: string
   adresse: string
   ibans: string[]
-  briefanrede: string
-  briefanrede2: string
 }
 
 function toFormState(p?: Person): FormState {
@@ -88,8 +86,6 @@ function toFormState(p?: Person): FormState {
     telefon: p?.telefon ?? '',
     adresse: (p as unknown as Record<string, string>)?.adresse ?? '',
     ibans: p?.ibans ?? [''],
-    briefanrede:  (p as unknown as Record<string, string>)?.briefanrede  ?? '',
-    briefanrede2: (p as unknown as Record<string, string>)?.briefanrede2 ?? '',
   }
 }
 

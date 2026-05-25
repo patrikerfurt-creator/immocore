@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { wkzApi, type WKZOP } from '../../../api/wkz'
 import { Badge } from '../../../components/ui/Badge'
@@ -10,21 +10,6 @@ const EUR = (v: string | number | null) =>
 
 const DATUM = (s: string | null) =>
   s ? new Date(s).toLocaleDateString('de-DE') : '–'
-
-const STATUS_FARBE_VORLAGE: Record<string, 'green' | 'yellow' | 'gray' | 'blue'> = {
-  aktiv: 'green',
-  pausiert: 'yellow',
-  beendet: 'gray',
-  entwurf: 'blue',
-}
-
-const STATUS_FARBE_OP: Record<string, 'green' | 'yellow' | 'gray' | 'blue' | 'red'> = {
-  erzeugt: 'blue',
-  bescheid_fehlt: 'yellow',
-  bankabgang_erfolgt: 'green',
-  abweichend_geklaert: 'yellow',
-  verworfen: 'gray',
-}
 
 const OP_STATUS_TEXT: Record<string, string> = {
   erzeugt: 'Erzeugt',
@@ -48,7 +33,6 @@ function BeendenModal({
   const [gueltigBis, setGueltigBis] = useState('')
   const [grund, setGrund] = useState('')
   const qc = useQueryClient()
-  const navigate = useNavigate()
 
   const mutation = useMutation({
     mutationFn: () => wkzApi.vorlageBeenden(vorlageId, gueltigBis, grund),
@@ -182,9 +166,7 @@ export default function VorlageDetail() {
             ← Zurück
           </Link>
           <h1 className="text-xl font-semibold">{vorlage.bezeichnung}</h1>
-          <Badge color={STATUS_FARBE_VORLAGE[vorlage.status] ?? 'gray'}>
-            {vorlage.status}
-          </Badge>
+          <Badge value={vorlage.status} />
         </div>
         <div className="flex gap-2">
           {vorlage.status === 'entwurf' && !editMode && (
@@ -447,9 +429,7 @@ export default function VorlageDetail() {
                   <td className="py-1.5">{DATUM(op.faellig_am)}</td>
                   <td className="py-1.5 text-right tabular-nums">{EUR(op.erwarteter_betrag)}</td>
                   <td className="py-1.5">
-                    <Badge color={STATUS_FARBE_OP[op.status] ?? 'gray'}>
-                      {OP_STATUS_TEXT[op.status] ?? op.status}
-                    </Badge>
+                    <Badge value={op.status} label={OP_STATUS_TEXT[op.status] ?? op.status} />
                   </td>
                   <td className="py-1.5 text-right font-mono text-xs">{op.op_nummer}</td>
                 </tr>

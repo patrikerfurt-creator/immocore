@@ -21,10 +21,6 @@ const BA_ZEILEN = [
   { kontoart: '.940', bezeichnung: 'Sonderumlage' },
 ]
 
-// abrechnungsart_code from backend is '900'; kontoart in wizard is '.900'
-function codeToKontoart(code: string): string {
-  return code ? `.${code}` : code
-}
 
 function fmtDate(iso: string): string {
   if (!iso) return '–'

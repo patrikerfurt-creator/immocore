@@ -14,6 +14,7 @@ const variants: Record<string, string> = {
   unbekannt:      'bg-orange-100 text-orange-700',
   // Buchung
   gebucht:        'bg-green-100 text-green-800',
+  festgeschrieben:'bg-green-100 text-green-800',
   entwurf:        'bg-yellow-100 text-yellow-800',
   storniert:      'bg-red-100 text-red-800',
   // Rechnung
@@ -33,11 +34,16 @@ const variants: Record<string, string> = {
   in_bearbeitung: 'bg-yellow-100 text-yellow-800',
   erledigt:       'bg-green-100 text-green-800',
   geschlossen:    'bg-gray-100 text-gray-600',
-  // WKZ
-  eingereicht:    'bg-orange-100 text-orange-800',
-  aktiv:          'bg-green-100 text-green-800',
-  pausiert:       'bg-yellow-100 text-yellow-800',
-  beendet:        'bg-gray-100 text-gray-500',
+  // WKZ Vorlage
+  eingereicht:       'bg-orange-100 text-orange-800',
+  pausiert:          'bg-yellow-100 text-yellow-800',
+  beendet:           'bg-gray-100 text-gray-500',
+  // WKZ OP
+  erzeugt:           'bg-blue-100 text-blue-700',
+  bescheid_fehlt:    'bg-yellow-100 text-yellow-800',
+  bankabgang_erfolgt:'bg-green-100 text-green-800',
+  abweichend_geklaert:'bg-yellow-100 text-yellow-800',
+  verworfen:         'bg-gray-100 text-gray-500',
   // Priorität
   niedrig:        'bg-gray-100 text-gray-600',
   mittel:         'bg-yellow-100 text-yellow-700',

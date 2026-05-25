@@ -43,13 +43,19 @@ export function Buchungsjournal() {
 
   const stornierenMut = useMutation({
     mutationFn: (id: string) => buchhaltungApi.stornieren(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['buchungen'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['buchungen'] })
+      setStatusFilter('storniert')
+    },
     onError: () => alert('Stornierung fehlgeschlagen.'),
   })
 
   const neuBuchenMut = useMutation({
     mutationFn: (id: string) => buchhaltungApi.neuBuchen(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['buchungen'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['buchungen'] })
+      setStatusFilter('entwurf')
+    },
     onError: () => alert('Neu buchen fehlgeschlagen.'),
   })
 
@@ -102,7 +108,7 @@ export function Buchungsjournal() {
         >
           <option value="">Alle Status</option>
           <option value="entwurf">Entwurf</option>
-          <option value="gebucht">Gebucht</option>
+          <option value="festgeschrieben">Festgeschrieben</option>
           <option value="storniert">Storniert</option>
         </select>
       </div>
@@ -193,13 +199,14 @@ export function Buchungsjournal() {
                       </button>
                     )}
                     {b.status === 'storniert' && (
-                      <button
+                      <Button
+                        size="sm"
+                        variant="secondary"
                         onClick={() => neuBuchenMut.mutate(b.id)}
                         disabled={neuBuchenMut.isPending}
-                        className="text-xs text-blue-600 hover:underline disabled:opacity-50 font-medium"
                       >
-                        Neu buchen
-                      </button>
+                        {neuBuchenMut.isPending ? 'Buche…' : 'Neu buchen'}
+                      </Button>
                     )}
                   </td>
                 </tr>
