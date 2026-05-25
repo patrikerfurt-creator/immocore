@@ -1137,7 +1137,6 @@ class LastschriftLaufViewSet(viewsets.ModelViewSet):
         # ── Hausgeld-Nebenbuch ─────────────────────────────────────────
         if hg_lauf_id:
             from .models import HausgeldSollstellungslauf
-            from .services.sepa_lastschrift import bestimme_suffix, baue_verwendungszweck
             try:
                 hg_lauf = HausgeldSollstellungslauf.objects.prefetch_related(
                     'sollstellungen__splits__bankkonto_ziel',
@@ -1153,6 +1152,19 @@ class LastschriftLaufViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
+            # Bewirtschaftungskonto als einziges Zielkonto
+            hauptkonto = objekt.bankkonten.filter(konto_typ='bewirtschaftung', aktiv=True).first()
+            if not hauptkonto:
+                return Response(
+                    {'error': 'Kein aktives Bewirtschaftungs-Bankkonto am Objekt hinterlegt'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            objekt_kurz = objekt.kurzbezeichnung or objekt.bezeichnung
+            periode_str = faelligkeitsdatum.strftime('%m/%Y')
+
+            # Gruppierung nach EV: alle OPOS einer Person → ein Einzug
+            ev_map: dict = {}
             for ss in hg_lauf.sollstellungen.filter(
                 status_cached__in=('offen', 'teilbezahlt'), storniert_am__isnull=True
             ).select_related(
@@ -1165,47 +1177,55 @@ class LastschriftLaufViewSet(viewsets.ModelViewSet):
                     ohne_mandat.append({'sollstellung_id': str(ss.id), 'grund': 'Kein aktives SEPA-Mandat'})
                     continue
 
-                if ss.sollstellungs_typ == 'hausgeld':
-                    splits_je_bank: dict = {}
-                    for split in ss.splits.all():
-                        splits_je_bank.setdefault(str(split.bankkonto_ziel_id), []).append(split)
-                    for bk_id_str, splits in splits_je_bank.items():
-                        suffix = bestimme_suffix(bk_id_str, objekt)
-                        betrag = sum(s.betrag for s in splits)
-                        positionen.append({
-                            'sollstellung_id':   str(ss.id),
-                            'end_to_end_id':     f"{ss.opos_nr}-{suffix}",
-                            'betrag':            float(betrag),
-                            'schuldner_name':    person.name,
-                            'schuldner_iban':    mandat.iban,
-                            'schuldner_bic':     mandat.bic or 'NOTPROVIDED',
-                            'mandatsreferenz':   mandat.mandatsreferenz,
-                            'mandat_datum':      str(mandat.unterzeichnet_am),
-                            'verwendungszweck':  baue_verwendungszweck(ss, suffix),
-                            'faelligkeitsdatum': str(faelligkeitsdatum),
-                            'seq_typ':           'RCUR',
-                        })
-                else:
-                    # Sonderumlage / Abrechnungsergebnis: BA bestimmt Zielkonto
-                    from .services.sollstellung_service import _bankkonto_fuer_ba
+                ev_id = str(ss.eigentumsverhaeltnis_id)
+                if ev_id not in ev_map:
                     try:
-                        bk = _bankkonto_fuer_ba(objekt, ss.ba)
-                        suffix = bestimme_suffix(str(bk.pk), objekt)
+                        pk_id = str(ss.eigentumsverhaeltnis.personenkonto.id)
                     except Exception:
-                        suffix = 'S' if ss.sollstellungs_typ == 'sonderumlage' else 'A'
-                    positionen.append({
-                        'sollstellung_id':   str(ss.id),
-                        'end_to_end_id':     f"{ss.opos_nr}-{suffix}",
-                        'betrag':            float(ss.soll_betrag),
-                        'schuldner_name':    person.name,
-                        'schuldner_iban':    mandat.iban,
-                        'schuldner_bic':     mandat.bic or 'NOTPROVIDED',
-                        'mandatsreferenz':   mandat.mandatsreferenz,
-                        'mandat_datum':      str(mandat.unterzeichnet_am),
-                        'verwendungszweck':  baue_verwendungszweck(ss, suffix),
-                        'faelligkeitsdatum': str(faelligkeitsdatum),
-                        'seq_typ':           'RCUR',
-                    })
+                        pk_id = None
+                    ev_map[ev_id] = {
+                        'betrag':           0.0,
+                        'sollstellung_ids': [],
+                        'primary_opos_nr':  ss.opos_nr,
+                        'schuldner_name':   person.name,
+                        'schuldner_iban':   mandat.iban,
+                        'schuldner_bic':    mandat.bic or 'NOTPROVIDED',
+                        'mandatsreferenz':  mandat.mandatsreferenz,
+                        'mandat_datum':     str(mandat.unterzeichnet_am),
+                        'personenkonto_id': pk_id,
+                        'einheit_nr':       ss.eigentumsverhaeltnis.einheit.einheit_nr,
+                    }
+
+                if ss.sollstellungs_typ == 'hausgeld':
+                    betrag = float(sum(
+                        s.betrag for s in ss.splits.all() if s.bankkonto_ziel is not None
+                    ))
+                else:
+                    betrag = float(ss.soll_betrag)
+
+                ev_map[ev_id]['betrag'] += betrag
+                ev_map[ev_id]['sollstellung_ids'].append(str(ss.id))
+
+            for ev_id, data in ev_map.items():
+                if data['betrag'] <= 0:
+                    continue
+                positionen.append({
+                    'sollstellung_ids':   data['sollstellung_ids'],
+                    'sollstellung_id':    data['sollstellung_ids'][0],
+                    'end_to_end_id':      data['primary_opos_nr'],
+                    'betrag':             data['betrag'],
+                    'schuldner_name':     data['schuldner_name'],
+                    'schuldner_iban':     data['schuldner_iban'],
+                    'schuldner_bic':      data['schuldner_bic'],
+                    'mandatsreferenz':    data['mandatsreferenz'],
+                    'mandat_datum':       data['mandat_datum'],
+                    'verwendungszweck':   f"Hausgeld {periode_str} - {data['einheit_nr']} - Objekt {objekt_kurz}",
+                    'faelligkeitsdatum':  str(faelligkeitsdatum),
+                    'seq_typ':            'RCUR',
+                    'kreditorkonto_iban': hauptkonto.iban,
+                    'kreditorkonto_bic':  hauptkonto.bic or 'NOTPROVIDED',
+                    'personenkonto_id':   data['personenkonto_id'],
+                })
 
         if not positionen:
             return Response(
@@ -1345,7 +1365,7 @@ class LastschriftLaufViewSet(viewsets.ModelViewSet):
 
         lastschriften = []
         for p in lauf.positionen:
-            lastschriften.append({
+            entry = {
                 'betrag': Decimal(str(p['betrag'])),
                 'schuldner_name': p['schuldner_name'],
                 'schuldner_iban': p['schuldner_iban'],
@@ -1355,7 +1375,13 @@ class LastschriftLaufViewSet(viewsets.ModelViewSet):
                 'verwendungszweck': p.get('verwendungszweck', ''),
                 'faelligkeitsdatum': lauf.faelligkeitsdatum,
                 'seq_typ': p.get('seq_typ', 'RCUR'),
-            })
+            }
+            if p.get('end_to_end_id'):
+                entry['end_to_end_id'] = p['end_to_end_id']
+            if p.get('kreditorkonto_iban'):
+                entry['kreditorkonto_iban'] = p['kreditorkonto_iban']
+                entry['kreditorkonto_bic'] = p.get('kreditorkonto_bic', 'NOTPROVIDED')
+            lastschriften.append(entry)
 
         xml_bytes = exportiere_lastschrift(lastschriften, glaeubiger)
         dateiname = f"lastschrift_{lauf.faelligkeitsdatum.strftime('%Y%m%d')}_{objekt.objektnummer}.xml"

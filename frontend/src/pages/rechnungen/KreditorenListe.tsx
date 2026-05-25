@@ -84,9 +84,13 @@ function KreditorKontoModal({
   kreditor: Kreditor
   onClose: () => void
 }) {
+  const currentYear = new Date().getFullYear()
+  const years = Array.from({ length: 6 }, (_, i) => currentYear - i)
+  const [selectedJahr, setSelectedJahr] = useState('')
+
   const { data, isLoading } = useQuery({
-    queryKey: ['kreditor-kontoauszug', kreditor.id],
-    queryFn: () => rechnungenApi.kreditorKontoauszug(kreditor.id),
+    queryKey: ['kreditor-kontoauszug', kreditor.id, selectedJahr],
+    queryFn: () => rechnungenApi.kreditorKontoauszug(kreditor.id, selectedJahr ? { jahr: selectedJahr } : {}),
   })
 
   const positionen: KreditorKontoPosition[] = data?.positionen ?? []
@@ -108,7 +112,22 @@ function KreditorKontoModal({
               </p>
             )}
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-500">Jahr:</span>
+              <select
+                className="rounded border border-gray-300 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-400"
+                value={selectedJahr}
+                onChange={e => setSelectedJahr(e.target.value)}
+              >
+                <option value="">Alle</option>
+                {years.map(y => (
+                  <option key={y} value={String(y)}>{y}</option>
+                ))}
+              </select>
+            </div>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+          </div>
         </div>
 
         {/* Saldo-Info */}

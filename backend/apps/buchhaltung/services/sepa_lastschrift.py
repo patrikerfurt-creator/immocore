@@ -184,55 +184,94 @@ def commite_lastschriftlauf(
 ):
     """
     Erstellt einen LastschriftLauf aus einer Liste von HausgeldSollstellungen.
-    Pro Split (Bankkonto) wird eine eigene SEPA-Position erzeugt.
+    Alle OPOS eines EV werden zu einer einzigen SEPA-Position zusammengefasst
+    (Einzug auf das Bewirtschaftungskonto des Objekts).
 
     Returns: LastschriftLauf
     """
     from decimal import Decimal
     from apps.buchhaltung.models import LastschriftLauf
+    from apps.objekte.models import Bankkonto as BKModel
+
+    # Bewirtschaftungskonto als einziges Zielkonto für alle Einzüge
+    hauptkonto = BKModel.objects.filter(
+        objekt=objekt, konto_typ='bewirtschaftung', aktiv=True
+    ).first()
+    if not hauptkonto:
+        raise ValueError(f'Kein aktives Bewirtschaftungs-Bankkonto für Objekt {objekt}')
 
     positionen = []
     gesamt = Decimal('0')
-
     sollstellungslauf = kandidaten[0].sollstellungslauf if kandidaten else None
+    faelligkeitsdatum_str = stichtag.isoformat() if hasattr(stichtag, 'isoformat') else str(stichtag)
+    periode_str = stichtag.strftime('%m/%Y') if hasattr(stichtag, 'strftime') else str(stichtag)
+
+    # Gruppierung nach EV: alle Sollstellungen einer Person → eine SEPA-Position
+    ev_map: dict = {}
 
     for ss in kandidaten:
         ev = ss.eigentumsverhaeltnis
+        ev_id = str(ev.id)
         person = ev.person
         mandat = person.sepa_mandat
 
-        # Personenkonto ermitteln (für Buchung 13650 und OP-Ausgleich)
-        try:
-            personenkonto = ev.personenkonto
-            personenkonto_id = str(personenkonto.id)
-        except Exception:
-            personenkonto_id = None
-
-        for split in ss.splits.select_related('bankkonto_ziel', 'ba'):
-            if split.bankkonto_ziel is None:
-                continue
-            suffix = bestimme_suffix(split.bankkonto_ziel.id, objekt)
-            verwendungszweck = baue_verwendungszweck(ss, suffix)
-            pos = {
-                'betrag': str(split.betrag),
-                'schuldner_name': person.name,
-                'schuldner_iban': mandat.iban,
-                'schuldner_bic': mandat.bic or 'NOTPROVIDED',
+        if ev_id not in ev_map:
+            try:
+                personenkonto_id = str(ev.personenkonto.id)
+            except Exception:
+                personenkonto_id = None
+            ev_map[ev_id] = {
+                'betrag':          Decimal('0'),
+                'sollstellung_ids': [],
+                'primary_opos_nr': ss.opos_nr,
+                'schuldner_name':  person.name,
+                'schuldner_iban':  mandat.iban,
+                'schuldner_bic':   mandat.bic or 'NOTPROVIDED',
                 'mandatsreferenz': mandat.mandatsreferenz,
-                'mandat_datum': mandat.unterzeichnet_am.isoformat(),
-                'verwendungszweck': verwendungszweck,
-                'faelligkeitsdatum': stichtag.isoformat() if hasattr(stichtag, 'isoformat') else str(stichtag),
-                'seq_typ': 'RCUR',
-                'kreditorkonto_iban': split.bankkonto_ziel.iban,
-                'kreditorkonto_bic': split.bankkonto_ziel.bic or 'NOTPROVIDED',
-                'sollstellung_id': str(ss.id),
-                'split_ba_nr': str(split.ba.nr),
+                'mandat_datum':    mandat.unterzeichnet_am.isoformat(),
                 'personenkonto_id': personenkonto_id,
+                'einheit_nr':      ev.einheit.einheit_nr,
             }
-            positionen.append(pos)
-            gesamt += split.betrag
 
-    bezeichnung = f'Hausgeld {stichtag.strftime("%m/%Y") if hasattr(stichtag, "strftime") else stichtag}'
+        # Gesamtbetrag aller Splits summieren
+        split_sum = sum(
+            s.betrag for s in ss.splits.all() if s.bankkonto_ziel is not None
+        )
+        if not split_sum:
+            split_sum = ss.soll_betrag  # Fallback wenn keine Splits vorhanden
+
+        ev_map[ev_id]['betrag'] += split_sum
+        ev_map[ev_id]['sollstellung_ids'].append(str(ss.id))
+
+    # Eine Position je EV erzeugen
+    objekt_kurz = objekt.kurzbezeichnung or objekt.bezeichnung
+    for ev_id, data in ev_map.items():
+        if data['betrag'] <= 0:
+            continue
+        verwendungszweck = (
+            f"Hausgeld {periode_str} - {data['einheit_nr']} - Objekt {objekt_kurz}"
+        )
+        pos = {
+            'sollstellung_ids':   data['sollstellung_ids'],
+            'sollstellung_id':    data['sollstellung_ids'][0],
+            'end_to_end_id':      data['primary_opos_nr'],
+            'betrag':             str(data['betrag']),
+            'schuldner_name':     data['schuldner_name'],
+            'schuldner_iban':     data['schuldner_iban'],
+            'schuldner_bic':      data['schuldner_bic'],
+            'mandatsreferenz':    data['mandatsreferenz'],
+            'mandat_datum':       data['mandat_datum'],
+            'verwendungszweck':   verwendungszweck,
+            'faelligkeitsdatum':  faelligkeitsdatum_str,
+            'seq_typ':            'RCUR',
+            'kreditorkonto_iban': hauptkonto.iban,
+            'kreditorkonto_bic':  hauptkonto.bic or 'NOTPROVIDED',
+            'personenkonto_id':   data['personenkonto_id'],
+        }
+        positionen.append(pos)
+        gesamt += data['betrag']
+
+    bezeichnung = f'Hausgeld {periode_str}'
     lauf = LastschriftLauf.objects.create(
         objekt=objekt,
         hausgeld_sollstellungslauf=sollstellungslauf,

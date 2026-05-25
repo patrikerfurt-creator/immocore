@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { buchhaltungApi } from '../../api/buchhaltung'
 import { personenApi } from '../../api/personen'
+import { wirtschaftsjahreApi } from '../../api/wirtschaftsjahre'
 import { Badge } from '../../components/ui/Badge'
 import { IbanInput } from '../../components/ui/IbanInput'
 import { useObjektStore } from '../../stores/objekt'
@@ -18,6 +19,13 @@ export function Debitoren() {
   const [view, setView] = useState<View>('liste')
   const [selectedKonto, setSelectedKonto] = useState<PersonenkontoSaldo | null>(null)
   const [selectedBuchung, setSelectedBuchung] = useState<KontoauszugPosition | null>(null)
+  const [wjId, setWjId] = useState('')
+
+  const { data: wirtschaftsjahre } = useQuery({
+    queryKey: ['wirtschaftsjahre', objektId],
+    queryFn: () => wirtschaftsjahreApi.list({ objekt: objektId! }),
+    enabled: !!objektId,
+  })
 
   if (!objektId) {
     return <div className="p-6 text-gray-500">Bitte zuerst ein Objekt auswählen.</div>
@@ -37,15 +45,33 @@ export function Debitoren() {
   const backToListe = () => { setSelectedKonto(null); setView('liste') }
   const backToKonto = () => { setSelectedBuchung(null); setView('kontoauszug') }
 
+  const wjSelector = (
+    <div className="flex items-center gap-2">
+      <span className="text-sm text-gray-500">Wirtschaftsjahr:</span>
+      <select
+        className="rounded border border-gray-300 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-400"
+        value={wjId}
+        onChange={e => setWjId(e.target.value)}
+      >
+        <option value="">Alle</option>
+        {(wirtschaftsjahre ?? []).map(wj => (
+          <option key={wj.id} value={wj.id}>{wj.jahr}</option>
+        ))}
+      </select>
+    </div>
+  )
+
   return (
     <div>
       {view === 'liste' && (
-        <PersonenkontoListe objektId={objektId} onSelect={openKonto} />
+        <PersonenkontoListe objektId={objektId} wjId={wjId} wjSelector={wjSelector} onSelect={openKonto} />
       )}
       {view === 'kontoauszug' && selectedKonto && (
         <KontoauszugView
           konto={selectedKonto}
           objektId={objektId!}
+          wjId={wjId}
+          wjSelector={wjSelector}
           onBack={backToListe}
           onBuchungClick={openBuchung}
         />
@@ -76,14 +102,18 @@ function DebSortIcon({ active, dir }: { active: boolean; dir: DebSortDir }) {
 
 function PersonenkontoListe({
   objektId,
+  wjId,
+  wjSelector,
   onSelect,
 }: {
   objektId: string
+  wjId: string
+  wjSelector: React.ReactNode
   onSelect: (k: PersonenkontoSaldo) => void
 }) {
   const { data: konten, isLoading } = useQuery({
-    queryKey: ['personenkonten-saldo', objektId],
-    queryFn: () => buchhaltungApi.personenkontenMitSaldo(objektId),
+    queryKey: ['personenkonten-saldo', objektId, wjId],
+    queryFn: () => buchhaltungApi.personenkontenMitSaldo(objektId, wjId ? { wirtschaftsjahr: wjId } : {}),
   })
 
   const [sortKey, setSortKey] = useState<DebSortKey>('kontonummer')
@@ -147,9 +177,12 @@ function PersonenkontoListe({
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold text-gray-900">Debitoren / Personenkonten</h1>
-        <div className="text-sm text-gray-500">
-          Gesamt offen:{' '}
-          <span className="font-semibold text-red-600">{EUR(gesamtOffen)}</span>
+        <div className="flex items-center gap-4">
+          {wjSelector}
+          <div className="text-sm text-gray-500">
+            Gesamt offen:{' '}
+            <span className="font-semibold text-red-600">{EUR(gesamtOffen)}</span>
+          </div>
         </div>
       </div>
 
@@ -251,24 +284,31 @@ function PersonenkontoListe({
 function KontoauszugView({
   konto,
   objektId,
+  wjId,
+  wjSelector,
   onBack,
   onBuchungClick,
 }: {
   konto: PersonenkontoSaldo
   objektId: string
+  wjId: string
+  wjSelector: React.ReactNode
   onBack: () => void
   onBuchungClick: (b: KontoauszugPosition) => void
 }) {
   const { data, isLoading } = useQuery({
-    queryKey: ['kontoauszug', konto.id],
-    queryFn: () => buchhaltungApi.kontoauszug(konto.id),
+    queryKey: ['kontoauszug', konto.id, wjId],
+    queryFn: () => buchhaltungApi.kontoauszug(konto.id, wjId ? { wirtschaftsjahr: wjId } : {}),
   })
 
   return (
     <div>
-      <button onClick={onBack} className="flex items-center gap-2 text-sm text-blue-600 mb-4 hover:underline">
-        ← Zurück zur Übersicht
-      </button>
+      <div className="flex items-center justify-between mb-4">
+        <button onClick={onBack} className="flex items-center gap-2 text-sm text-blue-600 hover:underline">
+          ← Zurück zur Übersicht
+        </button>
+        {wjSelector}
+      </div>
 
       <div className="bg-white rounded-lg border p-5 mb-4">
         <div className="flex justify-between items-start">
