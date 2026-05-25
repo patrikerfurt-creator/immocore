@@ -97,7 +97,7 @@ def render_einzel_pdf(wp: Wirtschaftsplan, einheit: Einheit) -> bytes:
 
     anteile_list = list(
         WirtschaftsplanAnteil.objects
-        .filter(position__wirtschaftsplan=wp, einheit=einheit)
+        .filter(position__wirtschaftsplan=wp, einheit=einheit, position__betrag__gt=0)
         .select_related('position', 'position__konto')
         .order_by('position__konto__kontonummer')
     )
@@ -129,10 +129,13 @@ def render_einzel_pdf(wp: Wirtschaftsplan, einheit: Einheit) -> bytes:
         })
 
         jahresanteil_by_ba[ba] = jahresanteil_by_ba.get(ba, Decimal('0')) + anteil.betrag_anteil
-        monatssoll_by_ba[ba]   = monatssoll_by_ba.get(ba, Decimal('0')) + anteil.monatsbetrag_anteil
 
     jahresanteil_gesamt = sum(jahresanteil_by_ba.values(), Decimal('0'))
-    monatssoll_gesamt   = sum(monatssoll_by_ba.values(), Decimal('0'))
+    monatssoll_by_ba = {
+        ba: (v / Decimal('12')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        for ba, v in jahresanteil_by_ba.items()
+    }
+    monatssoll_gesamt = sum(monatssoll_by_ba.values(), Decimal('0'))
 
     bankkonto = (
         Bankkonto.objects
