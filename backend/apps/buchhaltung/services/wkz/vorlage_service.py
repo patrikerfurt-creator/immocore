@@ -140,9 +140,10 @@ def reiche_vorlage_zur_freigabe_ein(vorlage_id, eingereicht_von) -> 'Wiederkehre
         aktiviere_vorlage(vorlage, freigegeben_von=eingereicht_von)
         logger.info("WKZ Vorlage %s automatisch freigegeben", vorlage.id)
     else:
-        # Kein FrontofficeAufgabe-Modell → Logging als Platzhalter
-        logger.warning(
-            "WKZ Vorlage %s wartet auf Freigabe durch Rolle '%s' (Jahresbetrag: %s €)",
+        vorlage.status = 'eingereicht'
+        vorlage.save(update_fields=['status'])
+        logger.info(
+            "WKZ Vorlage %s eingereicht — wartet auf Freigabe durch Rolle '%s' (Jahresbetrag: %s €)",
             vorlage.id, stufe.get('rolle'), jahresbetrag,
         )
 
