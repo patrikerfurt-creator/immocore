@@ -3,10 +3,108 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useObjektStore } from '../../stores/objekt'
 import { rechnungenApi } from '../../api/rechnungen'
 import { zahlungsverkehrApi } from '../../api/zahlungsverkehr'
+import { buchhaltungApi } from '../../api/buchhaltung'
 
 import { Badge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
-import type { RechnungList } from '../../types'
+import type { RechnungList, SepaZahlungslauf } from '../../types'
+
+function ZahlungslaufProtokoll() {
+  const { data: laeufe = [], isLoading } = useQuery({
+    queryKey: ['sepa-zahlungslaeufe'],
+    queryFn: buchhaltungApi.sepaZahlungslaeufe,
+  })
+  const [expanded, setExpanded] = useState<string | null>(null)
+
+  return (
+    <div className="mt-10">
+      <h2 className="text-base font-semibold text-gray-800 mb-3">Exportierte Zahlungsläufe (Protokoll)</h2>
+      {isLoading && <p className="text-sm text-gray-400">Laden…</p>}
+      {!isLoading && laeufe.length === 0 && (
+        <p className="text-sm text-gray-400">Noch keine Zahlungsläufe exportiert.</p>
+      )}
+      {laeufe.length > 0 && (
+        <div className="bg-white border rounded-lg overflow-hidden shadow-sm">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50 border-b">
+              <tr>
+                <th className="px-4 py-3 text-left font-medium text-gray-700">Exportiert am</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-700">Fälligkeit</th>
+                <th className="px-4 py-3 text-right font-medium text-gray-700">Rechnungen</th>
+                <th className="px-4 py-3 text-right font-medium text-gray-700">Summe</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-700">Dateiname</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-700">Von</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {laeufe.map((lauf: SepaZahlungslauf) => (
+                <>
+                  <tr
+                    key={lauf.id}
+                    className="hover:bg-gray-50 cursor-pointer"
+                    onClick={() => setExpanded(expanded === lauf.id ? null : lauf.id)}
+                  >
+                    <td className="px-4 py-3 text-gray-700">
+                      {new Date(lauf.erstellt_am).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </td>
+                    <td className="px-4 py-3">{formatDatum(lauf.faelligkeitsdatum)}</td>
+                    <td className="px-4 py-3 text-right">{lauf.anzahl_rechnungen}</td>
+                    <td className="px-4 py-3 text-right font-mono font-medium">{formatEuro(lauf.summe)}</td>
+                    <td className="px-4 py-3 text-xs text-gray-500 font-mono">{lauf.dateiname || '—'}</td>
+                    <td className="px-4 py-3 text-gray-500 text-xs">{lauf.erstellt_von_name || '—'}</td>
+                  </tr>
+                  {expanded === lauf.id && (
+                    <tr key={`${lauf.id}-detail`}>
+                      <td colSpan={6} className="px-4 py-4 bg-gray-50">
+                        <div className="space-y-3">
+                          {lauf.positionen.length > 0 && (
+                            <div>
+                              <p className="text-xs font-semibold text-gray-600 mb-1">Enthaltene Rechnungen</p>
+                              <table className="min-w-full text-xs border rounded overflow-hidden">
+                                <thead className="bg-gray-100">
+                                  <tr>
+                                    <th className="px-3 py-1.5 text-left">Rechnungs-Nr.</th>
+                                    <th className="px-3 py-1.5 text-left">Kreditor</th>
+                                    <th className="px-3 py-1.5 text-left">Objekt</th>
+                                    <th className="px-3 py-1.5 text-right">Betrag</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-100 bg-white">
+                                  {lauf.positionen.map(p => (
+                                    <tr key={p.id}>
+                                      <td className="px-3 py-1.5 font-mono text-gray-600">{p.rechnungsnummer || '—'}</td>
+                                      <td className="px-3 py-1.5 font-medium">{p.kreditor}</td>
+                                      <td className="px-3 py-1.5 text-gray-500">{p.objekt}</td>
+                                      <td className="px-3 py-1.5 text-right font-mono">{formatEuro(p.betrag)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                          {lauf.buchungs_fehler.length > 0 && (
+                            <div className="text-xs text-red-700 bg-red-50 rounded p-2">
+                              <strong>Buchungsfehler:</strong> {lauf.buchungs_fehler.join(', ')}
+                            </div>
+                          )}
+                          {lauf.uebersprungen.length > 0 && (
+                            <div className="text-xs text-amber-700 bg-amber-50 rounded p-2">
+                              <strong>Übersprungen:</strong> {lauf.uebersprungen.join(', ')}
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
 
 function formatEuro(val: string | number | null | undefined) {
   if (val == null) return '—'
@@ -222,6 +320,8 @@ export function Zahlungen() {
           </table>
         </div>
       )}
+
+      <ZahlungslaufProtokoll />
     </div>
   )
 }

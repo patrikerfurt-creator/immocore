@@ -954,6 +954,31 @@ class RechnungViewSet(viewsets.ModelViewSet):
                 buchungs_fehler.append(f"{r.rechnungsnummer or str(r.id)[:8]}: {exc.message}")
 
         dateiname = f"zahlungen_{faelligkeitsdatum.strftime('%Y%m%d')}.xml"
+
+        # Protokolleintrag speichern
+        from apps.buchhaltung.models import SepaZahlungslauf
+        from decimal import Decimal as D
+        exportierte = [
+            r for r in rechnungen
+            if r.kreditor and r.kreditor.iban and r.betrag_brutto
+        ]
+        SepaZahlungslauf.objects.create(
+            faelligkeitsdatum=faelligkeitsdatum,
+            anzahl_rechnungen=len(exportierte),
+            summe=sum(D(str(r.betrag_brutto)) for r in exportierte),
+            dateiname=dateiname,
+            positionen=[{
+                'id': str(r.id),
+                'rechnungsnummer': r.rechnungsnummer or '',
+                'kreditor': r.kreditor.name if r.kreditor else '',
+                'betrag': str(r.betrag_brutto),
+                'objekt': r.objekt.bezeichnung if r.objekt else '',
+            } for r in exportierte],
+            buchungs_fehler=buchungs_fehler,
+            uebersprungen=uebersprungen,
+            erstellt_von=request.user,
+        )
+
         response = HttpResponse(xml_bytes, content_type='application/xml')
         response['Content-Disposition'] = f'attachment; filename="{dateiname}"'
         if buchungs_fehler:

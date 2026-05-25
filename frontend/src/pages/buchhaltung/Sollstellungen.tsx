@@ -7,6 +7,67 @@ import { Button } from '../../components/ui/Button'
 import { useObjektStore } from '../../stores/objekt'
 import type { HausgeldSollstellungslauf, HausgeldSimulationVorschau } from '../../types'
 
+function SollstellungsProtokolll({ laufId }: { laufId: string }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['hg-sollstellungen-lauf', laufId],
+    queryFn: () => buchhaltungApi.hausgeldSollstellungen({ lauf: laufId }),
+  })
+
+  if (isLoading) return <p className="text-xs text-gray-400 py-2">Lade Sollstellungen…</p>
+  if (!data?.length) return <p className="text-xs text-gray-400 py-2">Keine Sollstellungen gefunden.</p>
+
+  return (
+    <div className="mt-2">
+      <p className="text-xs font-semibold text-gray-600 mb-1">Sollstellungen ({data.length})</p>
+      <table className="w-full text-xs border rounded overflow-hidden">
+        <thead className="bg-gray-100">
+          <tr>
+            <th className="px-3 py-1.5 text-left text-gray-600">Eigentümer</th>
+            <th className="px-3 py-1.5 text-left text-gray-600">Einheit</th>
+            <th className="px-3 py-1.5 text-left text-gray-600">OPos-Nr.</th>
+            <th className="px-3 py-1.5 text-right text-gray-600">Soll-Betrag</th>
+            <th className="px-3 py-1.5 text-right text-gray-600">Ist-Betrag</th>
+            <th className="px-3 py-1.5 text-left text-gray-600">Status</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100 bg-white">
+          {data.map((s: { id: string; ev_person_name: string; ev_einheit_nr: string; opos_nr: string; soll_betrag: string; ist_betrag: string; status: string }) => (
+            <tr key={s.id}>
+              <td className="px-3 py-1.5 font-medium">{s.ev_person_name}</td>
+              <td className="px-3 py-1.5 text-gray-600">{s.ev_einheit_nr}</td>
+              <td className="px-3 py-1.5 font-mono text-gray-500">{s.opos_nr}</td>
+              <td className="px-3 py-1.5 text-right font-mono">
+                {Number(s.soll_betrag).toLocaleString('de-DE', { minimumFractionDigits: 2 })} €
+              </td>
+              <td className="px-3 py-1.5 text-right font-mono text-gray-500">
+                {Number(s.ist_betrag).toLocaleString('de-DE', { minimumFractionDigits: 2 })} €
+              </td>
+              <td className="px-3 py-1.5">
+                <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${
+                  s.status === 'ausgeglichen' ? 'bg-green-100 text-green-700' :
+                  s.status === 'offen' ? 'bg-yellow-100 text-yellow-700' :
+                  s.status === 'storniert' ? 'bg-gray-100 text-gray-500 line-through' :
+                  'bg-blue-100 text-blue-700'
+                }`}>{s.status}</span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot className="bg-gray-50 border-t">
+          <tr>
+            <td colSpan={3} className="px-3 py-1.5 text-xs font-semibold text-gray-600">Gesamt</td>
+            <td className="px-3 py-1.5 text-right font-mono font-semibold text-xs">
+              {data.reduce((s: number, x: { soll_betrag: string }) => s + Number(x.soll_betrag), 0)
+                .toLocaleString('de-DE', { minimumFractionDigits: 2 })} €
+            </td>
+            <td colSpan={2} />
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  )
+}
+
 type WizardStep = 'auswahl' | 'simulation'
 
 const STATUS_LABEL: Record<string, string> = {
@@ -395,6 +456,9 @@ export function Sollstellungen() {
                         <div className="pt-1 text-gray-500">
                           Lauf-ID: <span className="font-mono">{lauf.id}</span>
                         </div>
+                        {lauf.status === 'commited' && (
+                          <SollstellungsProtokolll laufId={lauf.id} />
+                        )}
                       </td>
                     </tr>
                   )}

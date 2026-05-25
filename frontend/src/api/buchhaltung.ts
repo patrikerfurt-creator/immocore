@@ -10,7 +10,7 @@ import type {
   PersonenkontoSaldo, Kontoauszug, BuchungDetail,
   BebuchtesKonto, SachkontoAuszug,
   HausgeldSollstellungslauf, HausgeldSimulationVorschau,
-  AutoLaufProtokoll, AutoPipelineEinstellungen,
+  AutoLaufProtokoll, AutoPipelineEinstellungen, SepaZahlungslauf,
 } from '../types'
 
 export const buchhaltungApi = {
@@ -101,6 +101,10 @@ export const buchhaltungApi = {
     client.get<AutoLaufProtokoll>(`/auto-lauf-protokolle/${id}/`).then(r => r.data),
   autoPipelineDownloadPain008: (id: string) =>
     client.get(`/auto-lauf-protokolle/${id}/download-pain008/`, { responseType: 'blob' }).then(r => r.data as Blob),
+
+  // SEPA-Zahlungsläufe (Überweisungs-Protokoll)
+  sepaZahlungslaeufe: () =>
+    client.get<SepaZahlungslauf[]>('/sepa-zahlungslaeufe/').then(r => r.data),
 
   // E-Banking CAMT-Einstellungen (global)
   camtEinstellung: () =>

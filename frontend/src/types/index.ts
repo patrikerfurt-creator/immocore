@@ -125,6 +125,20 @@ export interface AutoLaufProtokoll {
   fehler: string | null
 }
 
+export interface SepaZahlungslauf {
+  id: string
+  faelligkeitsdatum: string
+  anzahl_rechnungen: number
+  summe: string
+  dateiname: string
+  positionen: { id: string; rechnungsnummer: string; kreditor: string; betrag: string; objekt: string }[]
+  buchungs_fehler: string[]
+  uebersprungen: string[]
+  erstellt_am: string
+  erstellt_von: number | null
+  erstellt_von_name: string
+}
+
 export interface AutoPipelineEinstellungen {
   aktiv: boolean
   stichtag: number

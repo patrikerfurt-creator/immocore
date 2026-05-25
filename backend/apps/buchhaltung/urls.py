@@ -17,6 +17,7 @@ from .views import (
     WirtschaftsjahrViewSet,
     HausgeldSollstellungslaufViewSet, HausgeldSollstellungViewSet,
     AutoLaufProtokollViewSet,
+    SepaZahlungslaufViewSet,
 )
 from .views_wkz import (
     WKZVorlageViewSet,
@@ -52,6 +53,7 @@ router.register(r'wirtschaftsjahre',        WirtschaftsjahrViewSet,            b
 router.register(r'hg-laeufe',               HausgeldSollstellungslaufViewSet,  basename='hg-laeufe')
 router.register(r'hg-sollstellungen',       HausgeldSollstellungViewSet,       basename='hg-sollstellungen')
 router.register(r'auto-lauf-protokolle',    AutoLaufProtokollViewSet,           basename='auto-lauf-protokolle')
+router.register(r'sepa-zahlungslaeufe',     SepaZahlungslaufViewSet,            basename='sepa-zahlungslaeufe')
 
 # WKZ-Vorlagen (flache Endpunkte)
 router.register(r'wkz-vorlagen', WKZVorlageViewSet, basename='wkz-vorlagen')
