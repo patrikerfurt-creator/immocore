@@ -52,7 +52,7 @@ const PRUEFFALL_STATI = new Set(['pruefung_match', 'nicht_erkannt', 'in_pruefung
 function SachkontoForm({ rechnung, onSuccess }: { rechnung: RechnungList; onSuccess: () => void }) {
   const qc = useQueryClient()
   const [objektId, setObjektId] = useState(rechnung.objekt_id ?? '')
-  const [kontoId, setKontoId] = useState(rechnung.kostenstelle_id ?? rechnung.vorgeschlagenes_konto_id ?? '')
+  const [kontoId, setKontoId] = useState(rechnung.aufwandskonto_id ?? rechnung.kostenstelle_id ?? rechnung.vorgeschlagenes_konto_id ?? '')
 
   const { data: objekte } = useQuery({ queryKey: ['objekte'], queryFn: () => objekteApi.list() })
   const { data: konten } = useQuery({

@@ -183,9 +183,7 @@ export default function PrueffallDetail() {
 
   const konfidenz = rechnung.erkennungs_konfidenz
 
-  const aufwandskontoErkannt = istFreigabeModus
-    ? !!rechnung.aufwandskonto_id
-    : !!(rechnung.aufwandskonto_id && (!konfidenz || konfidenz.aufwandskonto >= 1.0))
+  const aufwandskontoErkannt = !!rechnung.aufwandskonto_id
 
   const anyMutError = mutSpeichern.error || mutDirektfreigeben.error || mutFreigabeGenehmigen.error || mutAblehnen.error
   const mutErrorMsg = anyMutError

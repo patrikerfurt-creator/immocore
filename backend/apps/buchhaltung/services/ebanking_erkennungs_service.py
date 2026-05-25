@@ -155,6 +155,52 @@ def versuche_e2e_tilgung(ku):
     return buchung
 
 
+def versuche_kreditor_op_match(ku):
+    """
+    Stufe 1c: OP-Nummer oder Rechnungsnummer im Verwendungszweck + Betragsabgleich.
+    Nur für Zahlungsausgänge (betrag < 0).
+    Gibt das eindeutig gematchte KreditorOP zurück oder None.
+    """
+    from apps.buchhaltung.models import KreditorOP
+
+    if ku.betrag >= 0:
+        return None
+
+    vz = (ku.verwendungszweck or '').strip()
+    if not vz:
+        return None
+
+    zahlen = set(re.findall(r'\b\d{4,}\b', vz))
+    if not zahlen:
+        return None
+
+    abs_betrag = abs(ku.betrag)
+
+    basis_qs = KreditorOP.objects.select_related('kreditor', 'rechnung')
+    if ku.objekt:
+        basis_qs = basis_qs.filter(objekt=ku.objekt)
+
+    def _betrag_ok(op):
+        # Offene OPs: betrag_offen muss passen; bereits bezahlte: betrag_ursprung
+        if op.status in ('offen', 'teilbezahlt'):
+            return abs(op.betrag_offen - abs_betrag) <= Decimal('0.01')
+        return abs(op.betrag_ursprung - abs_betrag) <= Decimal('0.01')
+
+    kandidaten = []
+    seen_ids = set()
+    for zahl in zahlen:
+        for op in basis_qs.filter(op_nummer=zahl):
+            if op.pk not in seen_ids and _betrag_ok(op):
+                kandidaten.append(op)
+                seen_ids.add(op.pk)
+        for op in basis_qs.filter(rechnung__rechnungsnummer=zahl):
+            if op.pk not in seen_ids and _betrag_ok(op):
+                kandidaten.append(op)
+                seen_ids.add(op.pk)
+
+    return kandidaten[0] if len(kandidaten) == 1 else None
+
+
 def versuche_iban_ev_tilgung(ku):
     """
     Stufe 1b: IBAN-Match auf EigentumsVerhältnis + Betrag = Soll.
@@ -324,6 +370,46 @@ def fuehre_erkennung_aus(ku):
             log.quelle          = 'iban_ev'
             log.konfidenz       = Decimal('1.00')
             log.auto_verbucht   = True
+            _save_all(ku, log)
+            return ku
+
+    # ---- Stufe 1c: Kreditor-OP Rechnungsnummer-Match ----
+    if ku.betrag < 0:
+        try:
+            op = versuche_kreditor_op_match(ku)
+        except Exception as exc:
+            logger.warning("E-Banking Stufe 1c Fehler: %s", exc)
+            op = None
+
+        if op:
+            # Kreditor-Person per IBAN suchen (erkannt_kreditor FK → Person)
+            person_kreditor = None
+            if op.kreditor.iban:
+                from apps.personen.models import Person
+                kred_iban = op.kreditor.iban.strip().replace(' ', '')
+                for p in Person.objects.filter(person_typ='300'):
+                    if kred_iban in [i.strip().replace(' ', '') for i in (p.ibans or [])]:
+                        person_kreditor = p
+                        break
+
+            ku.status                 = 'vorschlag'
+            ku.erkannt_kreditor       = person_kreditor
+            ku.erkennungs_quelle      = 'kreditor_op_nr'
+            ku.erkennungs_konfidenz   = Decimal('0.95')
+            ku.erkennungs_begruendung = (
+                f"OP-Nr {op.op_nummer} / Rechnungsnr. "
+                f"{op.rechnung.rechnungsnummer if op.rechnung else '—'} "
+                f"im Verwendungszweck erkannt, Betrag {abs(ku.betrag):.2f} € stimmt überein."
+            )
+            log.stufe_erreicht  = '1c'
+            log.quelle          = 'kreditor_op_nr'
+            log.konfidenz       = Decimal('0.95')
+            log.details_json    = {
+                'op_nummer': op.op_nummer,
+                'op_id': str(op.id),
+                'op_status': op.status,
+                'kreditor_name': op.kreditor.name,
+            }
             _save_all(ku, log)
             return ku
 
