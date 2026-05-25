@@ -511,6 +511,12 @@ export interface BankBuchung {
   verbucht_am: string | null
   verbucht_von: number | null
   verbucht_von_username: string | null
+  verbucht_personenkonto_detail: {
+    id: string
+    nummer: string
+    name: string
+    einheit_nr: string
+  } | null
   notiz: string
   importiert_am: string
   import_datei: string

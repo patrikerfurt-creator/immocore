@@ -229,6 +229,27 @@ class BankBuchungSerializer(serializers.ModelSerializer):
     erkennungs_log               = BankErkennungsLogSerializer(
         source='erkennungs_logs', many=True, read_only=True,
     )
+    verbucht_personenkonto_detail = serializers.SerializerMethodField()
+
+    def get_verbucht_personenkonto_detail(self, obj):
+        """Gibt Personenkonto-Info aus der erzeugten Buchung zurück (nach Debitor-Verbuchen)."""
+        try:
+            if not obj.buchung_id:
+                return None
+            pko = obj.buchung.personenkonto
+            if not pko:
+                return None
+            person = pko.eigentuemer
+            name = person.firmenname or f"{person.vorname or ''} {person.nachname or ''}".strip()
+            ev = pko.vertrag
+            return {
+                'id': str(pko.pk),
+                'nummer': pko.kontonummer,
+                'name': name,
+                'einheit_nr': ev.einheit.einheit_nr if ev and ev.einheit_id else '',
+            }
+        except Exception:
+            return None
 
     class Meta:
         model  = Kontoumsatz
@@ -244,6 +265,7 @@ class BankBuchungSerializer(serializers.ModelSerializer):
             'erkennungs_quelle', 'erkennungs_konfidenz', 'erkennungs_begruendung',
             'match_regel',
             'buchung', 'verbucht_am', 'verbucht_von', 'verbucht_von_username',
+            'verbucht_personenkonto_detail',
             'notiz', 'importiert_am', 'import_datei',
             'erkennungs_log',
         ]
@@ -253,6 +275,7 @@ class BankBuchungSerializer(serializers.ModelSerializer):
             'erkennungs_quelle', 'erkennungs_konfidenz', 'erkennungs_begruendung',
             'erkannt_gegenkonto_detail', 'erkannt_kreditor_detail',
             'erkannt_eigentumsverh_detail', 'verbucht_von_username',
+            'verbucht_personenkonto_detail',
             'erkennungs_log',
         ]
 

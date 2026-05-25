@@ -1656,6 +1656,8 @@ class EBankingBuchungViewSet(viewsets.ModelViewSet):
             'erkannt_eigentumsverhaeltnis__einheit',
             'erkannt_eigentumsverhaeltnis__person',
             'verbucht_von', 'match_regel',
+            'buchung__personenkonto__eigentuemer',
+            'buchung__personenkonto__vertrag__einheit',
         )
         p = self.request.query_params
 

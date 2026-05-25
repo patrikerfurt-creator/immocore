@@ -435,9 +435,11 @@ function DetailSlideOver({
               <div className="text-sm bg-green-50 rounded-lg p-3 space-y-1">
                 {buchung.verbucht_am && <div>Am: {DATUM(buchung.verbucht_am)}</div>}
                 {buchung.verbucht_von_username && <div>Von: {buchung.verbucht_von_username}</div>}
-                {buchung.erkannt_gegenkonto_detail && (
-                  <div>Konto: {buchung.erkannt_gegenkonto_detail.kontonummer} — {buchung.erkannt_gegenkonto_detail.kontoname}</div>
-                )}
+                {buchung.verbucht_personenkonto_detail
+                  ? <div>Konto: {buchung.verbucht_personenkonto_detail.nummer} — {buchung.verbucht_personenkonto_detail.name} ({buchung.verbucht_personenkonto_detail.einheit_nr})</div>
+                  : buchung.erkannt_gegenkonto_detail && (
+                    <div>Konto: {buchung.erkannt_gegenkonto_detail.kontonummer} — {buchung.erkannt_gegenkonto_detail.kontoname}</div>
+                  )}
               </div>
             </section>
           )}
@@ -555,9 +557,11 @@ function BuchungRow({
         {EUR(bu.betrag)}
       </td>
       <td className="px-3 py-2.5 text-sm text-gray-600">
-        {bu.erkannt_gegenkonto_detail
-          ? `${bu.erkannt_gegenkonto_detail.kontonummer} ${bu.erkannt_gegenkonto_detail.kontoname}`
-          : <span className="text-gray-300">—</span>}
+        {bu.verbucht_personenkonto_detail
+          ? `${bu.verbucht_personenkonto_detail.nummer} ${bu.verbucht_personenkonto_detail.name}`
+          : bu.erkannt_gegenkonto_detail
+            ? `${bu.erkannt_gegenkonto_detail.kontonummer} ${bu.erkannt_gegenkonto_detail.kontoname}`
+            : <span className="text-gray-300">—</span>}
       </td>
       <td className="px-3 py-2.5">
         {bu.erkennungs_konfidenz != null
