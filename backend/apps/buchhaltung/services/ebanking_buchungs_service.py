@@ -32,6 +32,18 @@ def _buchungstext(ku, gk, ev, kr) -> str:
     return ' — '.join(p for p in parts if p) or 'Banktransaktion'
 
 
+def _ermittle_wirtschaftsjahr(ku):
+    """Gibt das passende Wirtschaftsjahr-Objekt für Buchungsdatum + Objekt zurück."""
+    from apps.objekte.models import Wirtschaftsjahr
+    if not ku.objekt or not ku.buchungsdatum:
+        return None
+    return (
+        Wirtschaftsjahr.objects
+        .filter(objekt=ku.objekt, jahr=ku.buchungsdatum.year)
+        .first()
+    )
+
+
 def _ermittle_bank_sachkonto(ku):
     """Findet Sachkonto 18xxx für den Bankabgang/-eingang."""
     from apps.konten.models import Konto
@@ -130,6 +142,7 @@ def verbuche(ku, verbucht_von,
         haben_konto=haben_konto,
         buchungsdatum=ku.buchungsdatum,
         belegdatum=ku.buchungsdatum,
+        wirtschaftsjahr=_ermittle_wirtschaftsjahr(ku),
         buchungstext=buchungstext,
         verwendungszweck=ku.verwendungszweck,
         belegnr=f'EB-{ku.buchungsdatum.strftime("%Y%m%d")}-{str(ku.id)[:8].upper()}',
@@ -162,8 +175,14 @@ def _versuche_op_ausgleich(ku, buchung, kreditorkonto, explizit_op_id=None):
     Wenn ein Kreditorkonto (70xxx) als Gegenkonto gebucht wird,
     versuchen wir den offenen OP auszugleichen (AUSGANG: Bezahlung einer Rechnung).
     Analog zu Phase 3 im OP_BUCHUNG-Workflow.
+
+    Auto-Matching-Strategie (ohne explizite OP-Auswahl):
+      1. Filter: objekt + betrag_offen + status offen/teilbezahlt + passender Kreditor
+      2. Priorität: OP mit faellig_ab am nächsten zum Buchungsdatum (Datum-Match)
+      3. Fallback: ältester OP zuerst (FIFO)
     """
     from apps.buchhaltung.models import KreditorOP
+    from apps.rechnungen.models import Kreditor as KreditorModel
 
     if explizit_op_id:
         op = KreditorOP.objects.filter(
@@ -172,11 +191,33 @@ def _versuche_op_ausgleich(ku, buchung, kreditorkonto, explizit_op_id=None):
             status__in=('offen', 'teilbezahlt'),
         ).first()
     else:
-        op = KreditorOP.objects.filter(
+        # Kreditor über Kontonummer ermitteln (70004 → kreditorennummer='70004')
+        kreditor_obj = None
+        if kreditorkonto:
+            kreditor_obj = KreditorModel.objects.filter(
+                kreditorennummer=kreditorkonto.kontonummer,
+                aktiv=True,
+            ).first()
+
+        basis_qs = KreditorOP.objects.filter(
             objekt=ku.objekt,
             betrag_offen=abs(ku.betrag),
             status__in=('offen', 'teilbezahlt'),
-        ).first()
+        )
+        if kreditor_obj:
+            basis_qs = basis_qs.filter(kreditor=kreditor_obj)
+
+        # Bevorzuge OP dessen faellig_ab dem Buchungsdatum am nächsten liegt
+        if ku.buchungsdatum and basis_qs.exists():
+            from django.db.models.functions import Abs
+            from django.db.models import F, ExpressionWrapper, DurationField
+            # Holen und Python-seitig sortieren (einfacher als DB-Funktion für DateField-Diff)
+            kandidaten = list(basis_qs.order_by('faellig_ab'))
+            buchdat = ku.buchungsdatum
+            kandidaten.sort(key=lambda o: abs((o.faellig_ab - buchdat).days))
+            op = kandidaten[0] if kandidaten else None
+        else:
+            op = basis_qs.order_by('faellig_ab').first()
 
     if not op:
         return

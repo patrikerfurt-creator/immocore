@@ -197,8 +197,16 @@ def commite_lastschriftlauf(
     sollstellungslauf = kandidaten[0].sollstellungslauf if kandidaten else None
 
     for ss in kandidaten:
-        person = ss.eigentumsverhaeltnis.person
+        ev = ss.eigentumsverhaeltnis
+        person = ev.person
         mandat = person.sepa_mandat
+
+        # Personenkonto ermitteln (für Buchung 13650 und OP-Ausgleich)
+        try:
+            personenkonto = ev.personenkonto
+            personenkonto_id = str(personenkonto.id)
+        except Exception:
+            personenkonto_id = None
 
         for split in ss.splits.select_related('bankkonto_ziel', 'ba'):
             if split.bankkonto_ziel is None:
@@ -219,6 +227,7 @@ def commite_lastschriftlauf(
                 'kreditorkonto_bic': split.bankkonto_ziel.bic or 'NOTPROVIDED',
                 'sollstellung_id': str(ss.id),
                 'split_ba_nr': str(split.ba.nr),
+                'personenkonto_id': personenkonto_id,
             }
             positionen.append(pos)
             gesamt += split.betrag
