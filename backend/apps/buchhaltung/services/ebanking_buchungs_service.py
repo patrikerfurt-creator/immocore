@@ -32,6 +32,18 @@ def _buchungstext(ku, gk, ev, kr) -> str:
     return ' — '.join(p for p in parts if p) or 'Banktransaktion'
 
 
+def _ermittle_wirtschaftsjahr(ku):
+    """Gibt das passende Wirtschaftsjahr-Objekt für Buchungsdatum + Objekt zurück."""
+    from apps.objekte.models import Wirtschaftsjahr
+    if not ku.objekt or not ku.buchungsdatum:
+        return None
+    return (
+        Wirtschaftsjahr.objects
+        .filter(objekt=ku.objekt, jahr=ku.buchungsdatum.year)
+        .first()
+    )
+
+
 def _ermittle_bank_sachkonto(ku):
     """Findet Sachkonto 18xxx für den Bankabgang/-eingang."""
     from apps.konten.models import Konto
@@ -130,6 +142,7 @@ def verbuche(ku, verbucht_von,
         haben_konto=haben_konto,
         buchungsdatum=ku.buchungsdatum,
         belegdatum=ku.buchungsdatum,
+        wirtschaftsjahr=_ermittle_wirtschaftsjahr(ku),
         buchungstext=buchungstext,
         verwendungszweck=ku.verwendungszweck,
         belegnr=f'EB-{ku.buchungsdatum.strftime("%Y%m%d")}-{str(ku.id)[:8].upper()}',
