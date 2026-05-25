@@ -49,7 +49,7 @@ class VerteilerschluesselWertSerializer(serializers.ModelSerializer):
 
 
 class VerteilerschluesselSerializer(serializers.ModelSerializer):
-    werte = VerteilerschluesselWertSerializer(many=True, read_only=True)
+    werte = serializers.SerializerMethodField()
     summe = serializers.SerializerMethodField()
 
     class Meta:
@@ -57,9 +57,16 @@ class VerteilerschluesselSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ['id']
 
+    def _wj(self):
+        return self.context.get('wirtschaftsjahr', 0)
+
+    def get_werte(self, obj):
+        werte = obj.werte.filter(wirtschaftsjahr=self._wj())
+        return VerteilerschluesselWertSerializer(werte, many=True).data
+
     def get_summe(self, obj):
         from django.db.models import Sum
-        result = obj.werte.filter(beteiligt=True).aggregate(s=Sum('wert'))['s']
+        result = obj.werte.filter(beteiligt=True, wirtschaftsjahr=self._wj()).aggregate(s=Sum('wert'))['s']
         return result
 
 
