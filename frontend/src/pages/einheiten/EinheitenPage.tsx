@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { objekteApi } from '../../api/objekte'
 import { personenApi } from '../../api/personen'
 import { useObjektStore } from '../../stores/objekt'
@@ -43,6 +43,8 @@ export function EinheitenPage() {
   const [sortKey, setSortKey] = useState<SortKey>('flaechennummer')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS)
+  const [editEinheitId, setEditEinheitId] = useState<string | null>(null)
+  const [editPersonId, setEditPersonId] = useState<string>('')
 
   const { data: einheiten = [], isLoading: loadingE } = useQuery({
     queryKey: ['einheiten', selectedObjektId],
@@ -54,6 +56,21 @@ export function EinheitenPage() {
     queryKey: ['eigentumsverhaeltnisse', 'objekt', selectedObjektId],
     queryFn: () => personenApi.eigentumsverhaeltnisse({ objekt: selectedObjektId!, aktiv: 'true' }),
     enabled: !!selectedObjektId,
+  })
+
+  const { data: personen = [] } = useQuery({
+    queryKey: ['personen-eigentuemer'],
+    queryFn: () => personenApi.list({ person_typ: '100' }),
+    enabled: !!selectedObjektId,
+  })
+
+  const updateEvMut = useMutation({
+    mutationFn: ({ evId, personId }: { evId: string; personId: string }) =>
+      personenApi.updateEigentumsverhaeltnis(evId, { person: personId }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['eigentumsverhaeltnisse', 'objekt', selectedObjektId] })
+      setEditEinheitId(null)
+    },
   })
 
   const evByEinheit = useMemo(
@@ -329,7 +346,52 @@ export function EinheitenPage() {
                           <td className="px-3 py-2.5 text-gray-600">{e.lage}</td>
                           <td className="px-3 py-2.5 text-gray-600">{e.eingang_bezeichnung || '–'}</td>
                           <td className="px-3 py-2.5 text-gray-800">
-                            {e.eigentuemer || <span className="text-gray-400 italic text-xs">–</span>}
+                            {editEinheitId === e.id ? (
+                              <div className="flex items-center gap-1">
+                                <select
+                                  value={editPersonId}
+                                  onChange={ev => setEditPersonId(ev.target.value)}
+                                  className="text-sm border border-primary-400 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                                  autoFocus
+                                >
+                                  <option value="">— keine —</option>
+                                  {personen.map(p => (
+                                    <option key={p.id} value={p.id}>{p.name}</option>
+                                  ))}
+                                </select>
+                                <button
+                                  onClick={() => {
+                                    const ev = evByEinheit.get(e.id)
+                                    if (ev && editPersonId) updateEvMut.mutate({ evId: ev.id, personId: editPersonId })
+                                  }}
+                                  disabled={!editPersonId || updateEvMut.isPending}
+                                  className="text-xs px-2 py-1 bg-primary-600 text-white rounded hover:bg-primary-700 disabled:opacity-50"
+                                >
+                                  ✓
+                                </button>
+                                <button
+                                  onClick={() => setEditEinheitId(null)}
+                                  className="text-xs px-2 py-1 border border-gray-300 rounded hover:bg-gray-50"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2 group">
+                                <span>{e.eigentuemer || <span className="text-gray-400 italic text-xs">–</span>}</span>
+                                <button
+                                  onClick={() => {
+                                    const ev = evByEinheit.get(e.id)
+                                    setEditEinheitId(e.id)
+                                    setEditPersonId(ev?.person ?? '')
+                                  }}
+                                  className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-primary-600 text-xs transition-opacity"
+                                  title="Eigentümer ändern"
+                                >
+                                  ✏
+                                </button>
+                              </div>
+                            )}
                           </td>
                         </tr>
                       ))

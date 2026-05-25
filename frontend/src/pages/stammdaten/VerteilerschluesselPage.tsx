@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { objekteApi } from '../../api/objekte'
 import type { Verteilerschluessel, Einheit } from '../../types'
 
@@ -24,10 +24,12 @@ type WertRow = {
 function VsDetail({
   vs,
   objektId,
+  wirtschaftsjahr,
   onBack,
 }: {
   vs: Verteilerschluessel
   objektId: string
+  wirtschaftsjahr: number
   onBack: () => void
 }) {
   const qc = useQueryClient()
@@ -65,7 +67,7 @@ function VsDetail({
     try {
       for (const row of rows) {
         if (row.beteiligt) {
-          await objekteApi.wertSetzen(vs.id, row.einheit.id, row.wert || '0')
+          await objekteApi.wertSetzen(vs.id, row.einheit.id, row.wert || '0', wirtschaftsjahr)
         } else if (!row.beteiligt && row.wertId) {
           await objekteApi.deleteWert(row.wertId)
         }
@@ -85,12 +87,8 @@ function VsDetail({
 
   return (
     <div>
-      {/* Header */}
       <div className="flex items-center gap-3 mb-6">
-        <button
-          onClick={onBack}
-          className="text-primary-600 hover:underline text-sm"
-        >
+        <button onClick={onBack} className="text-primary-600 hover:underline text-sm">
           ← Verteilerschlüssel
         </button>
         <span className="text-gray-300">|</span>
@@ -101,9 +99,11 @@ function VsDetail({
             {vsTypLabel[vs.vs_typ] ?? vs.vs_typ}
           </span>
         )}
+        <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded">
+          {wirtschaftsjahr === 0 ? 'Zeitlos' : `WJ ${wirtschaftsjahr}`}
+        </span>
       </div>
 
-      {/* Info-Zeile */}
       <div className="flex items-center gap-6 mb-4 text-sm text-gray-600">
         <span>{beteiligtCount} Einheiten beteiligt</span>
         {vs.einheit && <span>Einheit: <span className="font-medium">{vs.einheit}</span></span>}
@@ -124,9 +124,7 @@ function VsDetail({
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                <th className="text-center px-4 py-3 font-medium text-gray-600 w-12">
-                  Beteiligt
-                </th>
+                <th className="text-center px-4 py-3 font-medium text-gray-600 w-12">Beteiligt</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Fl.-Nr.</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Einheit</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Lage</th>
@@ -182,10 +180,7 @@ function VsDetail({
       {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
 
       <div className="flex justify-end gap-3 mt-4">
-        <button
-          onClick={onBack}
-          className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900"
-        >
+        <button onClick={onBack} className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900">
           Abbrechen
         </button>
         <button
@@ -205,21 +200,53 @@ function VsDetail({
 export function VerteilerschluesselPage() {
   const [searchParams] = useSearchParams()
   const objektId = searchParams.get('objekt')
-  const [selectedVs, setSelectedVs] = useState<Verteilerschluessel | null>(null)
+  const qc = useQueryClient()
 
-  const { data: vsList = [], isLoading } = useQuery({
-    queryKey: ['verteilerschluessel', objektId],
-    queryFn: () => objekteApi.verteilerschluessel({ objekt: objektId! }),
+  const [selectedVs, setSelectedVs] = useState<Verteilerschluessel | null>(null)
+  const [selectedWj, setSelectedWj] = useState<number>(0)
+  const [kopierenOffen, setKopierenOffen] = useState(false)
+  const [zielWj, setZielWj] = useState('')
+  const [kopierenResult, setKopierenResult] = useState<string | null>(null)
+
+  const { data: wirtschaftsjahre = [] } = useQuery({
+    queryKey: ['wirtschaftsjahre', objektId],
+    queryFn: () => objekteApi.wirtschaftsjahre(objektId!),
     enabled: !!objektId,
   })
 
-  // Wenn nach dem Speichern die Liste neu geladen wird, selectedVs aktualisieren
+  const { data: vsList = [], isLoading } = useQuery({
+    queryKey: ['verteilerschluessel', objektId, selectedWj],
+    queryFn: () => objekteApi.verteilerschluessel({
+      objekt: objektId!,
+      wirtschaftsjahr: String(selectedWj),
+    }),
+    enabled: !!objektId,
+  })
+
   useEffect(() => {
     if (selectedVs && vsList.length > 0) {
       const updated = vsList.find(v => v.id === selectedVs.id)
       if (updated) setSelectedVs(updated)
     }
   }, [vsList])
+
+  // Vorschlag für Ziel-WJ: max vorhandenes WJ + 1 oder selectedWj + 1
+  useEffect(() => {
+    if (wirtschaftsjahre.length > 0) {
+      const maxJahr = Math.max(...wirtschaftsjahre.map(w => w.jahr))
+      setZielWj(String(selectedWj === 0 ? maxJahr + 1 : selectedWj + 1))
+    }
+  }, [wirtschaftsjahre, selectedWj])
+
+  const kopierenMut = useMutation({
+    mutationFn: () => objekteApi.vsKopieren(objektId!, selectedWj, Number(zielWj)),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['verteilerschluessel', objektId] })
+      setKopierenOffen(false)
+      setKopierenResult(`${data.kopiert} Werte nach WJ ${data.ziel_wj} kopiert.`)
+      setTimeout(() => setKopierenResult(null), 5000)
+    },
+  })
 
   if (!objektId) {
     return (
@@ -240,6 +267,7 @@ export function VerteilerschluesselPage() {
       <VsDetail
         vs={selectedVs}
         objektId={objektId}
+        wirtschaftsjahr={selectedWj}
         onBack={() => setSelectedVs(null)}
       />
     )
@@ -247,13 +275,95 @@ export function VerteilerschluesselPage() {
 
   if (isLoading) return <p className="text-gray-400">Laden…</p>
 
+  const wjTabs = [{ id: 0, label: 'Zeitlos' }, ...wirtschaftsjahre.map(w => ({ id: w.jahr, label: `WJ ${w.jahr}` }))]
+
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-bold text-gray-900">Verteilerschlüssel</h1>
-        <span className="text-sm text-gray-500">{vsList.length} Schlüssel</span>
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-gray-500">{vsList.length} Schlüssel</span>
+          <button
+            onClick={() => { setKopierenOffen(o => !o); setKopierenResult(null) }}
+            className="px-3 py-1.5 border border-gray-300 text-sm rounded hover:bg-gray-50"
+          >
+            Ins nächste Jahr kopieren
+          </button>
+        </div>
       </div>
 
+      {/* WJ-Tabs */}
+      <div className="flex gap-1 mb-4 border-b border-gray-200">
+        {wjTabs.map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => { setSelectedWj(tab.id); setSelectedVs(null) }}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-px ${
+              selectedWj === tab.id
+                ? 'border-primary-600 text-primary-700'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Hinweis bei WJ-spezifischer Ansicht */}
+      {selectedWj > 0 && !kopierenOffen && (
+        <div className="mb-4 bg-yellow-50 border border-yellow-200 text-yellow-800 rounded px-4 py-2 text-sm">
+          Anzeige der Werte für <strong>WJ {selectedWj}</strong>. Einheiten mit 0 Werten haben noch keine WJ-spezifischen Einträge — ggf. aus Zeitlos kopieren.
+        </div>
+      )}
+
+      {/* Kopieren-Panel */}
+      {kopierenOffen && (
+        <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm">
+          <p className="font-medium text-blue-800 mb-2">
+            VS-Werte kopieren ({selectedWj === 0 ? 'Zeitlos' : `WJ ${selectedWj}`} → WJ {zielWj})
+          </p>
+          <p className="text-blue-700 mb-3">
+            Alle Schlüssel außer 140–145 (Verbrauch) werden kopiert. Vorhandene Werte im Ziel-WJ werden überschrieben.
+          </p>
+          <div className="flex items-center gap-3">
+            <label className="text-gray-700">Ziel-Wirtschaftsjahr:</label>
+            <input
+              type="number"
+              value={zielWj}
+              onChange={e => setZielWj(e.target.value)}
+              className="border border-gray-300 rounded px-2 py-1 w-24 text-sm"
+              min={2020}
+              max={2099}
+            />
+            <button
+              onClick={() => kopierenMut.mutate()}
+              disabled={kopierenMut.isPending || !zielWj}
+              className="px-4 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50"
+            >
+              {kopierenMut.isPending ? 'Kopiere…' : 'Kopieren'}
+            </button>
+            <button
+              onClick={() => setKopierenOffen(false)}
+              className="px-3 py-1.5 border border-gray-300 rounded text-sm hover:bg-white"
+            >
+              Abbrechen
+            </button>
+          </div>
+          {kopierenMut.isError && (
+            <p className="mt-2 text-red-600">Fehler beim Kopieren.</p>
+          )}
+        </div>
+      )}
+
+      {/* Erfolgs-Toast */}
+      {kopierenResult && (
+        <div className="mb-4 bg-green-50 border border-green-200 text-green-800 rounded px-4 py-2 text-sm">
+          {kopierenResult}
+        </div>
+      )}
+
+      {/* Tabelle */}
       {vsList.length === 0 ? (
         <div className="bg-white rounded-lg border border-gray-200 p-8 text-center">
           <p className="text-gray-500">Keine Verteilerschlüssel für dieses Objekt vorhanden.</p>

@@ -161,6 +161,46 @@ class ObjektViewSet(viewsets.ModelViewSet):
             status=status.HTTP_200_OK,
         )
 
+    @action(detail=True, methods=['post'], url_path='vs-kopieren')
+    def vs_kopieren(self, request, pk=None):
+        """
+        Kopiert alle VS-Werte eines Wirtschaftsjahres ins Ziel-WJ.
+        Schlüssel 140–145 (Verbrauch) werden ausgelassen.
+        Body: { quell_wj: 0, ziel_wj: 2027 }
+        """
+        objekt = self.get_object()
+        try:
+            quell_wj = int(request.data.get('quell_wj', 0))
+            ziel_wj = int(request.data.get('ziel_wj', 0))
+        except (ValueError, TypeError):
+            return Response({'error': 'quell_wj und ziel_wj müssen Integer sein'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not ziel_wj:
+            return Response({'error': 'ziel_wj erforderlich'}, status=status.HTTP_400_BAD_REQUEST)
+
+        VERBRAUCH = {'140', '141', '142', '143', '144', '145'}
+        vs_list = Verteilerschluessel.objects.filter(
+            objekt=objekt
+        ).exclude(schluessel__in=VERBRAUCH).prefetch_related('werte')
+
+        kopiert = 0
+        for vs in vs_list:
+            for w in vs.werte.filter(wirtschaftsjahr=quell_wj):
+                VerteilerschluesselWert.objects.update_or_create(
+                    schluessel=vs,
+                    einheit=w.einheit,
+                    wirtschaftsjahr=ziel_wj,
+                    defaults={
+                        'beteiligt': w.beteiligt,
+                        'wert': w.wert,
+                        'einzelwert_einheit': w.einzelwert_einheit,
+                        'quelle': w.quelle,
+                    },
+                )
+                kopiert += 1
+
+        return Response({'kopiert': kopiert, 'quell_wj': quell_wj, 'ziel_wj': ziel_wj})
+
 
 class EingangViewSet(viewsets.ModelViewSet):
     serializer_class = EingangSerializer
@@ -199,15 +239,23 @@ class VerteilerschluesselViewSet(viewsets.ModelViewSet):
             qs = qs.filter(objekt_id=objekt_id)
         return qs
 
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        try:
+            ctx['wirtschaftsjahr'] = int(self.request.query_params.get('wirtschaftsjahr', 0))
+        except (ValueError, TypeError):
+            ctx['wirtschaftsjahr'] = 0
+        return ctx
+
     @action(detail=True, methods=['post'], url_path='wert-setzen')
     def wert_setzen(self, request, pk=None):
-        """
-        Wert für eine Einheit setzen oder aktualisieren.
-        Body: { einheit: UUID, wert: Decimal }
-        """
         schluessel = self.get_object()
         einheit_id = request.data.get('einheit')
         wert = request.data.get('wert')
+        try:
+            wirtschaftsjahr = int(request.data.get('wirtschaftsjahr', 0))
+        except (ValueError, TypeError):
+            wirtschaftsjahr = 0
 
         if not einheit_id or wert is None:
             return Response(
@@ -218,6 +266,7 @@ class VerteilerschluesselViewSet(viewsets.ModelViewSet):
         obj, created = VerteilerschluesselWert.objects.update_or_create(
             schluessel=schluessel,
             einheit_id=einheit_id,
+            wirtschaftsjahr=wirtschaftsjahr,
             defaults={'wert': wert},
         )
         return Response(

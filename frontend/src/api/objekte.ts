@@ -48,11 +48,16 @@ export const objekteApi = {
   // Verteilerschlüssel (Flächen / MEA)
   verteilerschluessel: (params?: Record<string, string>) =>
     client.get<Verteilerschluessel[]>('/verteilerschluessel/', { params }).then(r => r.data),
-  wertSetzen: (schluesselId: string, einheitId: string, wert: string) =>
+  wertSetzen: (schluesselId: string, einheitId: string, wert: string, wirtschaftsjahr = 0) =>
     client.post<VerteilerschluesselWert>(
       `/verteilerschluessel/${schluesselId}/wert-setzen/`,
-      { einheit: einheitId, wert }
+      { einheit: einheitId, wert, wirtschaftsjahr }
     ).then(r => r.data),
   deleteWert: (wertId: string) =>
     client.delete(`/verteilerschluessel-werte/${wertId}/`),
+  vsKopieren: (objektId: string, quellWj: number, zielWj: number) =>
+    client.post<{ kopiert: number; quell_wj: number; ziel_wj: number }>(
+      `/objekte/${objektId}/vs-kopieren/`,
+      { quell_wj: quellWj, ziel_wj: zielWj }
+    ).then(r => r.data),
 }
