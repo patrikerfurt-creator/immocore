@@ -1,10 +1,12 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { objekteApi } from '../api/objekte'
 import { ticketsApi } from '../api/tickets'
 import { rechnungenApi } from '../api/rechnungen'
 import { prozesseApi } from '../api/prozesse'
 import { useAuthStore } from '../stores/auth'
+import client from '../api/client'
 
 function StatCard({ label, value, to, color }: { label: string; value: number | string; to: string; color: string }) {
   return (
@@ -51,6 +53,63 @@ function RechnungenCard({ objektbetreuer, frontoffice, freigaben, istFrontoffice
         )}
       </div>
     </Link>
+  )
+}
+
+function ResetTestdatenButton() {
+  const [bestaetige, setBestaetige] = useState(false)
+  const [laeuft, setLaeuft] = useState(false)
+  const [ergebnis, setErgebnis] = useState<string | null>(null)
+  const qc = useQueryClient()
+
+  async function ausfuehren() {
+    setLaeuft(true)
+    setErgebnis(null)
+    try {
+      const { data } = await client.post('/reset-testdaten/')
+      const g = data.geloescht as Record<string, number>
+      setErgebnis(`Gelöscht: ${g.buchungen} Buchungen, ${g.wkz_vorlagen} WKZ, ${g.wirtschaftsplaene} WP, ${g.rechnungen} Rechnungen`)
+      qc.invalidateQueries()
+    } catch {
+      setErgebnis('Fehler beim Zurücksetzen.')
+    } finally {
+      setLaeuft(false)
+      setBestaetige(false)
+    }
+  }
+
+  return (
+    <div className="mt-8 p-4 border border-red-200 rounded-lg bg-red-50">
+      <p className="text-sm font-semibold text-red-700 mb-2">Testdaten zurücksetzen</p>
+      <p className="text-xs text-red-600 mb-3">
+        Löscht alle Buchungen, WKZ-Vorlagen, Wirtschaftspläne und Rechnungen unwiderruflich.
+      </p>
+      {!bestaetige ? (
+        <button
+          onClick={() => setBestaetige(true)}
+          className="px-3 py-1.5 bg-red-600 text-white text-sm rounded hover:bg-red-700"
+        >
+          Zurücksetzen…
+        </button>
+      ) : (
+        <div className="flex items-center gap-2">
+          <button
+            onClick={ausfuehren}
+            disabled={laeuft}
+            className="px-3 py-1.5 bg-red-700 text-white text-sm rounded hover:bg-red-800 disabled:opacity-50"
+          >
+            {laeuft ? 'Läuft…' : 'Ja, wirklich löschen'}
+          </button>
+          <button
+            onClick={() => setBestaetige(false)}
+            className="px-3 py-1.5 bg-gray-200 text-gray-700 text-sm rounded hover:bg-gray-300"
+          >
+            Abbrechen
+          </button>
+        </div>
+      )}
+      {ergebnis && <p className="text-xs text-red-700 mt-2">{ergebnis}</p>}
+    </div>
   )
 }
 
@@ -164,6 +223,8 @@ export function Dashboard() {
           })()}
         </div>
       </div>
+
+      {username === 'admin' && <ResetTestdatenButton />}
     </div>
   )
 }

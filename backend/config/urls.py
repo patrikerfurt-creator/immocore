@@ -27,6 +27,38 @@ def me_view(request):
     })
 
 
+_RESET_EMAIL = 'p.maurer@demme-immobilien.de'
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def reset_testdaten(request):
+    if request.user.email != _RESET_EMAIL:
+        from rest_framework import status as drf_status
+        return Response({'detail': 'Nicht erlaubt.'}, status=drf_status.HTTP_403_FORBIDDEN)
+
+    from django.db import transaction
+    from apps.buchhaltung.models import (
+        Buchung, WiederkehrendeBuchungOP, WiederkehrendeBuchungVorlage,
+        HausgeldSollstellung, HausgeldSollstellungslauf, LastschriftLauf,
+    )
+    from apps.abrechnung_wp.models import Wirtschaftsplan
+    from apps.rechnungen.models import Rechnung
+
+    counts = {}
+    with transaction.atomic():
+        counts['hausgeld_sollstellungen'], _ = HausgeldSollstellung.objects.all().delete()
+        counts['hausgeld_laeufe'],         _ = HausgeldSollstellungslauf.objects.all().delete()
+        counts['wkz_ops'],                 _ = WiederkehrendeBuchungOP.objects.all().delete()
+        counts['wkz_vorlagen'],            _ = WiederkehrendeBuchungVorlage.objects.all().delete()
+        counts['lastschrift_laeufe'],      _ = LastschriftLauf.objects.all().delete()
+        counts['buchungen'],               _ = Buchung.objects.all().delete()
+        counts['wirtschaftsplaene'],       _ = Wirtschaftsplan.objects.all().delete()
+        counts['rechnungen'],              _ = Rechnung.objects.all().delete()
+
+    return Response({'ok': True, 'geloescht': counts})
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def iban_check(request):
@@ -79,6 +111,7 @@ urlpatterns = [
     path(API_PREFIX, include('apps.abrechnung_wp.urls')),
     path(API_PREFIX + 'iban-check/', iban_check, name='iban-check'),
     path(API_PREFIX + 'me/', me_view, name='me'),
+    path(API_PREFIX + 'reset-testdaten/', reset_testdaten, name='reset-testdaten'),
 ]
 
 if settings.DEBUG:
