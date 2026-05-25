@@ -87,6 +87,24 @@ def _ermittle_wirtschaftsjahr(ku):
     )
 
 
+def _finde_kreditorkonto(kreditor_rechnungen, objekt):
+    """
+    Sucht das Sachkonto (70xxx) für einen Kreditor im Kontenplan des Objekts.
+    Die Kontonummer entspricht der Kreditorennummer (z.B. '70004').
+    """
+    from apps.konten.models import Konto
+    if not kreditor_rechnungen or not objekt:
+        return None
+    kreditor_nr = getattr(kreditor_rechnungen, 'kreditorennummer', None)
+    if not kreditor_nr:
+        return None
+    return Konto.objects.filter(
+        wirtschaftsjahr__objekt=objekt,
+        kontonummer=kreditor_nr,
+        aktiv=True,
+    ).order_by('-wirtschaftsjahr__jahr').first()
+
+
 def _get_system_user():
     """Gibt den ersten Superuser oder Admin-User zurück."""
     from django.contrib.auth import get_user_model
@@ -392,23 +410,31 @@ def fuehre_erkennung_aus(ku):
                         person_kreditor = p
                         break
 
-            ku.status                 = 'vorschlag'
+            # Kreditorkonto (70xxx) automatisch nachschlagen
+            kreditorkonto = _finde_kreditorkonto(op.kreditor, ku.objekt)
+
+            ku.status                 = 'erkannt' if kreditorkonto else 'vorschlag'
             ku.erkannt_kreditor       = person_kreditor
+            ku.erkannt_gegenkonto     = kreditorkonto
             ku.erkennungs_quelle      = 'kreditor_op_nr'
             ku.erkennungs_konfidenz   = Decimal('0.95')
             ku.erkennungs_begruendung = (
                 f"OP-Nr {op.op_nummer} / Rechnungsnr. "
                 f"{op.rechnung.rechnungsnummer if op.rechnung else '—'} "
                 f"im Verwendungszweck erkannt, Betrag {abs(ku.betrag):.2f} € stimmt überein."
+                + (f" Konto {kreditorkonto.kontonummer} automatisch gesetzt." if kreditorkonto else " Gegenkonto bitte manuell wählen.")
             )
-            log.stufe_erreicht  = '1c'
-            log.quelle          = 'kreditor_op_nr'
-            log.konfidenz       = Decimal('0.95')
-            log.details_json    = {
+            log.stufe_erreicht        = '1c'
+            log.quelle                = 'kreditor_op_nr'
+            log.konfidenz             = Decimal('0.95')
+            log.gegenkonto_vorschlag  = kreditorkonto
+            log.details_json          = {
                 'op_nummer': op.op_nummer,
                 'op_id': str(op.id),
                 'op_status': op.status,
                 'kreditor_name': op.kreditor.name,
+                'kreditorkonto': kreditorkonto.kontonummer if kreditorkonto else None,
+                'kreditor_op_id': str(op.id),
             }
             _save_all(ku, log)
             return ku
@@ -461,27 +487,47 @@ def fuehre_erkennung_aus(ku):
     # ---- Stufe 3: IBAN-Match auf Kreditor ----
     if ku.auftraggeber_iban:
         from apps.personen.models import Person
+        from apps.rechnungen.models import Kreditor as KreditorModel
 
         cdtr_iban = ku.auftraggeber_iban.strip().replace(' ', '')
-        kreditor = None
+
+        # Person (person_typ=300) suchen die diese IBAN hat
+        person_kreditor = None
         for p in Person.objects.filter(person_typ='300'):
             ibans = [i.strip().replace(' ', '') for i in (p.ibans or [])]
             if cdtr_iban in ibans:
-                kreditor = p
+                person_kreditor = p
                 break
 
-        if kreditor:
-            ku.status               = 'vorschlag'
-            ku.erkannt_kreditor     = kreditor
+        # Rechnungs-Kreditor direkt per IBAN suchen (unabhängig von Person)
+        kred_obj = KreditorModel.objects.filter(
+            iban=cdtr_iban,
+            aktiv=True,
+        ).first()
+
+        if person_kreditor or kred_obj:
+            kreditorkonto = _finde_kreditorkonto(kred_obj, ku.objekt)
+
+            if person_kreditor:
+                anzeigename = _person_anzeigename(person_kreditor)
+            elif kred_obj:
+                anzeigename = kred_obj.name
+            else:
+                anzeigename = cdtr_iban
+
+            ku.status               = 'erkannt' if kreditorkonto else 'vorschlag'
+            ku.erkannt_kreditor     = person_kreditor
+            ku.erkannt_gegenkonto   = kreditorkonto
             ku.erkennungs_quelle    = 'iban_kreditor'
             ku.erkennungs_konfidenz = Decimal('0.80')
             ku.erkennungs_begruendung = (
-                f"IBAN identifiziert Kreditor {_person_anzeigename(kreditor)}, "
-                f"Gegenkonto noch zu wählen."
+                f"IBAN identifiziert Kreditor {anzeigename}"
+                + (f", Konto {kreditorkonto.kontonummer} automatisch gesetzt." if kreditorkonto else ", Gegenkonto bitte manuell wählen.")
             )
-            log.stufe_erreicht = '3'
-            log.quelle         = 'iban_kreditor'
-            log.konfidenz      = Decimal('0.80')
+            log.stufe_erreicht       = '3'
+            log.quelle               = 'iban_kreditor'
+            log.konfidenz            = Decimal('0.80')
+            log.gegenkonto_vorschlag = kreditorkonto
             _save_all(ku, log)
             return ku
 
