@@ -175,8 +175,14 @@ def _versuche_op_ausgleich(ku, buchung, kreditorkonto, explizit_op_id=None):
     Wenn ein Kreditorkonto (70xxx) als Gegenkonto gebucht wird,
     versuchen wir den offenen OP auszugleichen (AUSGANG: Bezahlung einer Rechnung).
     Analog zu Phase 3 im OP_BUCHUNG-Workflow.
+
+    Auto-Matching-Strategie (ohne explizite OP-Auswahl):
+      1. Filter: objekt + betrag_offen + status offen/teilbezahlt + passender Kreditor
+      2. Priorität: OP mit faellig_ab am nächsten zum Buchungsdatum (Datum-Match)
+      3. Fallback: ältester OP zuerst (FIFO)
     """
     from apps.buchhaltung.models import KreditorOP
+    from apps.rechnungen.models import Kreditor as KreditorModel
 
     if explizit_op_id:
         op = KreditorOP.objects.filter(
@@ -185,11 +191,33 @@ def _versuche_op_ausgleich(ku, buchung, kreditorkonto, explizit_op_id=None):
             status__in=('offen', 'teilbezahlt'),
         ).first()
     else:
-        op = KreditorOP.objects.filter(
+        # Kreditor über Kontonummer ermitteln (70004 → kreditorennummer='70004')
+        kreditor_obj = None
+        if kreditorkonto:
+            kreditor_obj = KreditorModel.objects.filter(
+                kreditorennummer=kreditorkonto.kontonummer,
+                aktiv=True,
+            ).first()
+
+        basis_qs = KreditorOP.objects.filter(
             objekt=ku.objekt,
             betrag_offen=abs(ku.betrag),
             status__in=('offen', 'teilbezahlt'),
-        ).first()
+        )
+        if kreditor_obj:
+            basis_qs = basis_qs.filter(kreditor=kreditor_obj)
+
+        # Bevorzuge OP dessen faellig_ab dem Buchungsdatum am nächsten liegt
+        if ku.buchungsdatum and basis_qs.exists():
+            from django.db.models.functions import Abs
+            from django.db.models import F, ExpressionWrapper, DurationField
+            # Holen und Python-seitig sortieren (einfacher als DB-Funktion für DateField-Diff)
+            kandidaten = list(basis_qs.order_by('faellig_ab'))
+            buchdat = ku.buchungsdatum
+            kandidaten.sort(key=lambda o: abs((o.faellig_ab - buchdat).days))
+            op = kandidaten[0] if kandidaten else None
+        else:
+            op = basis_qs.order_by('faellig_ab').first()
 
     if not op:
         return
