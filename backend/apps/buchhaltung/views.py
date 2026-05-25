@@ -1253,6 +1253,10 @@ class LastschriftLaufViewSet(viewsets.ModelViewSet):
 
         # Buchungen beim ersten XML-Abruf erstellen
         if not lauf.buchungen_erstellt:
+            from apps.objekte.models import Wirtschaftsjahr as WJModel
+            wj_obj = WJModel.objects.filter(
+                objekt=objekt, jahr=lauf.faelligkeitsdatum.year
+            ).first()
             gegenkonto = Konto.objects.filter(wirtschaftsjahr__objekt=objekt, kontonummer='13650').first()
             if not gegenkonto:
                 return Response(
@@ -1301,7 +1305,7 @@ class LastschriftLaufViewSet(viewsets.ModelViewSet):
                         ),
                         belegnr=belegnr,
                         beleg_referenz=f'LS-{str(lauf.id)[:8]}',
-                        wirtschaftsjahr=lauf.faelligkeitsdatum.year,
+                        wirtschaftsjahr=wj_obj,
                         status='festgeschrieben',
                         erstellt_von=request.user,
                     )
