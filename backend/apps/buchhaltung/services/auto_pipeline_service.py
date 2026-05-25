@@ -21,6 +21,7 @@ from apps.buchhaltung.models import (
 from apps.buchhaltung.services import sepa_fristen_service
 from apps.buchhaltung.services.sepa_lastschrift import (
     commite_lastschriftlauf,
+    erstelle_lastschrift_buchungen,
     generiere_pain008,
 )
 from apps.buchhaltung.services.sollstellungslauf_service import run_hausgeld_monat
@@ -118,7 +119,18 @@ def run_objekt(objekt, periode: date, user) -> AutoLaufProtokoll:
     lastschriftlauf.datei_pfad = datei_pfad
     lastschriftlauf.save(update_fields=['datei_pfad'])
 
-    # 8. Protokoll
+    # 8. Buchungen erstellen + OPOS ausgleichen (idempotent)
+    try:
+        erstelle_lastschrift_buchungen(lastschriftlauf, user)
+    except Exception as exc:
+        logger.error('%s: Buchungserstellung fehlgeschlagen: %s', objekt.objektnummer, exc)
+        warnung = {
+            'warnung_typ': 'dateischreibfehler',
+            'nachricht': f'Buchungserstellung fehlgeschlagen: {exc}',
+        }
+        warnungen.append(warnung)
+
+    # 9. Protokoll
     return AutoLaufProtokoll.objects.create(
         objekt=objekt,
         ausgefuehrt_am=ausgefuehrt_am,

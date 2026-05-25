@@ -1260,8 +1260,7 @@ class LastschriftLaufViewSet(viewsets.ModelViewSet):
         """SEPA pain.008 XML herunterladen + beim ersten Abruf Buchungen erstellen."""
         from decimal import Decimal
         from datetime import datetime
-        from django.db import transaction as db_transaction
-        from apps.konten.models import Konto, Personenkonto as PKModel
+        from apps.buchhaltung.services.sepa_lastschrift import erstelle_lastschrift_buchungen
 
         lauf = self.get_object()
         objekt = lauf.objekt
@@ -1273,87 +1272,13 @@ class LastschriftLaufViewSet(viewsets.ModelViewSet):
         if not bankkonto:
             return Response({'error': 'Kein Bewirtschaftungs-Bankkonto gefunden'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Buchungen beim ersten XML-Abruf erstellen
+        # Buchungen beim ersten XML-Abruf erstellen (via Service — idempotent)
         if not lauf.buchungen_erstellt:
-            from apps.objekte.models import Wirtschaftsjahr as WJModel
-            wj_obj = WJModel.objects.filter(
-                objekt=objekt, jahr=lauf.faelligkeitsdatum.year
-            ).first()
-            gegenkonto = Konto.objects.filter(wirtschaftsjahr__objekt=objekt, kontonummer='13650').first()
-            if not gegenkonto:
-                return Response(
-                    {'error': 'Konto 13650 (DCL-Debitor) nicht im Kontenplan gefunden'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            # Belegnummer-Basis berechnen (einmalig vor dem Loop)
-            prefix = f'LS-{lauf.faelligkeitsdatum.year}-'
-            last_belegnr = (
-                Buchung.objects.filter(belegnr__startswith=prefix)
-                .order_by('-belegnr').values_list('belegnr', flat=True).first()
-            )
             try:
-                lfd = int(last_belegnr.rsplit('-', 1)[-1]) + 1 if last_belegnr else 1
-            except ValueError:
-                lfd = 1
-
-            positionen_updated = []
-            with db_transaction.atomic():
-                for p in lauf.positionen:
-                    pk_id = p.get('personenkonto_id')
-                    if not pk_id:
-                        positionen_updated.append(p)
-                        continue
-
-                    try:
-                        pk_obj = PKModel.objects.get(id=pk_id)
-                    except PKModel.DoesNotExist:
-                        positionen_updated.append(p)
-                        continue
-
-                    betrag = Decimal(str(p['betrag']))
-                    belegnr = f'{prefix}{lfd:05d}'
-                    lfd += 1
-
-                    buchung = Buchung.objects.create(
-                        objekt=objekt,
-                        soll_konto=gegenkonto,
-                        personenkonto=pk_obj,
-                        betrag=betrag,
-                        buchungsdatum=lauf.faelligkeitsdatum,
-                        buchungstext=(
-                            p.get('verwendungszweck')
-                            or f"SEPA-Lastschrift {p['schuldner_name']}"
-                        ),
-                        belegnr=belegnr,
-                        beleg_referenz=f'LS-{str(lauf.id)[:8]}',
-                        wirtschaftsjahr=wj_obj,
-                        status='festgeschrieben',
-                        erstellt_von=request.user,
-                    )
-
-                    # Offene Posten des Personenkontos ausgleichen
-                    opos = list(OffenerPosten.objects.filter(
-                        personenkonto=pk_obj,
-                        status__in=['offen', 'teilverrechnet'],
-                    ))
-                    for op in opos:
-                        op.betrag_offen = Decimal('0')
-                        op.status = 'verrechnet'
-                        op.save(update_fields=['betrag_offen', 'status'])
-
-                    positionen_updated.append({
-                        **p,
-                        'buchung_id': str(buchung.id),
-                        'belegnr': belegnr,
-                        'opos_ausgeglichen': len(opos),
-                    })
-
-                lauf.buchungen_erstellt = True
-                lauf.buchungen_datum = lauf.faelligkeitsdatum
-                lauf.positionen = positionen_updated
-                lauf.status = 'exportiert'
-                lauf.save(update_fields=['buchungen_erstellt', 'buchungen_datum', 'positionen', 'status'])
+                erstelle_lastschrift_buchungen(lauf, request.user)
+            except ValueError as exc:
+                return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            lauf.refresh_from_db()  # positionen + status neu laden
 
         # SEPA XML generieren
         glaeubiger = {

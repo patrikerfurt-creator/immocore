@@ -1056,10 +1056,11 @@ class WiederkehrendeBuchungVorlage(models.Model):
         ('vertrag',  'Vertrag'),
     ]
     STATUS_CHOICES = [
-        ('entwurf',  'Entwurf'),
-        ('aktiv',    'Aktiv'),
-        ('pausiert', 'Pausiert'),
-        ('beendet',  'Beendet'),
+        ('entwurf',      'Entwurf'),
+        ('eingereicht',  'Eingereicht (wartet auf Freigabe)'),
+        ('aktiv',        'Aktiv'),
+        ('pausiert',     'Pausiert'),
+        ('beendet',      'Beendet'),
     ]
 
     id                   = models.UUIDField(primary_key=True, default=uuid4, editable=False)
@@ -1084,7 +1085,7 @@ class WiederkehrendeBuchungVorlage(models.Model):
     bescheid_pflicht     = models.BooleanField(default=True)
     gueltig_ab           = models.DateField()
     gueltig_bis          = models.DateField(null=True, blank=True)
-    status               = models.CharField(max_length=10, choices=STATUS_CHOICES, default='entwurf')
+    status               = models.CharField(max_length=12, choices=STATUS_CHOICES, default='entwurf')
     freigegeben_am       = models.DateTimeField(null=True, blank=True)
     freigegeben_von      = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT,

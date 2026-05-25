@@ -6,18 +6,12 @@ import { Badge } from '../../../components/ui/Badge'
 import { Button } from '../../../components/ui/Button'
 import { useObjektStore } from '../../../stores/objekt'
 
-const STATUS_FARBE: Record<string, 'green' | 'yellow' | 'gray' | 'blue'> = {
-  aktiv: 'green',
-  pausiert: 'yellow',
-  beendet: 'gray',
-  entwurf: 'blue',
-}
-
 const STATUS_TEXT: Record<string, string> = {
   aktiv: 'Aktiv',
   pausiert: 'Pausiert',
   beendet: 'Beendet',
   entwurf: 'Entwurf',
+  eingereicht: 'Eingereicht',
 }
 
 const RHYTHMUS_TEXT: Record<string, string> = {
@@ -119,6 +113,19 @@ export default function VorlagenListe() {
   const einreichenMutation = useMutation({
     mutationFn: (id: string) => wkzApi.vorlageEinreichen(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['wkz-vorlagen'] }),
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      alert(msg ?? 'Fehler beim Einreichen')
+    },
+  })
+
+  const freigebenMutation = useMutation({
+    mutationFn: (id: string) => wkzApi.vorlageFreigeben(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['wkz-vorlagen'] }),
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      alert(msg ?? 'Fehler beim Freigeben')
+    },
   })
 
   const reaktivierenMutation = useMutation({
@@ -142,7 +149,7 @@ export default function VorlagenListe() {
 
       {/* Filter */}
       <div className="flex gap-3 flex-wrap">
-        {['', 'aktiv', 'entwurf', 'pausiert', 'beendet'].map(s => (
+        {['', 'aktiv', 'entwurf', 'eingereicht', 'pausiert', 'beendet'].map(s => (
           <button
             key={s}
             onClick={() => setStatusFilter(s)}
@@ -205,17 +212,25 @@ export default function VorlagenListe() {
                     {v.gueltig_bis ? ` – ${DATUM(v.gueltig_bis)}` : ' – unbefristet'}
                   </td>
                   <td className="px-4 py-3">
-                    <Badge color={STATUS_FARBE[v.status] ?? 'gray'}>
-                      {STATUS_TEXT[v.status] ?? v.status}
-                    </Badge>
+                    <Badge value={v.status} label={STATUS_TEXT[v.status] ?? v.status} />
                   </td>
                   <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">
                     {v.status === 'entwurf' && (
                       <button
                         onClick={() => einreichenMutation.mutate(v.id)}
-                        className="text-xs text-blue-600 hover:underline"
+                        disabled={einreichenMutation.isPending}
+                        className="text-xs text-blue-600 hover:underline disabled:opacity-50"
                       >
                         Einreichen
+                      </button>
+                    )}
+                    {v.status === 'eingereicht' && (
+                      <button
+                        onClick={() => freigebenMutation.mutate(v.id)}
+                        disabled={freigebenMutation.isPending}
+                        className="text-xs text-green-700 hover:underline disabled:opacity-50 font-semibold"
+                      >
+                        Freigeben
                       </button>
                     )}
                     {v.status === 'aktiv' && (

@@ -33,6 +33,11 @@ const variants: Record<string, string> = {
   in_bearbeitung: 'bg-yellow-100 text-yellow-800',
   erledigt:       'bg-green-100 text-green-800',
   geschlossen:    'bg-gray-100 text-gray-600',
+  // WKZ
+  eingereicht:    'bg-orange-100 text-orange-800',
+  aktiv:          'bg-green-100 text-green-800',
+  pausiert:       'bg-yellow-100 text-yellow-800',
+  beendet:        'bg-gray-100 text-gray-500',
   // Priorität
   niedrig:        'bg-gray-100 text-gray-600',
   mittel:         'bg-yellow-100 text-yellow-700',

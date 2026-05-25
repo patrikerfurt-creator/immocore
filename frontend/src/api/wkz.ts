@@ -19,7 +19,7 @@ export interface WKZVorlage {
   kreditor_name: string
   bezeichnung: string
   typ: 'bescheid' | 'vertrag'
-  status: 'entwurf' | 'aktiv' | 'pausiert' | 'beendet'
+  status: 'entwurf' | 'eingereicht' | 'aktiv' | 'pausiert' | 'beendet'
   betrag_gesamt: string
   rhythmus: string
   erste_faelligkeit: string

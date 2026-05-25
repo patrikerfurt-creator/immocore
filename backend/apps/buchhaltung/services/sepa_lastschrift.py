@@ -324,6 +324,104 @@ def generiere_pain008(lastschriftlauf) -> str:
     return xml_bytes.decode('utf-8')
 
 
+def erstelle_lastschrift_buchungen(lastschriftlauf, user):
+    """
+    Erstellt Buchungen (Soll 13650 / Haben Personenkonto) und gleicht alle
+    offenen OPOS des jeweiligen Personenkontos aus.
+
+    Idempotent: tut nichts, wenn buchungen_erstellt bereits True ist.
+    Wird von der Auto-Pipeline direkt nach generiere_pain008() aufgerufen
+    und vom manuellen xml-Endpoint (LastschriftLaufViewSet.xml).
+    """
+    from decimal import Decimal
+    from django.db import transaction as db_transaction
+    from apps.buchhaltung.models import Buchung, OffenerPosten
+    from apps.konten.models import Konto, Personenkonto as PKModel
+    from apps.objekte.models import Wirtschaftsjahr
+
+    if lastschriftlauf.buchungen_erstellt:
+        return  # Idempotent
+
+    objekt = lastschriftlauf.objekt
+    wj = Wirtschaftsjahr.objects.filter(
+        objekt=objekt, jahr=lastschriftlauf.faelligkeitsdatum.year
+    ).first()
+    gegenkonto = Konto.objects.filter(
+        wirtschaftsjahr__objekt=objekt, kontonummer='13650'
+    ).first()
+    if not gegenkonto:
+        raise ValueError(f'Konto 13650 (DCL-Debitor) nicht im Kontenplan für Objekt {objekt}')
+
+    prefix = f'LS-{lastschriftlauf.faelligkeitsdatum.year}-'
+    last_belegnr = (
+        Buchung.objects.filter(belegnr__startswith=prefix)
+        .order_by('-belegnr').values_list('belegnr', flat=True).first()
+    )
+    try:
+        lfd = int(last_belegnr.rsplit('-', 1)[-1]) + 1 if last_belegnr else 1
+    except ValueError:
+        lfd = 1
+
+    positionen_updated = []
+    with db_transaction.atomic():
+        for p in lastschriftlauf.positionen:
+            pk_id = p.get('personenkonto_id')
+            if not pk_id:
+                positionen_updated.append(p)
+                continue
+            try:
+                pk_obj = PKModel.objects.get(id=pk_id)
+            except PKModel.DoesNotExist:
+                positionen_updated.append(p)
+                continue
+
+            betrag = Decimal(str(p['betrag']))
+            belegnr = f'{prefix}{lfd:05d}'
+            lfd += 1
+
+            buchung = Buchung.objects.create(
+                objekt=objekt,
+                soll_konto=gegenkonto,
+                personenkonto=pk_obj,
+                betrag=betrag,
+                buchungsdatum=lastschriftlauf.faelligkeitsdatum,
+                buchungstext=(
+                    p.get('verwendungszweck')
+                    or f"SEPA-Lastschrift {p['schuldner_name']}"
+                ),
+                belegnr=belegnr,
+                beleg_referenz=f'LS-{str(lastschriftlauf.id)[:8]}',
+                wirtschaftsjahr=wj,
+                status='festgeschrieben',
+                erstellt_von=user,
+            )
+
+            # Alle offenen OPOS des Personenkontos ausgleichen
+            opos = list(OffenerPosten.objects.filter(
+                personenkonto=pk_obj,
+                status__in=['offen', 'teilverrechnet'],
+            ))
+            for op in opos:
+                op.betrag_offen = Decimal('0')
+                op.status = 'verrechnet'
+                op.save(update_fields=['betrag_offen', 'status'])
+
+            positionen_updated.append({
+                **p,
+                'buchung_id': str(buchung.id),
+                'belegnr': belegnr,
+                'opos_ausgeglichen': len(opos),
+            })
+
+        lastschriftlauf.buchungen_erstellt = True
+        lastschriftlauf.buchungen_datum = lastschriftlauf.faelligkeitsdatum
+        lastschriftlauf.positionen = positionen_updated
+        lastschriftlauf.status = 'exportiert'
+        lastschriftlauf.save(update_fields=[
+            'buchungen_erstellt', 'buchungen_datum', 'positionen', 'status'
+        ])
+
+
 def baue_verwendungszweck(ss, suffix: str) -> str:
     """
     Menschenlesbarer Verwendungszweck ohne OPOS-Nr.

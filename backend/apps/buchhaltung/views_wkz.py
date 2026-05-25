@@ -158,11 +158,11 @@ class WKZVorlageViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='freigeben')
     def freigeben(self, request, pk=None):
-        """Freigabe erteilen (direkt, ohne Freigabe-Workflow)."""
+        """Freigabe erteilen — für Vorlagen im Status 'entwurf' oder 'eingereicht'."""
         vorlage = self.get_object()
-        if vorlage.status != 'entwurf':
+        if vorlage.status not in ('entwurf', 'eingereicht'):
             return Response(
-                {'detail': 'Nur Vorlagen im Status "entwurf" können freigegeben werden.'},
+                {'detail': 'Nur Vorlagen im Status "entwurf" oder "eingereicht" können freigegeben werden.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
