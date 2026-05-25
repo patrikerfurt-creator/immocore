@@ -18,21 +18,19 @@ logger = logging.getLogger(__name__)
 
 def validiere_split_kontonummer(kontonummer: str, objekt) -> None:
     """
-    Prüft, dass die Kontonummer im Objekt existiert, im Aufwandsbereich liegt,
-    Standardkonto ist und nicht direktes_buchen.
+    Prüft, dass die Kontonummer im Objekt existiert, im Aufwandsbereich liegt
+    und ein aktives Standard- oder Unterkonto ist (keine Summierungskonten).
     """
     from apps.konten.models import Konto
     konto = Konto.objects.filter(
         wirtschaftsjahr__objekt=objekt,
         kontonummer=kontonummer,
-        kontoart='standard',
-        direktes_buchen=False,
+        kontoart__in=['standard', 'unterkonto'],
         aktiv=True,
     ).first()
     if not konto:
         raise ValidationError(
-            f"Konto {kontonummer} im Objekt nicht gefunden, kein Standardkonto "
-            f"oder direktes_buchen=True."
+            f"Konto {kontonummer} im Objekt nicht gefunden, inaktiv oder ein Summierungskonto."
         )
     try:
         nr = int(kontonummer)

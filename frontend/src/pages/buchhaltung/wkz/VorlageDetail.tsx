@@ -111,6 +111,8 @@ export default function VorlageDetail() {
   const qc = useQueryClient()
   const [showBeenden, setShowBeenden] = useState(false)
   const [fehler, setFehler] = useState('')
+  const [editMode, setEditMode] = useState(false)
+  const [editSplits, setEditSplits] = useState<{ kontonummer: string; bezeichnung: string; betrag: string }[]>([])
 
   const { data: vorlage, isLoading, error } = useQuery({
     queryKey: ['wkz-vorlage', id],
@@ -144,6 +146,30 @@ export default function VorlageDetail() {
       setFehler((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? 'Fehler'),
   })
 
+  const bearbeitenMutation = useMutation({
+    mutationFn: (splits: typeof editSplits) => {
+      const betragGesamt = splits.reduce((s, r) => s + (parseFloat(r.betrag) || 0), 0).toFixed(2)
+      return wkzApi.vorlageBearbeiten(id!, {
+        splits: splits.map((s, i) => ({ kontonummer: s.kontonummer, bezeichnung: s.bezeichnung, betrag: s.betrag, reihenfolge: i })),
+        betrag_gesamt: betragGesamt,
+      } as never)
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['wkz-vorlage', id] })
+      setEditMode(false)
+      setFehler('')
+    },
+    onError: (e: unknown) =>
+      setFehler((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? 'Fehler beim Speichern'),
+  })
+
+  function startEdit() {
+    if (!vorlage) return
+    setEditSplits(vorlage.splits.map(s => ({ kontonummer: s.kontonummer, bezeichnung: s.bezeichnung, betrag: s.betrag })))
+    setEditMode(true)
+    setFehler('')
+  }
+
   if (isLoading) return <p className="p-4 text-gray-400">Lade Vorlage…</p>
   if (error || !vorlage) return <p className="p-4 text-red-600">Fehler beim Laden.</p>
 
@@ -161,8 +187,14 @@ export default function VorlageDetail() {
           </Badge>
         </div>
         <div className="flex gap-2">
-          {vorlage.status === 'entwurf' && (
+          {vorlage.status === 'entwurf' && !editMode && (
             <>
+              <Button
+                variant="secondary"
+                onClick={startEdit}
+              >
+                Bearbeiten
+              </Button>
               <Button
                 variant="secondary"
                 onClick={() => einreichenMutation.mutate()}
@@ -254,32 +286,118 @@ export default function VorlageDetail() {
       {/* Splits */}
       <div className="bg-white rounded-lg border border-gray-200 p-5">
         <h2 className="font-medium text-gray-800 mb-3">Splits</h2>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-gray-500">
-              <th className="pb-2 font-medium">Konto</th>
-              <th className="pb-2 font-medium">Bezeichnung</th>
-              <th className="pb-2 font-medium text-right">Betrag</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {vorlage.splits.map(s => (
-              <tr key={s.id}>
-                <td className="py-1.5 font-mono">{s.kontonummer}</td>
-                <td className="py-1.5">{s.bezeichnung}</td>
-                <td className="py-1.5 text-right tabular-nums">{EUR(s.betrag)}</td>
+
+        {editMode ? (
+          <div className="space-y-3">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-gray-500">
+                  <th className="pb-2 font-medium w-28">Konto</th>
+                  <th className="pb-2 font-medium">Bezeichnung</th>
+                  <th className="pb-2 font-medium text-right w-32">Betrag (€)</th>
+                  <th className="pb-2 w-8"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {editSplits.map((s, i) => (
+                  <tr key={i}>
+                    <td className="py-1.5 pr-2">
+                      <input
+                        className="border rounded px-2 py-1 text-sm font-mono w-full"
+                        value={s.kontonummer}
+                        maxLength={8}
+                        onChange={e => setEditSplits(prev => prev.map((r, j) => j === i ? { ...r, kontonummer: e.target.value } : r))}
+                      />
+                    </td>
+                    <td className="py-1.5 pr-2">
+                      <input
+                        className="border rounded px-2 py-1 text-sm w-full"
+                        value={s.bezeichnung}
+                        onChange={e => setEditSplits(prev => prev.map((r, j) => j === i ? { ...r, bezeichnung: e.target.value } : r))}
+                      />
+                    </td>
+                    <td className="py-1.5 pr-2">
+                      <input
+                        type="number"
+                        step="0.01"
+                        className="border rounded px-2 py-1 text-sm text-right w-full"
+                        value={s.betrag}
+                        onChange={e => setEditSplits(prev => prev.map((r, j) => j === i ? { ...r, betrag: e.target.value } : r))}
+                      />
+                    </td>
+                    <td className="py-1.5 text-center">
+                      {editSplits.length > 1 && (
+                        <button
+                          className="text-red-400 hover:text-red-600 text-lg leading-none"
+                          onClick={() => setEditSplits(prev => prev.filter((_, j) => j !== i))}
+                        >×</button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t border-gray-300">
+                  <td className="pt-2 font-medium" colSpan={2}>Gesamt</td>
+                  <td className="pt-2 text-right font-medium tabular-nums">
+                    {EUR(editSplits.reduce((s, r) => s + (parseFloat(r.betrag) || 0), 0).toFixed(2))}
+                  </td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            </table>
+
+            <button
+              className="text-sm text-blue-600 hover:underline"
+              onClick={() => setEditSplits(prev => [...prev, { kontonummer: '', bezeichnung: '', betrag: '0.00' }])}
+            >
+              + Split hinzufügen
+            </button>
+
+            <div className="flex gap-2 pt-1">
+              <Button
+                onClick={() => bearbeitenMutation.mutate(editSplits)}
+                disabled={bearbeitenMutation.isPending}
+              >
+                {bearbeitenMutation.isPending ? 'Speichere…' : 'Speichern'}
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => { setEditMode(false); setFehler('') }}
+                disabled={bearbeitenMutation.isPending}
+              >
+                Abbrechen
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-gray-500">
+                <th className="pb-2 font-medium">Konto</th>
+                <th className="pb-2 font-medium">Bezeichnung</th>
+                <th className="pb-2 font-medium text-right">Betrag</th>
               </tr>
-            ))}
-          </tbody>
-          <tfoot>
-            <tr className="border-t border-gray-300">
-              <td className="pt-2 font-medium" colSpan={2}>Gesamt</td>
-              <td className="pt-2 text-right font-medium tabular-nums">
-                {EUR(vorlage.betrag_gesamt)}
-              </td>
-            </tr>
-          </tfoot>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {vorlage.splits.map(s => (
+                <tr key={s.id}>
+                  <td className="py-1.5 font-mono">{s.kontonummer}</td>
+                  <td className="py-1.5">{s.bezeichnung}</td>
+                  <td className="py-1.5 text-right tabular-nums">{EUR(s.betrag)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="border-t border-gray-300">
+                <td className="pt-2 font-medium" colSpan={2}>Gesamt</td>
+                <td className="pt-2 text-right font-medium tabular-nums">
+                  {EUR(vorlage.betrag_gesamt)}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        )}
       </div>
 
       {/* Nächste Fälligkeiten (Forecast) */}

@@ -387,6 +387,7 @@ const ALLE_STATUS: RechnungStatus[] = [
 
 export function RechnungenListe() {
   const navigate = useNavigate()
+  const qc = useQueryClient()
   const objektId = useObjektStore(s => s.selectedId)
   const [statusFilter, setStatusFilter] = useState('')
   const [suche, setSuche] = useState('')
@@ -399,6 +400,20 @@ export function RechnungenListe() {
       setSelected(r)
     }
   }
+
+  const { data: ocrCount, refetch: refetchOcrCount } = useQuery({
+    queryKey: ['ocr-wiederholen-count'],
+    queryFn: rechnungenApi.ocrWiederholenAnzahl,
+  })
+  const [ocrErgebnis, setOcrErgebnis] = useState<{ verarbeitet: number; fehler: number; noch_unvollstaendig: number } | null>(null)
+  const ocrMut = useMutation({
+    mutationFn: rechnungenApi.ocrWiederholen,
+    onSuccess: (data) => {
+      setOcrErgebnis(data)
+      refetchOcrCount()
+      qc.invalidateQueries({ queryKey: ['rechnungen'] })
+    },
+  })
 
   const { data: rechnungen, isLoading } = useQuery({
     queryKey: ['rechnungen', objektId, statusFilter, suche],
@@ -432,7 +447,31 @@ export function RechnungenListe() {
             </p>
           )}
         </div>
+        {(ocrCount?.anzahl ?? 0) > 0 && (
+          <div className="flex items-center gap-3">
+            <Button
+              variant="secondary"
+              onClick={() => { setOcrErgebnis(null); ocrMut.mutate() }}
+              disabled={ocrMut.isPending}
+            >
+              {ocrMut.isPending
+                ? 'OCR läuft…'
+                : `OCR wiederholen (${ocrCount!.anzahl})`}
+            </Button>
+          </div>
+        )}
       </div>
+
+      {ocrErgebnis && (
+        <div className="mb-4 bg-green-50 border border-green-200 rounded p-3 text-sm text-green-800 flex items-center justify-between">
+          <span>
+            OCR abgeschlossen: <strong>{ocrErgebnis.verarbeitet}</strong> erkannt
+            {ocrErgebnis.noch_unvollstaendig > 0 && `, ${ocrErgebnis.noch_unvollstaendig} noch unvollständig`}
+            {ocrErgebnis.fehler > 0 && `, ${ocrErgebnis.fehler} Fehler`}
+          </span>
+          <button className="text-green-600 underline text-xs ml-3" onClick={() => setOcrErgebnis(null)}>Schließen</button>
+        </div>
+      )}
 
       <div className="flex gap-3 mb-4 flex-wrap">
         <input

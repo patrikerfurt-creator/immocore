@@ -105,12 +105,42 @@ class WKZVorlageViewSet(viewsets.ModelViewSet):
         )
 
     def partial_update(self, request, *args, **kwargs):
+        from django.db import transaction as db_transaction
+        from .models import WiederkehrendeBuchungSplit
+        from .services.wkz.vorlage_service import validiere_split_kontonummer
+
         vorlage = self.get_object()
         if vorlage.status != 'entwurf':
             return Response(
                 {'detail': 'Nur Vorlagen im Status "entwurf" können bearbeitet werden.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        splits_data = request.data.get('splits')
+        if splits_data is not None:
+            if not splits_data:
+                return Response(
+                    {'detail': 'Mindestens ein Split ist erforderlich.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            for s in splits_data:
+                try:
+                    validiere_split_kontonummer(s['kontonummer'], vorlage.objekt)
+                except Exception as exc:
+                    return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            with db_transaction.atomic():
+                vorlage.splits.all().delete()
+                for i, s in enumerate(splits_data):
+                    WiederkehrendeBuchungSplit.objects.create(
+                        vorlage=vorlage,
+                        kontonummer=s['kontonummer'],
+                        bezeichnung=s.get('bezeichnung', ''),
+                        betrag=Decimal(str(s['betrag'])),
+                        reihenfolge=s.get('reihenfolge', i),
+                    )
+                vorlage.betrag_gesamt = sum(Decimal(str(s['betrag'])) for s in splits_data)
+                vorlage.save(update_fields=['betrag_gesamt'])
+
         return super().partial_update(request, *args, **kwargs)
 
     # -----------------------------------------------------------------------

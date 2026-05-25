@@ -74,6 +74,7 @@ def simuliere_hausgeld_monat(objekt, periode: date) -> dict:
 @transaction.atomic
 def erstelle_lauf_aus_vorschau(objekt, periode: date, user, wirtschaftsjahr=None) -> HausgeldSollstellungslauf:
     """Legt Lauf-Datensatz mit Status='vorschau' an, ohne Sollstellungen zu erzeugen."""
+    vorschau = simuliere_hausgeld_monat(objekt, periode)
     lauf = HausgeldSollstellungslauf.objects.create(
         objekt=objekt,
         wirtschaftsjahr=wirtschaftsjahr,
@@ -81,6 +82,8 @@ def erstelle_lauf_aus_vorschau(objekt, periode: date, user, wirtschaftsjahr=None
         periode=periode,
         status='vorschau',
         erstellt_von=user,
+        anzahl_sollstellungen=vorschau['anzahl_evs'],
+        summe=Decimal(vorschau['gesamtsumme']),
     )
     return lauf
 
