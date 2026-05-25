@@ -23,7 +23,7 @@ def validiere_split_kontonummer(kontonummer: str, objekt) -> None:
     """
     from apps.konten.models import Konto
     konto = Konto.objects.filter(
-        objekt=objekt,
+        wirtschaftsjahr__objekt=objekt,
         kontonummer=kontonummer,
         kontoart='standard',
         direktes_buchen=False,
@@ -66,6 +66,14 @@ def erstelle_vorlage(data: dict, splits_data: list[dict], user) -> 'Wiederkehren
     splits_data: Liste von {kontonummer, bezeichnung, betrag, reihenfolge}
     """
     from apps.buchhaltung.models import WiederkehrendeBuchungVorlage, WiederkehrendeBuchungSplit
+    from apps.objekte.models import Objekt
+    from apps.rechnungen.models import Kreditor
+
+    # UUIDs → Instanzen auflösen (Serializer liefert UUID-Objekte)
+    if not isinstance(data.get('objekt'), Objekt):
+        data['objekt'] = Objekt.objects.get(pk=data['objekt'])
+    if not isinstance(data.get('kreditor'), Kreditor):
+        data['kreditor'] = Kreditor.objects.get(pk=data['kreditor'])
 
     # Bescheid-Pflicht Default: True bei bescheid, False bei vertrag
     if 'bescheid_pflicht' not in data:
@@ -108,7 +116,7 @@ def _bestimme_freigabestufe(objekt, jahresbetrag) -> dict:
     grenzen = objekt.zahlungsfreigabe_grenzen
     if not grenzen or not isinstance(grenzen, list):
         return {'rolle': 'auto'}
-    for grenze in sorted(grenzen, key=lambda g: g.get('bis', 0)):
+    for grenze in sorted(grenzen, key=lambda g: float(g['bis']) if g.get('bis') is not None else float('inf')):
         bis = grenze.get('bis')
         if bis is None or (jahresbetrag is not None and jahresbetrag <= Decimal(str(bis))):
             return grenze
