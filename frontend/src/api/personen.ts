@@ -119,6 +119,8 @@ export const personenApi = {
     client.get<EigentumsVerhaeltnis[]>('/eigentumsverhaeltnisse/', { params }).then(r => r.data),
   createEigentumsverhaeltnis: (data: Partial<EigentumsVerhaeltnis>) =>
     client.post<EigentumsVerhaeltnis>('/eigentumsverhaeltnisse/', data).then(r => r.data),
+  updateEigentumsverhaeltnis: (id: string, data: Partial<EigentumsVerhaeltnis>) =>
+    client.patch<EigentumsVerhaeltnis>(`/eigentumsverhaeltnisse/${id}/`, data).then(r => r.data),
 
   // Hausgeld-Historie
   createHausgeldHistorie: (data: {
