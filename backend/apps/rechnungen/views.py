@@ -99,17 +99,22 @@ class KreditorViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'], url_path='kontoauszug')
     def kontoauszug(self, request, pk=None):
-        """Kreditorenkonto: alle Rechnungen eines Kreditors mit OPOS-Nummer."""
+        """Kreditorenkonto: Rechnungen + WKZ-OPs eines Kreditors."""
+        from apps.buchhaltung.models import KreditorOP
         kreditor = self.get_object()
+        objekt_id = request.query_params.get('objekt')
+        jahr = request.query_params.get('jahr')
+
+        # --- Rechnungen ---
         qs = (
             Rechnung.objects
             .filter(kreditor=kreditor)
             .select_related('objekt', 'buchung', 'aufwandskonto', 'kostenstelle', 'kreditor_op')
             .order_by('-rechnungsdatum', '-erstellt_am')
         )
-        if objekt_id := request.query_params.get('objekt'):
+        if objekt_id:
             qs = qs.filter(objekt_id=objekt_id)
-        if jahr := request.query_params.get('jahr'):
+        if jahr:
             qs = qs.filter(rechnungsdatum__year=jahr)
 
         positionen = []
@@ -119,10 +124,12 @@ class KreditorViewSet(viewsets.ModelViewSet):
             sk  = r.aufwandskonto or r.kostenstelle
             positionen.append({
                 'id': str(r.id),
+                'herkunft': 'rechnung',
                 'rechnungsnummer': r.rechnungsnummer,
                 'rechnungsdatum': str(r.rechnungsdatum) if r.rechnungsdatum else None,
                 'faelligkeitsdatum': str(r.faelligkeitsdatum) if r.faelligkeitsdatum else None,
                 'betrag_brutto': float(r.betrag_brutto) if r.betrag_brutto else None,
+                'betrag_offen': float(op.betrag_offen) if op else None,
                 'status': r.status,
                 'objekt': r.objekt.bezeichnung if r.objekt else None,
                 'sachkonto_nr': sk.kontonummer if sk else None,
@@ -131,6 +138,39 @@ class KreditorViewSet(viewsets.ModelViewSet):
                 'buchungsdatum': str(b.buchungsdatum) if b else None,
                 'buchung_status': b.status if b else None,
             })
+
+        # --- WKZ-OPs (herkunft='wkz_vorlage') ---
+        wkz_qs = (
+            KreditorOP.objects
+            .filter(kreditor=kreditor, herkunft='wkz_vorlage')
+            .select_related('objekt', 'wkz_op__vorlage')
+            .order_by('-faellig_ab')
+        )
+        if objekt_id:
+            wkz_qs = wkz_qs.filter(objekt_id=objekt_id)
+        if jahr:
+            wkz_qs = wkz_qs.filter(faellig_ab__year=jahr)
+
+        for op in wkz_qs:
+            wkz_op = getattr(op, 'wkz_op', None)
+            positionen.append({
+                'id': str(op.id),
+                'herkunft': 'wkz',
+                'rechnungsnummer': op.verwendungszweck,
+                'rechnungsdatum': None,
+                'faelligkeitsdatum': str(op.faellig_ab),
+                'betrag_brutto': float(op.betrag_ursprung),
+                'betrag_offen': float(op.betrag_offen),
+                'status': op.status,
+                'objekt': op.objekt.bezeichnung if op.objekt else None,
+                'sachkonto_nr': None,
+                'sachkonto_name': None,
+                'opos_nr': op.op_nummer,
+                'buchungsdatum': None,
+                'buchung_status': wkz_op.status if wkz_op else None,
+            })
+
+        positionen.sort(key=lambda p: p['faelligkeitsdatum'] or '', reverse=True)
 
         return Response({
             'kreditor': {

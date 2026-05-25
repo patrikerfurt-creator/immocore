@@ -10,10 +10,12 @@ import type { Kreditor } from '../../types'
 // ---------------------------------------------------------------------------
 interface KreditorKontoPosition {
   id: string
+  herkunft: 'rechnung' | 'wkz'
   rechnungsnummer: string
   rechnungsdatum: string | null
   faelligkeitsdatum: string | null
   betrag_brutto: number | null
+  betrag_offen: number | null
   status: string
   objekt: string | null
   sachkonto_nr: string | null
@@ -34,16 +36,32 @@ const STATUS_LABEL: Record<string, string> = {
   duplikat: 'Duplikat',
   in_pruefung: 'In Prüfung',
   fehler: 'Fehler',
+  // WKZ-OP Status
+  offen: 'Offen',
+  teilbezahlt: 'Teilbezahlt',
+  storniert: 'Storniert',
+  erzeugt: 'Erzeugt',
+  bescheid_fehlt: 'Bescheid fehlt',
+  bankabgang_erfolgt: 'Bezahlt',
+  abweichend_geklaert: 'Abweichend',
+  verworfen: 'Verworfen',
 }
 
 const STATUS_COLOR: Record<string, string> = {
   gebucht: 'bg-blue-100 text-blue-700',
   bezahlt: 'bg-green-100 text-green-700',
+  bankabgang_erfolgt: 'bg-green-100 text-green-700',
   freigegeben: 'bg-yellow-100 text-yellow-700',
   abgelehnt: 'bg-red-100 text-red-700',
   importiert: 'bg-gray-100 text-gray-600',
   erfasst: 'bg-gray-100 text-gray-600',
   prueffall: 'bg-orange-100 text-orange-700',
+  offen: 'bg-orange-100 text-orange-700',
+  erzeugt: 'bg-orange-100 text-orange-700',
+  bescheid_fehlt: 'bg-red-100 text-red-700',
+  teilbezahlt: 'bg-yellow-100 text-yellow-700',
+  storniert: 'bg-gray-100 text-gray-400',
+  verworfen: 'bg-gray-100 text-gray-400',
 }
 
 function fmt(date: string | null) {
@@ -73,8 +91,8 @@ function KreditorKontoModal({
 
   const positionen: KreditorKontoPosition[] = data?.positionen ?? []
   const gesamtOffen = positionen
-    .filter(p => p.status !== 'bezahlt' && p.betrag_brutto != null)
-    .reduce((s, p) => s + (p.betrag_brutto ?? 0), 0)
+    .filter(p => p.status !== 'bezahlt' && p.status !== 'storniert' && p.betrag_offen != null)
+    .reduce((s, p) => s + (p.betrag_offen ?? 0), 0)
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-50 overflow-y-auto py-10">
@@ -118,22 +136,30 @@ function KreditorKontoModal({
               <thead className="bg-gray-50 border-b">
                 <tr>
                   <th className="text-left px-3 py-2 text-gray-500 font-medium">OPOS-Nr.</th>
-                  <th className="text-left px-3 py-2 text-gray-500 font-medium">Rech.-Nr.</th>
+                  <th className="text-left px-3 py-2 text-gray-500 font-medium">Bezeichnung / Rech.-Nr.</th>
                   <th className="text-left px-3 py-2 text-gray-500 font-medium">Datum</th>
                   <th className="text-left px-3 py-2 text-gray-500 font-medium">Fälligkeit</th>
                   <th className="text-left px-3 py-2 text-gray-500 font-medium">Objekt</th>
                   <th className="text-left px-3 py-2 text-gray-500 font-medium">Sachkonto</th>
                   <th className="text-right px-3 py-2 text-gray-500 font-medium">Betrag</th>
+                  <th className="text-right px-3 py-2 text-gray-500 font-medium">Offen</th>
                   <th className="text-left px-3 py-2 text-gray-500 font-medium">Status</th>
                 </tr>
               </thead>
               <tbody>
                 {positionen.map(p => (
-                  <tr key={p.id} className="border-t hover:bg-gray-50">
+                  <tr key={p.id} className={`border-t hover:bg-gray-50 ${p.herkunft === 'wkz' ? 'bg-blue-50/30' : ''}`}>
                     <td className="px-3 py-2 font-mono text-xs text-blue-700 font-semibold">
                       {p.opos_nr ?? '—'}
                     </td>
-                    <td className="px-3 py-2 text-gray-700">{p.rechnungsnummer || '—'}</td>
+                    <td className="px-3 py-2 text-gray-700">
+                      <div className="flex items-center gap-1.5">
+                        {p.herkunft === 'wkz' && (
+                          <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium shrink-0">WKZ</span>
+                        )}
+                        <span className="truncate max-w-xs" title={p.rechnungsnummer}>{p.rechnungsnummer || '—'}</span>
+                      </div>
+                    </td>
                     <td className="px-3 py-2 text-gray-600">{fmt(p.rechnungsdatum)}</td>
                     <td className="px-3 py-2 text-gray-600">{fmt(p.faelligkeitsdatum)}</td>
                     <td className="px-3 py-2 text-gray-600">{p.objekt ?? '—'}</td>
@@ -142,6 +168,13 @@ function KreditorKontoModal({
                     </td>
                     <td className="px-3 py-2 text-right font-medium text-gray-800">
                       {fmtEur(p.betrag_brutto)}
+                    </td>
+                    <td className="px-3 py-2 text-right font-medium">
+                      {p.betrag_offen != null && p.betrag_offen > 0
+                        ? <span className="text-orange-700">{fmtEur(p.betrag_offen)}</span>
+                        : p.betrag_offen === 0
+                          ? <span className="text-green-700">{fmtEur(0)}</span>
+                          : '—'}
                     </td>
                     <td className="px-3 py-2">
                       <span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_COLOR[p.status] ?? 'bg-gray-100 text-gray-600'}`}>
