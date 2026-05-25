@@ -36,6 +36,10 @@ const zahlungsverkehrItems: NavItemDef[] = [
   { to: '/zahlungsverkehr/zahlungen',   label: 'Zahlungen',      icon: '💸', objektAware: true },
 ]
 
+const abrechnungWpItems: NavItemDef[] = [
+  { to: '/abrechnung-wp/wirtschaftsplan', label: 'Wirtschaftsplan', icon: '📋', objektAware: true },
+]
+
 const otherItems: NavItemDef[] = [
   { to: '/prozesse',        label: 'Prozesse',    icon: '⚙️' },
   { to: '/dokumente',       label: 'Dokumente',   icon: '📁', objektAware: true },
@@ -47,6 +51,7 @@ const otherItems: NavItemDef[] = [
 const stammdatenPaths = stammdatenItems.map(i => i.to)
 const buchhaltungPaths = [...buchhaltungItems.map(i => i.to), '/rechnungen', '/buchhaltung/wkz-ops']
 const zahlungsverkehrPaths = zahlungsverkehrItems.map(i => i.to)
+const abrechnungWpPaths = abrechnungWpItems.map(i => i.to)
 
 function resolvedTo(item: NavItemDef, selectedId: string | null) {
   if (item.objektAware && selectedId) {
@@ -123,10 +128,12 @@ export function Sidebar() {
   const isInStammdaten = stammdatenPaths.some(p => location.pathname.startsWith(p))
   const isInBuchhaltung = buchhaltungPaths.some(p => location.pathname.startsWith(p))
   const isInZahlungsverkehr = zahlungsverkehrPaths.some(p => location.pathname.startsWith(p))
+  const isInAbrechnungWp = abrechnungWpPaths.some(p => location.pathname.startsWith(p))
 
   const [stammdatenOpen, setStammdatenOpen] = useState(isInStammdaten)
   const [buchhaltungOpen, setBuchhaltungOpen] = useState(isInBuchhaltung)
   const [zahlungsverkehrOpen, setZahlungsverkehrOpen] = useState(isInZahlungsverkehr)
+  const [abrechnungWpOpen, setAbrechnungWpOpen] = useState(isInAbrechnungWp)
 
   const { selectedId } = useObjektStore()
 
@@ -217,6 +224,30 @@ export function Sidebar() {
           {zahlungsverkehrOpen && (
             <div>
               {zahlungsverkehrItems.map(item => (
+                <SidebarLink key={item.to} item={item} selectedId={selectedId} indent />
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <button
+            onClick={() => setAbrechnungWpOpen(o => !o)}
+            className={`w-full flex items-center justify-between px-5 py-2.5 text-sm transition-colors ${
+              isInAbrechnungWp
+                ? 'text-white font-medium'
+                : 'text-primary-200 hover:bg-primary-800 hover:text-white'
+            }`}
+          >
+            <span className="flex items-center gap-3">
+              <span className="text-base">📊</span>
+              Abrechnung & WP
+            </span>
+            <span className="text-xs text-primary-400">{abrechnungWpOpen ? '▲' : '▼'}</span>
+          </button>
+          {abrechnungWpOpen && (
+            <div>
+              {abrechnungWpItems.map(item => (
                 <SidebarLink key={item.to} item={item} selectedId={selectedId} indent />
               ))}
             </div>

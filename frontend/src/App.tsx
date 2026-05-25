@@ -43,6 +43,9 @@ import VorlageDetail from './pages/buchhaltung/wkz/VorlageDetail'
 import VorlageWizard from './pages/buchhaltung/wkz/VorlageWizard'
 import OPDetail from './pages/buchhaltung/wkz/OPDetail'
 import Forecast from './pages/buchhaltung/wkz/Forecast'
+import { WirtschaftsplanListe } from './pages/abrechnung-wp/wirtschaftsplan/WirtschaftsplanListe'
+import { WirtschaftsplanDetail } from './pages/abrechnung-wp/wirtschaftsplan/WirtschaftsplanDetail'
+import { WirtschaftsplanWizard } from './pages/abrechnung-wp/wirtschaftsplan/WirtschaftsplanWizard'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -106,6 +109,9 @@ export default function App() {
             <Route path="buchhaltung/wkz-forecast" element={<Forecast />} />
             <Route path="mitarbeiter" element={<MitarbeiterPage />} />
             <Route path="einstellungen" element={<Einstellungen />} />
+            <Route path="abrechnung-wp/wirtschaftsplan" element={<WirtschaftsplanListe />} />
+            <Route path="abrechnung-wp/wirtschaftsplan/wizard" element={<WirtschaftsplanWizard />} />
+            <Route path="abrechnung-wp/wirtschaftsplan/:id" element={<WirtschaftsplanDetail />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>

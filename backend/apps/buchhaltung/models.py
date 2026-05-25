@@ -1359,6 +1359,9 @@ class HausgeldSollstellung(models.Model):
     neutralisiert_opos_nr = models.ForeignKey(
         'self', on_delete=models.PROTECT, null=True, blank=True, related_name='+',
     )
+    # WP-Felder (Phase A)
+    mahnkarenz_bis   = models.DateField(null=True, blank=True)
+    nachhol_aus_wp_id = models.UUIDField(null=True, blank=True, db_index=True)
 
     @property
     def status(self) -> str:

@@ -34,6 +34,12 @@ export const objekteApi = {
       '/einheiten/csv-import/', { rows }
     ).then(r => r.data),
 
+  // Wirtschaftsjahre
+  wirtschaftsjahre: (objektId: string) =>
+    client.get<Array<{ id: string; jahr: number; status: string; beginn_monat: number }>>(
+      '/wirtschaftsjahre/', { params: { objekt: objektId } }
+    ).then(r => r.data),
+
   // Bankkonten
   createBankkonto: (data: Partial<Bankkonto>) => client.post<Bankkonto>('/bankkonten/', data).then(r => r.data),
   updateBankkonto: (id: string, data: Partial<Bankkonto>) => client.patch<Bankkonto>(`/bankkonten/${id}/`, data).then(r => r.data),
