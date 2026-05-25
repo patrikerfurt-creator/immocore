@@ -320,12 +320,20 @@ def _ermittle_vs_basis(vs_code: str, objekt, wj) -> dict:
                     gesamt += v.wert
         return {'gesamt': gesamt, 'per_einheit': per_einheit}
 
-    werte = VerteilerschluesselWert.objects.filter(
+    # Lade zeitlose UND WJ-spezifische Werte; WJ-spezifisch hat Vorrang pro Einheit.
+    alle_werte = VerteilerschluesselWert.objects.filter(
         schluessel=vs, beteiligt=True
     ).filter(
         Q(wirtschaftsjahr=0) | Q(wirtschaftsjahr=wj.jahr)
     )
-    for w in werte:
+    wert_per_einheit: dict = {}
+    for w in alle_werte:
+        eid = str(w.einheit_id)
+        existing = wert_per_einheit.get(eid)
+        if existing is None or w.wirtschaftsjahr != 0:
+            wert_per_einheit[eid] = w
+
+    for w in wert_per_einheit.values():
         if w.wert:
             per_einheit[str(w.einheit_id)] = w.wert
             gesamt += w.wert
