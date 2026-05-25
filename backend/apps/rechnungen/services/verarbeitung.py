@@ -351,3 +351,65 @@ def verarbeite_datei(datei_pfad: str, archiv_root: Path) -> dict:
         'kreditor': kreditor.name if kreditor else None,
         'objekt': objekt.bezeichnung if objekt else None,
     }
+
+
+@transaction.atomic
+def ocr_erneut_ausfuehren(rechnung: Rechnung) -> Rechnung:
+    """
+    Führt OCR + Erkennungs-Pipeline erneut für eine bereits importierte Rechnung aus.
+    Gedacht für Rechnungen die beim Import kein Internet hatten (ocr_unvollstaendig).
+    """
+    from apps.rechnungen.recognition import fuehre_erkennung_aus
+
+    parsed = extract_invoice_data(rechnung.pfad)
+    fehlende = [label for key, label in PFLICHTFELDER.items() if not parsed.get(key)]
+
+    kundennummer = parsed.get('customer_number') or ''
+    kreditor = finde_oder_erstelle_kreditor(
+        parsed.get('supplier'),
+        parsed.get('supplier_normalized'),
+        parsed.get('iban'),
+    )
+    objekt, vorgeschlagenes_konto = _wende_kreditor_regel_an(kreditor, kundennummer)
+    if not objekt:
+        objekt = finde_objekt_fuer_adresse(parsed.get('property_address') or '')
+    if not vorgeschlagenes_konto and objekt:
+        vorgeschlagenes_konto = _vorschlage_konto_ki(parsed.get('description') or '', objekt)
+
+    rechnung.lieferant_name          = parsed.get('supplier') or ''
+    rechnung.lieferant_normalisiert  = parsed.get('supplier_normalized') or ''
+    rechnung.lieferant_iban          = parsed.get('iban') or ''
+    rechnung.rechnungsnummer         = parsed.get('invoice_number') or ''
+    rechnung.rechnungsnummer_normalisiert = parsed.get('invoice_number_normalized') or ''
+    rechnung.rechnungsdatum          = parsed.get('invoice_date')
+    rechnung.faelligkeitsdatum       = parsed.get('due_date')
+    rechnung.betrag_brutto           = parsed.get('gross_amount')
+    rechnung.betrag_netto            = parsed.get('net_amount')
+    rechnung.mwst_satz               = parsed.get('vat_rate')
+    rechnung.leistungsbeschreibung   = parsed.get('description') or ''
+    rechnung.leistungstext           = parsed.get('description') or ''
+    rechnung.textauszug              = (parsed.get('text') or '')[:5000]
+    rechnung.kreditor                = kreditor
+    rechnung.kundennummer            = kundennummer
+
+    if fehlende:
+        rechnung.verarbeitungsnotiz = f'OCR wiederholt – noch unvollständig: {", ".join(fehlende)}'
+        rechnung.save()
+    else:
+        rechnung.status      = 'importiert'
+        rechnung.duplikat_typ = ''
+        rechnung.verarbeitungsnotiz = 'OCR erfolgreich wiederholt'
+        if objekt and not rechnung.objekt_id:
+            rechnung.objekt = objekt
+        if vorgeschlagenes_konto and not rechnung.vorgeschlagenes_konto_id:
+            rechnung.vorgeschlagenes_konto = vorgeschlagenes_konto
+        rechnung.save()
+        rechnung = fuehre_erkennung_aus(rechnung)
+
+    Verarbeitungslog.objects.create(
+        rechnung=rechnung,
+        aktion='OCR wiederholt',
+        status=rechnung.status,
+        details=rechnung.verarbeitungsnotiz,
+    )
+    return rechnung

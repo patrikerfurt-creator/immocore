@@ -48,6 +48,10 @@ export const rechnungenApi = {
     client.get(`/rechnungen/${id}/logs/`).then(r => r.data),
   erkennungAusfuehren: (id: string) =>
     client.post<Rechnung>(`/rechnungen/${id}/erkennung-ausfuehren/`).then(r => r.data),
+  ocrWiederholenAnzahl: () =>
+    client.get<{ anzahl: number }>('/rechnungen/ocr-wiederholen/').then(r => r.data),
+  ocrWiederholen: () =>
+    client.post<{ verarbeitet: number; fehler: number; noch_unvollstaendig: number }>('/rechnungen/ocr-wiederholen/').then(r => r.data),
   erkennungsLog: (id: string) =>
     client.get(`/rechnungen/${id}/erkennungs-log/`).then(r => r.data),
   identifizieren: (id: string, data: {

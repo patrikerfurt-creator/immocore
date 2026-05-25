@@ -1,4 +1,7 @@
+import logging
 from rest_framework import viewsets, filters, status
+
+logger = logging.getLogger(__name__)
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -573,6 +576,28 @@ class RechnungViewSet(viewsets.ModelViewSet):
             details=f'Stufe {rechnung.erkennungs_stufe} | Konfidenz: {rechnung.erkennungs_konfidenz}',
         )
         return Response(RechnungSerializer(rechnung, context={'request': request}).data)
+
+    # ------------------------------------------------------------------
+    # OCR für unvollständig erkannte Rechnungen wiederholen (Batch)
+    # ------------------------------------------------------------------
+    @action(detail=False, methods=['get', 'post'], url_path='ocr-wiederholen')
+    def ocr_wiederholen(self, request):
+        from .services.verarbeitung import ocr_erneut_ausfuehren
+        qs = Rechnung.objects.filter(duplikat_typ='ocr_unvollstaendig')
+        if request.method == 'GET':
+            return Response({'anzahl': qs.count()})
+        ergebnisse = {'verarbeitet': 0, 'fehler': 0, 'noch_unvollstaendig': 0}
+        for rechnung in qs:
+            try:
+                rechnung = ocr_erneut_ausfuehren(rechnung)
+                if rechnung.duplikat_typ == 'ocr_unvollstaendig':
+                    ergebnisse['noch_unvollstaendig'] += 1
+                else:
+                    ergebnisse['verarbeitet'] += 1
+            except Exception as exc:
+                logger.warning('OCR Wiederholung fehlgeschlagen für %s: %s', rechnung.id, exc)
+                ergebnisse['fehler'] += 1
+        return Response(ergebnisse)
 
     # ------------------------------------------------------------------
     # Erkennungs-Log abrufen
