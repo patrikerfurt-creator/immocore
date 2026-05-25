@@ -19,15 +19,15 @@ function gruppiereNachDatum(positionen: WKZForecastPosition[]): Map<string, WKZF
 }
 
 export default function Forecast() {
-  const { aktuellesObjekt } = useObjektStore()
+  const { selectedId: objektId } = useObjektStore()
 
   const { data: positionen = [], isLoading, error } = useQuery({
-    queryKey: ['wkz-forecast', aktuellesObjekt?.id],
-    queryFn: () => wkzApi.objektForecast(aktuellesObjekt!.id),
-    enabled: !!aktuellesObjekt,
+    queryKey: ['wkz-forecast', objektId],
+    queryFn: () => wkzApi.objektForecast(objektId!),
+    enabled: !!objektId,
   })
 
-  if (!aktuellesObjekt) {
+  if (!objektId) {
     return <p className="text-gray-500 p-4">Bitte ein Objekt auswählen.</p>
   }
 

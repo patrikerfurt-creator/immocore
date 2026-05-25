@@ -31,7 +31,7 @@ function summe(splits: SplitRow[]): number {
 }
 
 export default function VorlageWizard() {
-  const { aktuellesObjekt } = useObjektStore()
+  const { selectedId: objektId } = useObjektStore()
   const navigate = useNavigate()
 
   // Schritt 1–4
@@ -73,7 +73,7 @@ export default function VorlageWizard() {
 
   const mutation = useMutation({
     mutationFn: (data: WKZVorlageCreate) =>
-      wkzApi.vorlageAnlegen(aktuellesObjekt!.id, data),
+      wkzApi.vorlageAnlegen(objektId!, data),
     onSuccess: v => navigate(`../${v.id}`),
     onError: (e: unknown) =>
       setFehler((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? 'Fehler'),
@@ -105,7 +105,7 @@ export default function VorlageWizard() {
     }
 
     mutation.mutate({
-      objekt: aktuellesObjekt!.id,
+      objekt: objektId!,
       kreditor: kreditorId,
       bezeichnung,
       typ,
@@ -128,7 +128,7 @@ export default function VorlageWizard() {
     })
   }
 
-  if (!aktuellesObjekt) {
+  if (!objektId) {
     return <p className="text-gray-500 p-4">Bitte ein Objekt auswählen.</p>
   }
 

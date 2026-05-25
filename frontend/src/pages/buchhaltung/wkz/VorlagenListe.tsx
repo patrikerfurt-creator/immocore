@@ -100,20 +100,20 @@ function PausierenModal({
 // ---------------------------------------------------------------------------
 
 export default function VorlagenListe() {
-  const { aktuellesObjekt } = useObjektStore()
+  const { selectedId: objektId } = useObjektStore()
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [statusFilter, setStatusFilter] = useState('')
   const [pausierenVorlage, setPausierenVorlage] = useState<WKZVorlage | null>(null)
 
   const { data: vorlagen = [], isLoading, error } = useQuery({
-    queryKey: ['wkz-vorlagen', aktuellesObjekt?.id, statusFilter],
+    queryKey: ['wkz-vorlagen', objektId, statusFilter],
     queryFn: () =>
       wkzApi.vorlagenJeObjekt(
-        aktuellesObjekt!.id,
+        objektId!,
         statusFilter ? { status: statusFilter } : undefined,
       ),
-    enabled: !!aktuellesObjekt,
+    enabled: !!objektId,
   })
 
   const einreichenMutation = useMutation({
@@ -126,7 +126,7 @@ export default function VorlagenListe() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['wkz-vorlagen'] }),
   })
 
-  if (!aktuellesObjekt) {
+  if (!objektId) {
     return <p className="text-gray-500 p-4">Bitte ein Objekt auswählen.</p>
   }
 
