@@ -133,6 +133,18 @@ def _folgejahr_eroeffnen_einzeln(objekt_id: str, user) -> dict:
 
 
 def _kopiere_konten(wj_alt: Wirtschaftsjahr, wj_neu: Wirtschaftsjahr) -> int:
+    """Kopiert alle Sachkonten des alten WJ in das neue WJ (neue UUIDs, keine Buchungen).
+
+    Guard: Existieren im neuen WJ bereits Konten, wird nichts getan (Idempotenz).
+    Damit ist sichergestellt, dass ein zweiter Aufruf (z.B. über den weg-vorlage-
+    Endpoint) keine weiteren Duplikate erzeugt.
+
+    Buchungen bleiben im jeweiligen WJ und zeigen auf die Konten desselben WJ —
+    kein UUID-Mismatch über Jahresgrenzen hinweg.
+    """
+    if Konto.objects.filter(wirtschaftsjahr=wj_neu).exists():
+        return 0  # bereits kopiert — nichts tun
+
     konten_alt = list(Konto.objects.filter(wirtschaftsjahr=wj_alt))
     neue_konten = [
         Konto(

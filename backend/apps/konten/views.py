@@ -113,7 +113,10 @@ class KontoViewSet(viewsets.ModelViewSet):
 
         konten = Konto.objects.filter(id__in=alle_ids).order_by('kontonummer')
 
-        result = []
+        # Pro Kontonummer nur einen Eintrag ausgeben (neuestes WJ gewinnt).
+        # Mehrere Konto-Instanzen mit gleicher Nummer entstehen, wenn der
+        # Kontenrahmen für mehrere Wirtschaftsjahre desselben Objekts angelegt wurde.
+        seen: dict[str, dict] = {}
         for k in konten:
             soll_summe = (
                 buchungen.filter(soll_konto=k)
@@ -123,16 +126,24 @@ class KontoViewSet(viewsets.ModelViewSet):
                 buchungen.filter(haben_konto=k)
                 .aggregate(s=Sum('betrag'))['s'] or Decimal('0.00')
             )
-            result.append({
-                'id': str(k.id),
-                'kontonummer': k.kontonummer,
-                'kontoname': k.kontoname,
-                'kontoart': k.kontoart,
-                'abrechnungsart': k.abrechnungsart or '',
-                'soll_summe': float(soll_summe),
-                'haben_summe': float(haben_summe),
-                'saldo': float(soll_summe - haben_summe),
-            })
+            if k.kontonummer in seen:
+                seen[k.kontonummer]['soll_summe'] += float(soll_summe)
+                seen[k.kontonummer]['haben_summe'] += float(haben_summe)
+                seen[k.kontonummer]['saldo'] = (
+                    seen[k.kontonummer]['soll_summe'] - seen[k.kontonummer]['haben_summe']
+                )
+            else:
+                seen[k.kontonummer] = {
+                    'id': str(k.id),
+                    'kontonummer': k.kontonummer,
+                    'kontoname': k.kontoname,
+                    'kontoart': k.kontoart,
+                    'abrechnungsart': k.abrechnungsart or '',
+                    'soll_summe': float(soll_summe),
+                    'haben_summe': float(haben_summe),
+                    'saldo': float(soll_summe - haben_summe),
+                }
+        result = list(seen.values())
 
         return Response(result)
 

@@ -41,20 +41,35 @@ def reset_testdaten(request):
     from apps.buchhaltung.models import (
         Buchung, WiederkehrendeBuchungOP, WiederkehrendeBuchungVorlage,
         HausgeldSollstellung, HausgeldSollstellungslauf, LastschriftLauf,
+        AutoLaufProtokoll, CamtImportLog, Kontoumsatz, BankImport,
     )
     from apps.abrechnung_wp.models import Wirtschaftsplan
     from apps.rechnungen.models import Rechnung
+    from apps.dokumente.models import Beleg
 
     counts = {}
     with transaction.atomic():
+        # Reihenfolge streng nach PROTECT-Abhängigkeiten (Kind vor Eltern):
+        #
+        # AutoLaufProtokoll → PROTECT → HausgeldSollstellungslauf
+        # AutoLaufProtokoll → PROTECT → LastschriftLauf
+        # LastschriftLauf   → PROTECT → HausgeldSollstellungslauf
+        # HausgeldSollstellung referenziert HausgeldSollstellungslauf
+        # Rechnung.op_buchung / aufwand_buchung → PROTECT → Buchung
+        counts['auto_lauf_protokolle'],    _ = AutoLaufProtokoll.objects.all().delete()
+        counts['lastschrift_laeufe'],      _ = LastschriftLauf.objects.all().delete()
         counts['hausgeld_sollstellungen'], _ = HausgeldSollstellung.objects.all().delete()
         counts['hausgeld_laeufe'],         _ = HausgeldSollstellungslauf.objects.all().delete()
         counts['wkz_ops'],                 _ = WiederkehrendeBuchungOP.objects.all().delete()
         counts['wkz_vorlagen'],            _ = WiederkehrendeBuchungVorlage.objects.all().delete()
-        counts['lastschrift_laeufe'],      _ = LastschriftLauf.objects.all().delete()
-        counts['buchungen'],               _ = Buchung.objects.all().delete()
         counts['wirtschaftsplaene'],       _ = Wirtschaftsplan.objects.all().delete()
+        counts['belege'],                  _ = Beleg.objects.all().delete()
         counts['rechnungen'],              _ = Rechnung.objects.all().delete()
+        # E-Banking: CamtImportLog, Kontoumsatz (+ BankErkennungsLog via CASCADE), BankImport
+        counts['camt_logs'],               _ = CamtImportLog.objects.all().delete()
+        counts['kontoumsaetze'],           _ = Kontoumsatz.objects.all().delete()
+        counts['bank_importe'],            _ = BankImport.objects.all().delete()
+        counts['buchungen'],               _ = Buchung.objects.all().delete()
 
     return Response({'ok': True, 'geloescht': counts})
 
