@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { rechnungenApi } from '../../api/rechnungen'
 import { objekteApi } from '../../api/objekte'
+import { wkzApi } from '../../api/wkz'
 import { useObjektStore } from '../../stores/objekt'
 import { Button } from '../../components/ui/Button'
 import client from '../../api/client'
@@ -219,6 +220,7 @@ function SepaToggle({ rechnung }: { rechnung: RechnungList }) {
 
 function DetailModal({ rechnung, onClose }: { rechnung: RechnungList; onClose: () => void }) {
   const qc = useQueryClient()
+  const navigate = useNavigate()
   const [begruendung, setBegruendung] = useState('')
 
   // Editierbare Felder
@@ -247,6 +249,25 @@ function DetailModal({ rechnung, onClose }: { rechnung: RechnungList; onClose: (
     queryKey: ['objekte'],
     queryFn: () => objekteApi.list(),
   })
+
+  // WKZ-Vorlagen die zu dieser Rechnung verknüpft sind (für Button-Label)
+  const { data: linkedWkz } = useQuery({
+    queryKey: ['wkz-vorlagen-rechnung', rechnung.id],
+    queryFn: () => wkzApi.vorlagenJeRechnung(rechnung.id),
+    staleTime: 30_000,
+  })
+  const wkzAnzahl = linkedWkz?.length ?? 0
+
+  function handleWkzButton() {
+    const params = new URLSearchParams()
+    params.set('rechnung_id', rechnung.id)
+    if (detail?.kreditor)        params.set('kreditor_id', detail.kreditor)
+    if (rechnung.objekt_id)      params.set('objekt_id', rechnung.objekt_id)
+    if (rechnung.betrag_brutto)  params.set('betrag', String(rechnung.betrag_brutto))
+    if (rechnung.rechnungsnummer) params.set('bezeichnung', rechnung.rechnungsnummer)
+    onClose()
+    navigate(`/buchhaltung/wkz-vorlagen/neu?${params.toString()}`)
+  }
 
   const mutKorrektur = useMutation({
     mutationFn: () => rechnungenApi.update(rechnung.id, {
@@ -433,6 +454,23 @@ function DetailModal({ rechnung, onClose }: { rechnung: RechnungList; onClose: (
               PDF öffnen →
             </button>
           )}
+
+          {/* WKZ-Button */}
+          <div className="border rounded-lg px-4 py-3 bg-gray-50">
+            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+              Wiederkehrende Zahlung
+            </div>
+            {wkzAnzahl > 0 && (
+              <p className="text-xs text-gray-500 mb-2">
+                Bereits {wkzAnzahl} WKZ-Vorlage{wkzAnzahl > 1 ? 'n' : ''} mit dieser Rechnung verknüpft.
+              </p>
+            )}
+            <Button variant="secondary" onClick={handleWkzButton}>
+              {wkzAnzahl === 0
+                ? '↻ WKZ aus diesem Beleg anlegen'
+                : '↻ Zusätzlich WKZ aus diesem Beleg anlegen'}
+            </Button>
+          </div>
 
           {kannSachkonto && (
             <SachkontoForm rechnung={rechnung} onSuccess={onClose} />

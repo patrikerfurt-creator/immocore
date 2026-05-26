@@ -1098,6 +1098,11 @@ class WiederkehrendeBuchungVorlage(models.Model):
         'self', on_delete=models.SET_NULL,
         null=True, blank=True, related_name='nachfolger_vorlagen',
     )
+    rechnung             = models.ForeignKey(
+        'rechnungen.Rechnung', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='wkz_vorlagen',
+        help_text='Rechnung, aus der diese WKZ-Vorlage abgeleitet wurde (optional, für DMS-Bezug).',
+    )
     erstellt_am          = models.DateTimeField(auto_now_add=True)
     erstellt_von         = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='erstellte_wkz_vorlagen',

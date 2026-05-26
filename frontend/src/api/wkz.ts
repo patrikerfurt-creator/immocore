@@ -40,6 +40,7 @@ export interface WKZVorlage {
   erstellt_von_name: string
   erstellt_am: string
   geaendert_am: string
+  rechnung_id: string | null
   splits: WKZSplit[]
 }
 
@@ -59,6 +60,7 @@ export interface WKZVorlageCreate {
   bescheid_pflicht?: boolean
   gueltig_ab: string
   gueltig_bis?: string | null
+  rechnung_id?: string | null
   splits: Array<{
     kontonummer: string
     bezeichnung: string
@@ -172,6 +174,12 @@ export const wkzApi = {
         kontoumsatz_id: kontoumsatzId,
         splits_override: splitsOverride,
       })
+      .then(r => r.data),
+
+  // Alle Vorlagen zu einer Rechnung
+  vorlagenJeRechnung: (rechnungId: string) =>
+    client
+      .get<WKZVorlage[]>('/wkz-vorlagen/', { params: { rechnung: rechnungId } })
       .then(r => r.data),
 
   // Alle Vorlagen eines Kreditors

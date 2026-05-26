@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { rechnungenApi } from '../../api/rechnungen'
 import { Button } from '../../components/ui/Button'
@@ -23,6 +24,7 @@ interface KreditorKontoPosition {
   opos_nr: string | null
   buchungsdatum: string | null
   buchung_status: string | null
+  rechnung_id?: string | null
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -84,6 +86,7 @@ function KreditorKontoModal({
   kreditor: Kreditor
   onClose: () => void
 }) {
+  const navigate = useNavigate()
   const currentYear = new Date().getFullYear()
   const years = Array.from({ length: 6 }, (_, i) => currentYear - i)
   const [selectedJahr, setSelectedJahr] = useState('')
@@ -167,7 +170,16 @@ function KreditorKontoModal({
               </thead>
               <tbody>
                 {positionen.map(p => (
-                  <tr key={p.id} className={`border-t hover:bg-gray-50 ${p.herkunft === 'wkz' ? 'bg-blue-50/30' : ''}`}>
+                  <tr
+                    key={p.id}
+                    className={`border-t hover:bg-gray-50 ${p.herkunft === 'wkz' ? 'bg-blue-50/30' : ''} ${p.rechnung_id ? 'cursor-pointer' : ''}`}
+                    onClick={() => {
+                      if (p.rechnung_id) {
+                        onClose()
+                        navigate(`/rechnungen/${p.rechnung_id}/prueffall`)
+                      }
+                    }}
+                  >
                     <td className="px-3 py-2 font-mono text-xs text-blue-700 font-semibold">
                       {p.opos_nr ?? '—'}
                     </td>
@@ -177,6 +189,9 @@ function KreditorKontoModal({
                           <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium shrink-0">WKZ</span>
                         )}
                         <span className="truncate max-w-xs" title={p.rechnungsnummer}>{p.rechnungsnummer || '—'}</span>
+                        {p.rechnung_id && (
+                          <span className="text-xs text-gray-400 shrink-0">↗</span>
+                        )}
                       </div>
                     </td>
                     <td className="px-3 py-2 text-gray-600">{fmt(p.rechnungsdatum)}</td>

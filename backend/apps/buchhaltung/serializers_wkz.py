@@ -36,6 +36,7 @@ class WKZVorlageSerializer(serializers.ModelSerializer):
             'erste_faelligkeit', 'gueltig_ab', 'gueltig_bis',
             'jahresbetrag', 'perioden_pro_jahr',
             'bescheid_pflicht',
+            'rechnung_id',
             'freigegeben_am', 'erstellt_am',
         ]
 
@@ -71,6 +72,7 @@ class WKZVorlageDetailSerializer(serializers.ModelSerializer):
             'freigegeben_am', 'freigegeben_von_name', 'freigabe_jahresbetrag',
             'ersetzt_vorlage_id',
             'erstellt_von_name', 'erstellt_am', 'geaendert_am',
+            'rechnung_id',
             'splits',
         ]
 
@@ -98,6 +100,7 @@ class WKZVorlageCreateSerializer(serializers.Serializer):
     bescheid_pflicht = serializers.BooleanField(required=False)
     gueltig_ab = serializers.DateField()
     gueltig_bis = serializers.DateField(required=False, allow_null=True)
+    rechnung_id = serializers.UUIDField(required=False, allow_null=True)
     splits = WKZSplitCreateSerializer(many=True)
 
     def validate(self, data):
