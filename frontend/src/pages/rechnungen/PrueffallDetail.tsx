@@ -33,6 +33,13 @@ export default function PrueffallDetail() {
   const [lernen, setLernen]                           = useState(true)
   const [sepaLastschrift, setSepaLastschrift]         = useState(false)
 
+  // Editierbare OCR-Felder
+  const [lieferantName, setLieferantName]         = useState('')
+  const [rechnungsnummer, setRechnungsnummer]     = useState('')
+  const [rechnungsdatum, setRechnungsdatum]       = useState('')
+  const [faelligkeitsdatum, setFaelligkeitsdatum] = useState('')
+  const [betragBrutto, setBetragBrutto]           = useState('')
+
   // Stufe 3: neuer Kreditor-Workflow
   const [zeigeNeuForm, setZeigeNeuForm] = useState(false)
   const [neuName, setNeuName]           = useState('')
@@ -49,6 +56,12 @@ export default function PrueffallDetail() {
       setNeuName(prev => prev || rechnung.lieferant_name || '')
       setNeuIban(prev => prev || rechnung.lieferant_iban || '')
     }
+    // OCR-Felder initialisieren (nur beim ersten Laden)
+    setLieferantName(prev => prev || rechnung.lieferant_name || '')
+    setRechnungsnummer(prev => prev || rechnung.rechnungsnummer || '')
+    setRechnungsdatum(prev => prev || rechnung.rechnungsdatum || '')
+    setFaelligkeitsdatum(prev => prev || rechnung.faelligkeitsdatum || '')
+    setBetragBrutto(prev => prev || (rechnung.betrag_brutto != null ? String(rechnung.betrag_brutto) : ''))
   }, [rechnung?.id])
 
   const { data: kreditoren } = useQuery<Kreditor[]>({
@@ -148,6 +161,26 @@ export default function PrueffallDetail() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['rechnung', id] }),
   })
 
+  const mutKorrektur = useMutation({
+    mutationFn: () => rechnungenApi.update(id!, {
+      lieferant_name:    lieferantName    || null,
+      rechnungsnummer:   rechnungsnummer  || '',
+      rechnungsdatum:    rechnungsdatum   || null,
+      faelligkeitsdatum: faelligkeitsdatum || null,
+      betrag_brutto:     betragBrutto ? parseFloat(betragBrutto.replace(',', '.')) : null,
+    } as never),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['rechnung', id] }),
+  })
+
+  // Dirty-Check: hat der Nutzer mindestens ein Feld verändert?
+  const korrDirty = rechnung != null && (
+    lieferantName    !== (rechnung.lieferant_name    ?? '') ||
+    rechnungsnummer  !== (rechnung.rechnungsnummer   ?? '') ||
+    rechnungsdatum   !== (rechnung.rechnungsdatum    ?? '') ||
+    faelligkeitsdatum !== (rechnung.faelligkeitsdatum ?? '') ||
+    betragBrutto     !== (rechnung.betrag_brutto != null ? String(rechnung.betrag_brutto) : '')
+  )
+
   const handleNeuKreditorAnlegen = async () => {
     const name = neuName.trim()
     if (!name) return
@@ -244,17 +277,34 @@ export default function PrueffallDetail() {
       </div>
 
       <div className="grid grid-cols-2 gap-6">
-        {/* Linke Spalte: Rechnungsdetails */}
+        {/* Linke Spalte: Rechnungsdetails — editierbar */}
         <div className="space-y-4">
           <div className="bg-gray-50 rounded-lg p-4 text-sm space-y-2">
-            <div className="font-semibold text-gray-600 text-xs uppercase tracking-wide mb-2">Rechnungsdetails</div>
-            <Row label="Lieferant (OCR)" value={rechnung.lieferant_name} />
-            <Row label="Leistungstext"   value={rechnung.leistungstext || rechnung.leistungsbeschreibung} />
-            <Row label="Betrag brutto"   value={EUR(rechnung.betrag_brutto)} />
-            <Row label="Rechnungsdatum"  value={rechnung.rechnungsdatum ?? '—'} />
-            <Row label="Dateiname"       value={rechnung.dateiname} />
+            <div className="font-semibold text-gray-600 text-xs uppercase tracking-wide mb-2 flex items-center gap-2">
+              Rechnungsdetails
+              {korrDirty && <span className="text-orange-500 font-normal normal-case">● ungespeichert</span>}
+            </div>
+
+            <EditRow label="Lieferant"       value={lieferantName}     onChange={setLieferantName} />
+            <EditRow label="Rechnungsnr."    value={rechnungsnummer}   onChange={setRechnungsnummer} />
+            <EditRow label="Rechnungsdatum"  value={rechnungsdatum}    onChange={setRechnungsdatum}    type="date" />
+            <EditRow label="Fällig am"       value={faelligkeitsdatum} onChange={setFaelligkeitsdatum} type="date" />
+            <EditRow label="Betrag brutto"   value={betragBrutto}      onChange={setBetragBrutto}      type="number" step="0.01" />
+
+            <Row label="Leistungstext" value={rechnung.leistungstext || rechnung.leistungsbeschreibung} />
+            <Row label="Dateiname"     value={rechnung.dateiname} />
             {istFreigabeModus && rechnung.zugewiesen_an_name && (
               <Row label="Zugewiesen an" value={rechnung.zugewiesen_an_name} />
+            )}
+
+            {korrDirty && (
+              <div className="pt-2 flex items-center gap-3">
+                <Button onClick={() => mutKorrektur.mutate()} disabled={mutKorrektur.isPending}>
+                  {mutKorrektur.isPending ? 'Speichert…' : 'Korrekturen speichern'}
+                </Button>
+                {mutKorrektur.isSuccess && <span className="text-green-600 text-xs">✓ Gespeichert</span>}
+                {mutKorrektur.isError   && <span className="text-red-600 text-xs">Fehler beim Speichern</span>}
+              </div>
             )}
           </div>
 
@@ -611,6 +661,29 @@ function Row({ label, value }: { label: string; value: string | null | undefined
     <div className="flex gap-2">
       <span className="text-gray-500 w-36 shrink-0">{label}</span>
       <span className="text-gray-800 break-all">{value || '—'}</span>
+    </div>
+  )
+}
+
+function EditRow({
+  label, value, onChange, type = 'text', step,
+}: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+  type?: string
+  step?: string
+}) {
+  return (
+    <div className="flex gap-2 items-center">
+      <span className="text-gray-500 w-36 shrink-0">{label}</span>
+      <input
+        type={type}
+        step={step}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        className="border rounded px-2 py-0.5 text-sm flex-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+      />
     </div>
   )
 }

@@ -6,7 +6,7 @@ import { objekteApi } from '../../api/objekte'
 import { useObjektStore } from '../../stores/objekt'
 import { Button } from '../../components/ui/Button'
 import client from '../../api/client'
-import type { RechnungList, RechnungStatus, Konto, Bankkonto } from '../../types'
+import type { RechnungList, RechnungStatus, Konto, Bankkonto, Kreditor } from '../../types'
 
 const EUR = (v: string | number | null) =>
   v == null ? '—' : Number(v).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })
@@ -221,10 +221,55 @@ function DetailModal({ rechnung, onClose }: { rechnung: RechnungList; onClose: (
   const qc = useQueryClient()
   const [begruendung, setBegruendung] = useState('')
 
+  // Editierbare Felder
+  const [editKreditorId, setEditKreditorId]               = useState('')
+  const [editRechnungsnummer, setEditRechnungsnummer]     = useState(rechnung.rechnungsnummer ?? '')
+  const [editRechnungsdatum, setEditRechnungsdatum]       = useState(rechnung.rechnungsdatum ?? '')
+  const [editFaelligkeitsdatum, setEditFaelligkeitsdatum] = useState(rechnung.faelligkeitsdatum ?? '')
+  const [editBetragBrutto, setEditBetragBrutto]           = useState(rechnung.betrag_brutto ?? '')
+  const [editObjektId, setEditObjektId]                   = useState(rechnung.objekt_id ?? '')
+
   const { data: detail } = useQuery({
     queryKey: ['rechnung', rechnung.id],
     queryFn: () => rechnungenApi.get(rechnung.id),
   })
+
+  // Kreditor-UUID erst nach Laden von detail verfügbar
+  useEffect(() => {
+    if (detail?.kreditor && !editKreditorId) setEditKreditorId(detail.kreditor)
+  }, [detail?.kreditor])
+
+  const { data: kreditoren } = useQuery<Kreditor[]>({
+    queryKey: ['kreditoren'],
+    queryFn: () => rechnungenApi.kreditoren({ aktiv: 'true' }),
+  })
+  const { data: objekte } = useQuery({
+    queryKey: ['objekte'],
+    queryFn: () => objekteApi.list(),
+  })
+
+  const mutKorrektur = useMutation({
+    mutationFn: () => rechnungenApi.update(rechnung.id, {
+      kreditor:          editKreditorId || null,
+      rechnungsnummer:   editRechnungsnummer,
+      rechnungsdatum:    editRechnungsdatum    || null,
+      faelligkeitsdatum: editFaelligkeitsdatum || null,
+      betrag_brutto:     editBetragBrutto
+        ? parseFloat(editBetragBrutto.replace(',', '.'))
+        : null,
+      objekt: editObjektId || null,
+    } as never),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['rechnungen'] }),
+  })
+
+  const korrDirty = (
+    editKreditorId      !== (detail?.kreditor        ?? '') ||
+    editRechnungsnummer !== (rechnung.rechnungsnummer ?? '') ||
+    editRechnungsdatum  !== (rechnung.rechnungsdatum  ?? '') ||
+    editFaelligkeitsdatum !== (rechnung.faelligkeitsdatum ?? '') ||
+    editBetragBrutto    !== (rechnung.betrag_brutto   ?? '') ||
+    editObjektId        !== (rechnung.objekt_id       ?? '')
+  )
 
   const freigebenMut = useMutation({
     mutationFn: () => rechnungenApi.freigeben(rechnung.id, begruendung ? { begruendung } : undefined),
@@ -261,22 +306,101 @@ function DetailModal({ rechnung, onClose }: { rechnung: RechnungList; onClose: (
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            {[
-              ['Lieferant', rechnung.kreditor_name || rechnung.lieferant_name],
-              ['Rechnungsnummer', rechnung.rechnungsnummer || '—'],
-              ['Rechnungsdatum', DATUM(rechnung.rechnungsdatum)],
-              ['Fällig', DATUM(rechnung.faelligkeitsdatum)],
-              ['Betrag brutto', EUR(rechnung.betrag_brutto)],
-              ['Objekt', rechnung.objekt_bezeichnung || '—'],
-              ['Sachkonto', rechnung.kostenstelle_label || rechnung.aufwandskonto_label || (rechnung.vorgeschlagenes_konto_label ? rechnung.vorgeschlagenes_konto_label + ' (Vorschlag)' : '—')],
-              ['MwSt.', detail?.mwst_satz ? `${detail.mwst_satz} %` : '—'],
-            ].map(([label, value]) => (
-              <div key={label} className="bg-gray-50 rounded-lg px-3 py-2">
-                <div className="text-xs text-gray-400 uppercase tracking-wide mb-0.5">{label}</div>
-                <div className="font-medium text-gray-800">{value}</div>
+
+          {/* ── Editierbare Rechnungsfelder ── */}
+          <div className="space-y-2 text-sm">
+            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-2">
+              Rechnungsdetails
+              {korrDirty && <span className="text-orange-500 font-normal normal-case">● ungespeichert</span>}
+            </div>
+
+            {/* Lieferant — Kreditor-Dropdown */}
+            <div className="flex items-center gap-2">
+              <span className="text-gray-500 w-36 shrink-0">Lieferant</span>
+              <select
+                value={editKreditorId}
+                onChange={e => setEditKreditorId(e.target.value)}
+                className="border rounded px-2 py-1 text-sm flex-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+              >
+                <option value="">— Kreditor wählen —</option>
+                {(kreditoren ?? []).map(k => (
+                  <option key={k.id} value={k.id}>
+                    {k.kreditorennummer ? `[${k.kreditorennummer}] ` : ''}{k.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Rechnungsnummer */}
+            <div className="flex items-center gap-2">
+              <span className="text-gray-500 w-36 shrink-0">Rechnungsnr.</span>
+              <input type="text" value={editRechnungsnummer}
+                onChange={e => setEditRechnungsnummer(e.target.value)}
+                className="border rounded px-2 py-1 text-sm flex-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400" />
+            </div>
+
+            {/* Rechnungsdatum */}
+            <div className="flex items-center gap-2">
+              <span className="text-gray-500 w-36 shrink-0">Rechnungsdatum</span>
+              <input type="date" value={editRechnungsdatum}
+                onChange={e => setEditRechnungsdatum(e.target.value)}
+                className="border rounded px-2 py-1 text-sm flex-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400" />
+            </div>
+
+            {/* Fällig am */}
+            <div className="flex items-center gap-2">
+              <span className="text-gray-500 w-36 shrink-0">Fällig am</span>
+              <input type="date" value={editFaelligkeitsdatum}
+                onChange={e => setEditFaelligkeitsdatum(e.target.value)}
+                className="border rounded px-2 py-1 text-sm flex-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400" />
+            </div>
+
+            {/* Betrag brutto */}
+            <div className="flex items-center gap-2">
+              <span className="text-gray-500 w-36 shrink-0">Betrag brutto</span>
+              <input type="number" step="0.01" value={editBetragBrutto}
+                onChange={e => setEditBetragBrutto(e.target.value)}
+                className="border rounded px-2 py-1 text-sm flex-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400" />
+            </div>
+
+            {/* Objekt */}
+            <div className="flex items-center gap-2">
+              <span className="text-gray-500 w-36 shrink-0">Objekt</span>
+              <select
+                value={editObjektId}
+                onChange={e => setEditObjektId(e.target.value)}
+                className="border rounded px-2 py-1 text-sm flex-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+              >
+                <option value="">— Objekt wählen —</option>
+                {(objekte ?? []).map((o: { id: string; bezeichnung: string }) => (
+                  <option key={o.id} value={o.id}>{o.bezeichnung}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Weitere read-only Infos */}
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              {[
+                ['Sachkonto', rechnung.kostenstelle_label || rechnung.aufwandskonto_label || (rechnung.vorgeschlagenes_konto_label ? rechnung.vorgeschlagenes_konto_label + ' (Vorschlag)' : '—')],
+                ['MwSt.', detail?.mwst_satz ? `${detail.mwst_satz} %` : '—'],
+              ].map(([label, value]) => (
+                <div key={label} className="bg-gray-50 rounded px-3 py-2">
+                  <div className="text-xs text-gray-400 uppercase tracking-wide mb-0.5">{label}</div>
+                  <div className="font-medium text-gray-800 text-sm">{value}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Speichern-Button */}
+            {korrDirty && (
+              <div className="flex items-center gap-3 pt-1">
+                <Button onClick={() => mutKorrektur.mutate()} disabled={mutKorrektur.isPending}>
+                  {mutKorrektur.isPending ? 'Speichert…' : 'Korrekturen speichern'}
+                </Button>
+                {mutKorrektur.isSuccess && <span className="text-green-600 text-xs">✓ Gespeichert</span>}
+                {mutKorrektur.isError   && <span className="text-red-600 text-xs">Fehler beim Speichern</span>}
               </div>
-            ))}
+            )}
           </div>
 
           <div className="flex items-center gap-3 px-1">

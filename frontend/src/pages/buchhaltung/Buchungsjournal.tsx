@@ -41,6 +41,24 @@ export function Buchungsjournal() {
     },
   })
 
+  const stornierenMut = useMutation({
+    mutationFn: (id: string) => buchhaltungApi.stornieren(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['buchungen'] })
+      setStatusFilter('storniert')
+    },
+    onError: () => alert('Stornierung fehlgeschlagen.'),
+  })
+
+  const neuBuchenMut = useMutation({
+    mutationFn: (id: string) => buchhaltungApi.neuBuchen(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['buchungen'] })
+      setStatusFilter('entwurf')
+    },
+    onError: () => alert('Neu buchen fehlgeschlagen.'),
+  })
+
   const { data: buchungen, isLoading } = useQuery({
     queryKey: ['buchungen', objektId, statusFilter],
     queryFn: () => {
@@ -90,7 +108,7 @@ export function Buchungsjournal() {
         >
           <option value="">Alle Status</option>
           <option value="entwurf">Entwurf</option>
-          <option value="gebucht">Gebucht</option>
+          <option value="festgeschrieben">Festgeschrieben</option>
           <option value="storniert">Storniert</option>
         </select>
       </div>
@@ -152,6 +170,7 @@ export function Buchungsjournal() {
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Verwendung</th>
                 <th className="text-right px-4 py-3 font-medium text-gray-600">Betrag</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Status</th>
+                <th className="px-4 py-3"></th>
               </tr>
             </thead>
             <tbody>
@@ -166,11 +185,35 @@ export function Buchungsjournal() {
                     {Number(b.betrag).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })}
                   </td>
                   <td className="px-4 py-3"><Badge value={b.status} /></td>
+                  <td className="px-4 py-3 text-right whitespace-nowrap">
+                    {b.status === 'festgeschrieben' && (
+                      <button
+                        onClick={() => {
+                          if (confirm(`Buchung ${b.belegnr || b.id.slice(0, 8)} stornieren?`))
+                            stornierenMut.mutate(b.id)
+                        }}
+                        disabled={stornierenMut.isPending}
+                        className="text-xs text-red-600 hover:underline disabled:opacity-50"
+                      >
+                        Stornieren
+                      </button>
+                    )}
+                    {b.status === 'storniert' && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => neuBuchenMut.mutate(b.id)}
+                        disabled={neuBuchenMut.isPending}
+                      >
+                        {neuBuchenMut.isPending ? 'Buche…' : 'Neu buchen'}
+                      </Button>
+                    )}
+                  </td>
                 </tr>
               ))}
               {buchungen?.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-gray-400">
+                  <td colSpan={8} className="px-4 py-8 text-center text-gray-400">
                     Keine Buchungen gefunden.
                   </td>
                 </tr>

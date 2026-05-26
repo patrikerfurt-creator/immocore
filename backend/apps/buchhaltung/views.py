@@ -174,6 +174,40 @@ class BuchungViewSet(viewsets.ModelViewSet):
             original.offener_posten.save(update_fields=['status'])
         return Response(BuchungSerializer(storno, context={'request': request}).data)
 
+    @action(detail=True, methods=['post'], url_path='neu-buchen')
+    def neu_buchen(self, request, pk=None):
+        """
+        Erstellt eine korrigierbare Entwurfs-Kopie einer stornoierten Buchung.
+        Soll/Haben/Betrag/BA/Buchungstext werden übernommen; Datum = heute.
+        Status der neuen Buchung: 'entwurf'.
+        """
+        original = self.get_object()
+        if original.status != 'storniert':
+            return Response(
+                {'error': 'Nur stornierte Buchungen können neu gebucht werden.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        neue_buchung = Buchung.objects.create(
+            objekt=original.objekt,
+            buchungsart=original.buchungsart,
+            betrag=original.betrag,
+            soll_konto=original.soll_konto,
+            haben_konto=original.haben_konto,
+            unterkonto=original.unterkonto,
+            buchungsdatum=date.today(),
+            buchungstext=original.buchungstext,
+            verwendungszweck=original.verwendungszweck,
+            beleg_referenz=original.beleg_referenz,
+            kostenstelle=original.kostenstelle,
+            wirtschaftsjahr=original.wirtschaftsjahr,
+            status='entwurf',
+            erstellt_von=request.user,
+        )
+        return Response(
+            BuchungSerializer(neue_buchung, context={'request': request}).data,
+            status=status.HTTP_201_CREATED,
+        )
+
 
 class OffenerPostenViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = OffenerPostenSerializer

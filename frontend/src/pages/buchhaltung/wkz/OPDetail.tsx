@@ -11,14 +11,6 @@ const EUR = (v: string | number | null) =>
 const DATUM = (s: string | null) =>
   s ? new Date(s).toLocaleDateString('de-DE') : '–'
 
-const STATUS_FARBE: Record<string, 'green' | 'yellow' | 'gray' | 'blue' | 'red'> = {
-  erzeugt: 'blue',
-  bescheid_fehlt: 'yellow',
-  bankabgang_erfolgt: 'green',
-  abweichend_geklaert: 'yellow',
-  verworfen: 'gray',
-}
-
 const STATUS_TEXT: Record<string, string> = {
   erzeugt: 'Erzeugt — wartet auf Bankabgang',
   bescheid_fehlt: 'Bescheid fehlt',
@@ -113,9 +105,7 @@ export default function OPDetail() {
             ← Zurück
           </Link>
           <h1 className="text-xl font-semibold">WKZ-OP</h1>
-          <Badge color={STATUS_FARBE[op.status] ?? 'gray'}>
-            {STATUS_TEXT[op.status] ?? op.status}
-          </Badge>
+          <Badge value={op.status} label={STATUS_TEXT[op.status] ?? op.status} />
         </div>
         {kannVerworfen && (
           <Button variant="secondary" onClick={() => setShowVerwerfen(true)}>

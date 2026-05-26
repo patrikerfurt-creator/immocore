@@ -91,6 +91,14 @@ def kontenrahmen_anlegen(wirtschaftsjahr_id: str | None = None, objekt_id: str |
     if objekt.objekt_typ != 'WEG':
         raise ValueError('Musterkontenrahmen gilt nur für WEG-Objekte.')
 
+    # Guard: Konten existieren bereits in einem anderen WJ dieses Objekts.
+    # Verhindert, dass bei Folgejahr-Eröffnung versehentlich ein doppelter
+    # Kontenrahmen für das neue WJ angelegt wird. Der Kontenrahmen ist
+    # Objekt-weit eindeutig — Konten werden per _kopiere_konten() ins neue
+    # WJ verschoben, nicht neu angelegt.
+    if Konto.objects.filter(wirtschaftsjahr__objekt=objekt).exclude(wirtschaftsjahr=wj).exists():
+        return {'angelegt': 0}
+
     angelegt = 0
     with open(FIXTURE_PATH, encoding='utf-8-sig', newline='') as f:
         reader = csv.DictReader(f, delimiter=';')

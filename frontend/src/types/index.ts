@@ -172,8 +172,6 @@ export interface Person extends PersonList {
   firmenname: string
   adresse: string
   ibans: string[]
-  briefanrede: string
-  briefanrede2: string
 }
 
 export interface HausgeldHistorie {

@@ -41,6 +41,8 @@ export const buchhaltungApi = {
     client.post(`/buchungen/${id}/festschreiben/`).then(r => r.data),
   stornieren: (id: string) =>
     client.post(`/buchungen/${id}/stornieren/`).then(r => r.data),
+  neuBuchen: (id: string) =>
+    client.post<Buchung>(`/buchungen/${id}/neu-buchen/`).then(r => r.data),
   exportCsv: (params?: Record<string, string>) =>
     client.get('/buchungen/export-csv/', { params, responseType: 'blob' }).then(r => r.data),
 
