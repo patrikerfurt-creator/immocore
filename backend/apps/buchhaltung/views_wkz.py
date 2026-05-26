@@ -84,6 +84,8 @@ class WKZVorlageViewSet(viewsets.ModelViewSet):
             qs = qs.filter(objekt_id=objekt_id)
         if kreditor_id := params.get('kreditor'):
             qs = qs.filter(kreditor_id=kreditor_id)
+        if rechnung_id := params.get('rechnung'):
+            qs = qs.filter(rechnung_id=rechnung_id)
         if s := params.get('status'):
             qs = qs.filter(status=s)
         return qs.order_by('bezeichnung')

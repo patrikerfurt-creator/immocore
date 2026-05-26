@@ -140,6 +140,7 @@ class KreditorViewSet(viewsets.ModelViewSet):
                 'opos_nr': op.op_nummer if op else None,
                 'buchungsdatum': str(b.buchungsdatum) if b else None,
                 'buchung_status': b.status if b else None,
+                'rechnung_id': str(r.id),
             })
 
         # --- WKZ-OPs (herkunft='wkz_vorlage') ---

@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { rechnungenApi } from '../../api/rechnungen'
 import { objekteApi } from '../../api/objekte'
 import { wirtschaftsjahreApi } from '../../api/wirtschaftsjahre'
+import { wkzApi } from '../../api/wkz'
 import client from '../../api/client'
 import { Button } from '../../components/ui/Button'
 import type { Rechnung, Kreditor, Konto, DublettKandidat, Wirtschaftsjahr } from '../../types'
@@ -181,6 +182,25 @@ export default function PrueffallDetail() {
     betragBrutto     !== (rechnung.betrag_brutto != null ? String(rechnung.betrag_brutto) : '')
   )
 
+  // WKZ-Vorlagen die zu dieser Rechnung verknüpft sind (für Button-Label)
+  const { data: linkedWkz } = useQuery({
+    queryKey: ['wkz-vorlagen-rechnung', id],
+    queryFn: () => wkzApi.vorlagenJeRechnung(id!),
+    enabled: !!id,
+    staleTime: 30_000,
+  })
+  const wkzAnzahl = linkedWkz?.length ?? 0
+
+  function handleWkzButton() {
+    const params = new URLSearchParams()
+    if (id)                            params.set('rechnung_id', id)
+    if (rechnung?.kreditor)            params.set('kreditor_id', rechnung.kreditor)
+    if (rechnung?.objekt)              params.set('objekt_id', rechnung.objekt)
+    if (rechnung?.betrag_brutto != null) params.set('betrag', String(rechnung.betrag_brutto))
+    if (rechnung?.rechnungsnummer)     params.set('bezeichnung', rechnung.rechnungsnummer)
+    navigate(`/buchhaltung/wkz-vorlagen/neu?${params.toString()}`)
+  }
+
   const handleNeuKreditorAnlegen = async () => {
     const name = neuName.trim()
     if (!name) return
@@ -323,6 +343,23 @@ export default function PrueffallDetail() {
               ))}
             </div>
           )}
+
+          {/* WKZ-Button */}
+          <div className="border rounded-lg px-4 py-3 bg-gray-50 text-sm">
+            <div className="font-semibold text-gray-500 text-xs uppercase tracking-wide mb-2">
+              Wiederkehrende Zahlung
+            </div>
+            {wkzAnzahl > 0 && (
+              <p className="text-xs text-gray-500 mb-2">
+                Bereits {wkzAnzahl} WKZ-Vorlage{wkzAnzahl > 1 ? 'n' : ''} mit dieser Rechnung verknüpft.
+              </p>
+            )}
+            <Button variant="secondary" onClick={handleWkzButton}>
+              {wkzAnzahl === 0
+                ? '↻ WKZ aus diesem Beleg anlegen'
+                : '↻ Zusätzlich WKZ aus diesem Beleg anlegen'}
+            </Button>
+          </div>
         </div>
 
         {/* Rechte Spalte */}

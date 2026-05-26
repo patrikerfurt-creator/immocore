@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { wkzApi, type WKZVorlageCreate } from '../../../api/wkz'
 import { Button } from '../../../components/ui/Button'
@@ -33,13 +33,20 @@ function summe(splits: SplitRow[]): number {
 export default function VorlageWizard() {
   const { selectedId: objektId } = useObjektStore()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+
+  // URL-Parameter (vorausgefüllt aus Rechnung)
+  const paramRechnungId   = searchParams.get('rechnung_id') ?? ''
+  const paramKreditorId   = searchParams.get('kreditor_id') ?? ''
+  const paramBezeichnung  = searchParams.get('bezeichnung') ?? ''
+  const paramBetrag       = searchParams.get('betrag') ?? ''
 
   // Schritt 1–4
   const [schritt, setSchritt] = useState(1)
 
   // Stammdaten
-  const [kreditorId, setKreditorId] = useState('')
-  const [bezeichnung, setBezeichnung] = useState('')
+  const [kreditorId, setKreditorId] = useState(paramKreditorId)
+  const [bezeichnung, setBezeichnung] = useState(paramBezeichnung)
   const [typ, setTyp] = useState<'bescheid' | 'vertrag'>('bescheid')
   const [bescheidPflicht, setBescheidPflicht] = useState(true)
 
@@ -50,9 +57,9 @@ export default function VorlageWizard() {
   const [gueltigBis, setGueltigBis] = useState('')
   const [beiWochenende, setBeiWochenende] = useState('zurueck')
 
-  // Splits
+  // Splits (Betrag aus Rechnung vorausfüllen wenn vorhanden)
   const [splits, setSplits] = useState<SplitRow[]>([
-    { kontonummer: '', bezeichnung: '', betrag: '' },
+    { kontonummer: '', bezeichnung: paramBezeichnung, betrag: paramBetrag },
   ])
 
   // Bank-Match
@@ -119,6 +126,7 @@ export default function VorlageWizard() {
       bescheid_pflicht: bescheidPflicht,
       gueltig_ab: gueltigAb,
       gueltig_bis: gueltigBis || null,
+      rechnung_id: paramRechnungId || null,
       splits: splits.map((s, i) => ({
         kontonummer: s.kontonummer,
         bezeichnung: s.bezeichnung,
@@ -136,13 +144,20 @@ export default function VorlageWizard() {
     <div className="p-4 max-w-2xl mx-auto space-y-6">
       <div className="flex items-center gap-4">
         <button
-          onClick={() => navigate('..')}
+          onClick={() => navigate(-1)}
           className="text-gray-500 hover:text-gray-800 text-sm"
         >
           ← Zurück
         </button>
         <h1 className="text-xl font-semibold">Neue Vorlage anlegen</h1>
       </div>
+
+      {paramRechnungId && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 text-sm text-blue-800">
+          <span className="font-medium">Aus Rechnung übernommen</span> — Kreditor, Bezeichnung und Betrag sind vorausgefüllt.
+          Der DMS-Bezug zur Originalrechnung wird automatisch gespeichert.
+        </div>
+      )}
 
       {/* Schrittanzeige */}
       <div className="flex gap-2 text-sm">
