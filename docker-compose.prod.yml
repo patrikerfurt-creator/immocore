@@ -70,7 +70,7 @@ services:
       dockerfile: Dockerfile.prod
     container_name: immocore_frontend
     ports:
-      - "80:80"
+      - "8082:80"
     depends_on:
       - backend
     restart: unless-stopped
