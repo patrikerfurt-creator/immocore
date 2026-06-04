@@ -30,11 +30,15 @@ logger = logging.getLogger(__name__)
 
 
 @transaction.atomic
-def run_objekt(objekt, periode: date, user) -> AutoLaufProtokoll:
+def run_objekt(objekt, periode: date, user, stichtag: date = None) -> AutoLaufProtokoll:
     """
     Atomarer Lauf pro Objekt. Bei Fehler an einer beliebigen Stelle:
     Rollback des gesamten Objekt-Laufs. AutoLaufProtokoll bleibt
     bestehen (eigene Transaktion im Außenrahmen des Tasks).
+
+    stichtag: Datum für SEPA-Fristberechnung (default: heute).
+              Für Nachläufe vergangener Monate auf `periode` setzen,
+              damit die Fälligkeit historisch korrekt berechnet wird.
 
     Schritte:
       1. Idempotenz-Check
@@ -88,7 +92,7 @@ def run_objekt(objekt, periode: date, user) -> AutoLaufProtokoll:
     # 4. SEPA-Frist berechnen
     bundesland = objekt.bundesland or 'HE'
     faelligkeit = sepa_fristen_service.naechster_einreichungstag(
-        stichtag=timezone.localdate(),
+        stichtag=stichtag or timezone.localdate(),
         soll_faelligkeit=periode,
         bundesland=bundesland,
     )

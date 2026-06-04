@@ -24,7 +24,7 @@ def _sub(parent, tag, text=None):
     return el
 
 
-def exportiere_lastschrift(lastschriften: list[dict], glaeubiger: dict) -> bytes:
+def exportiere_lastschrift(lastschriften: list[dict], glaeubiger: dict, erstellungsdatum: date = None) -> bytes:
     """
     Erstellt SEPA pain.008.003.02 XML für Lastschriften.
 
@@ -64,7 +64,7 @@ def exportiere_lastschrift(lastschriften: list[dict], glaeubiger: dict) -> bytes
     grp_hdr = _sub(init, 'GrpHdr')
     msg_id = str(uuid.uuid4()).replace('-', '')[:35]
     _sub(grp_hdr, 'MsgId', msg_id)
-    _sub(grp_hdr, 'CreDtTm', date.today().isoformat() + 'T00:00:00')
+    _sub(grp_hdr, 'CreDtTm', (erstellungsdatum or date.today()).isoformat() + 'T00:00:00')
     _sub(grp_hdr, 'NbOfTxs', len(lastschriften))
     ctrl_sum = sum(z['betrag'] for z in lastschriften)
     _sub(grp_hdr, 'CtrlSum', f'{ctrl_sum:.2f}')
@@ -320,7 +320,7 @@ def generiere_pain008(lastschriftlauf) -> str:
         p['mandat_datum'] = date_type.fromisoformat(p['mandat_datum'])
         lastschriften.append(p)
 
-    xml_bytes = exportiere_lastschrift(lastschriften, glaeubiger)
+    xml_bytes = exportiere_lastschrift(lastschriften, glaeubiger, erstellungsdatum=lastschriftlauf.faelligkeitsdatum)
     return xml_bytes.decode('utf-8')
 
 
@@ -346,9 +346,16 @@ def erstelle_lastschrift_buchungen(lastschriftlauf, user):
     wj = Wirtschaftsjahr.objects.filter(
         objekt=objekt, jahr=lastschriftlauf.faelligkeitsdatum.year
     ).first()
-    gegenkonto = Konto.objects.filter(
-        wirtschaftsjahr__objekt=objekt, kontonummer='13650'
-    ).first()
+    gegenkonto = (
+        Konto.objects.filter(
+            wirtschaftsjahr__objekt=objekt,
+            kontonummer='13650',
+            wirtschaftsjahr__jahr=lastschriftlauf.faelligkeitsdatum.year,
+        ).first()
+        or Konto.objects.filter(
+            wirtschaftsjahr__objekt=objekt, kontonummer='13650',
+        ).order_by('-wirtschaftsjahr__jahr').first()
+    )
     if not gegenkonto:
         raise ValueError(f'Konto 13650 (DCL-Debitor) nicht im Kontenplan für Objekt {objekt}')
 
@@ -392,6 +399,7 @@ def erstelle_lastschrift_buchungen(lastschriftlauf, user):
                 belegnr=belegnr,
                 beleg_referenz=f'LS-{str(lastschriftlauf.id)[:8]}',
                 wirtschaftsjahr=wj,
+                wirtschaftsjahr_nr=wj.jahr if wj else lastschriftlauf.faelligkeitsdatum.year,
                 status='festgeschrieben',
                 erstellt_von=user,
             )

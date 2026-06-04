@@ -37,6 +37,7 @@ def verrechne_eingang_manuell(
     buchungstext: str,
     wirtschaftsjahr,
     user,
+    sollstellungs_ids: list = None,
 ):
     """
     Bucht einen manuellen Zahlungseingang gegen offene Sollstellungen.
@@ -48,22 +49,54 @@ def verrechne_eingang_manuell(
     buchungstext: str
     wirtschaftsjahr: Wirtschaftsjahr-Instanz
     user: User-Instanz
+    sollstellungs_ids: optionale Liste von SS-IDs — nur diese werden verrechnet.
+                       Wenn leer/None → automatische Tilgungsreihenfolge.
+                       Wenn keine SS vorhanden → Fallback auf BA 900 (Hausgeld).
     Gibt parent Buchung zurück.
     """
     from apps.buchhaltung.models import Buchung, HausgeldSollstellung, SollstellungZahlung
+    from apps.konten.models import Konto as KontoModel
 
     ev = personenkonto.vertrag
 
-    offene_ss = list(
+    qs = (
         HausgeldSollstellung.objects
         .filter(eigentumsverhaeltnis=ev, storniert_am__isnull=True)
         .exclude(status_cached__in=['ausgeglichen', 'storniert'])
-        .order_by('periode', 'erstellt_am')
         .prefetch_related('splits__ba')
     )
+    if sollstellungs_ids:
+        qs = qs.filter(id__in=sollstellungs_ids).order_by('periode', 'erstellt_am')
+    else:
+        qs = qs.order_by('periode', 'erstellt_am')
 
+    offene_ss = list(qs)
+
+    # Fallback: keine offenen SS → gegen BA 900 (Hausgeld) buchen
     if not offene_ss:
-        raise ValidationError("Keine offenen Sollstellungen für dieses Personenkonto.")
+        from apps.buchhaltung.models import Buchungsart
+        ba_900 = Buchungsart.objects.filter(nr='900').first()
+        erloeskonto = None
+        if ba_900 and ba_900.erloeskonto_default_nr:
+            erloeskonto = KontoModel.objects.filter(
+                wirtschaftsjahr=wirtschaftsjahr,
+                kontonummer=ba_900.erloeskonto_default_nr,
+            ).first()
+        parent_buchung = Buchung.objects.create(
+            objekt=personenkonto.objekt,
+            buchungsart=ba_900,
+            betrag=betrag,
+            soll_konto=bank_sachkonto,
+            haben_konto=erloeskonto,
+            personenkonto=personenkonto,
+            buchungsdatum=buchungsdatum,
+            belegdatum=buchungsdatum,
+            buchungstext=buchungstext or 'Zahlungseingang (kein offener Posten)',
+            wirtschaftsjahr=wirtschaftsjahr,
+            status='festgeschrieben',
+            erstellt_von=user,
+        )
+        return parent_buchung
 
     verbleibend = betrag
 

@@ -17,11 +17,13 @@ from apps.buchhaltung.models import Buchungsart
 
 DEFAULT_CSV = Path(__file__).resolve().parents[5] / 'buchungsarten.csv'
 
-BOOL_MAP = {'true': True, 'false': False, '1': True, '0': False, 'ja': True, 'nein': False}
+BOOL_MAP = {'true': True, 'false': False, '1': True, '0': False, 'ja': True, 'nein': False,
+            'wahr': True, 'falsch': False}
 EINZELABR_VALUES = {'ja', 'nein', 'anteilig'}
 UMLAGE_VALUES = {'pflicht', 'optional', 'gesperrt'}
 BANKKONTO_TYP_VALUES = {'bewirtschaftung', 'ruecklage_nach_index', 'frei', ''}
 BUCHUNGSTYP_VALUES   = {'sachkonto', 'personenkonto', 'kreditor', ''}
+RICHTUNG_VALUES      = {'eingang', 'abgang', ''}
 
 
 def _bool(val: str) -> bool:
@@ -106,6 +108,13 @@ class Command(BaseCommand):
                     fehler += 1
                     continue
 
+                richtung = row.get('richtung', '').strip().lower() or None
+                if richtung and richtung not in RICHTUNG_VALUES:
+                    self.stdout.write(self.style.ERROR(
+                        f'  Zeile {i} ({nr}): richtung "{richtung}" ungültig — erwartet: eingang/abgang'))
+                    fehler += 1
+                    continue
+
                 try:
                     defaults = dict(
                         kuerzel=row.get('kuerzel', '').strip(),
@@ -126,6 +135,7 @@ class Command(BaseCommand):
                         erloeskonto_default_nr=row.get('erloeskonto_default_nr', '').strip(),
                         bankkonto_typ=bankkonto_typ,
                         buchungstyp=buchungstyp,
+                        richtung=richtung,
                     )
                 except ValueError as e:
                     self.stdout.write(self.style.ERROR(f'  Zeile {i} ({nr}): {e}'))

@@ -3,8 +3,10 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { buchhaltungApi } from '../../api/buchhaltung'
 import { objekteApi } from '../../api/objekte'
+import { wirtschaftsjahreApi } from '../../api/wirtschaftsjahre'
 import { Badge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
+import type { Wirtschaftsjahr } from '../../types'
 
 const EUR = (v: number | string) =>
   Number(v).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })
@@ -23,9 +25,22 @@ export function Buchungsjournal() {
   const [searchParams] = useSearchParams()
   const [objektId, setObjektId] = useState(searchParams.get('objekt') ?? '')
   const [statusFilter, setStatusFilter] = useState('')
+  const [selectedWjId, setSelectedWjId] = useState<string | null>(null)
   const qc = useQueryClient()
 
   const { data: objekte } = useQuery({ queryKey: ['objekte'], queryFn: objekteApi.list })
+
+  const { data: wirtschaftsjahre = [] } = useQuery({
+    queryKey: ['wirtschaftsjahre', objektId],
+    queryFn: () => wirtschaftsjahreApi.list(objektId ? { objekt: objektId } : undefined),
+    select: (wjs: Wirtschaftsjahr[]) => [...wjs].sort((a, b) => b.jahr - a.jahr),
+  })
+
+  const aktivesWj: Wirtschaftsjahr | undefined = (() => {
+    if (!wirtschaftsjahre.length) return undefined
+    if (selectedWjId) return wirtschaftsjahre.find(w => w.id === selectedWjId)
+    return wirtschaftsjahre.find(w => w.status === 'offen') ?? wirtschaftsjahre[0]
+  })()
 
   const { data: offeneStapel } = useQuery({
     queryKey: ['buchungsstapel', objektId, 'offen'],
@@ -59,12 +74,15 @@ export function Buchungsjournal() {
     onError: () => alert('Neu buchen fehlgeschlagen.'),
   })
 
+  const wjId = aktivesWj?.id
+
   const { data: buchungen, isLoading } = useQuery({
-    queryKey: ['buchungen', objektId, statusFilter],
+    queryKey: ['buchungen', objektId, statusFilter, wjId],
     queryFn: () => {
       const params: Record<string, string> = {}
       if (objektId) params.objekt = objektId
       if (statusFilter) params.status = statusFilter
+      if (wjId) params.wirtschaftsjahr = wjId
       return buchhaltungApi.buchungen(params)
     },
   })
@@ -94,13 +112,26 @@ export function Buchungsjournal() {
         <select
           className="rounded border border-gray-300 px-3 py-2 text-sm"
           value={objektId}
-          onChange={e => setObjektId(e.target.value)}
+          onChange={e => { setObjektId(e.target.value); setSelectedWjId(null) }}
         >
           <option value="">Alle Objekte</option>
           {objekte?.map(o => (
             <option key={o.id} value={o.id}>{o.objektnummer} – {o.bezeichnung}</option>
           ))}
         </select>
+        {wirtschaftsjahre.length > 0 && (
+          <select
+            className="rounded border border-gray-300 px-3 py-2 text-sm"
+            value={aktivesWj?.id ?? ''}
+            onChange={e => setSelectedWjId(e.target.value || null)}
+          >
+            {wirtschaftsjahre.map(wj => (
+              <option key={wj.id} value={wj.id}>
+                {wj.jahr}{wj.status === 'abgeschlossen' ? ' (abgeschlossen)' : ''}
+              </option>
+            ))}
+          </select>
+        )}
         <select
           className="rounded border border-gray-300 px-3 py-2 text-sm"
           value={statusFilter}

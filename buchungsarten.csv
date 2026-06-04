@@ -1,34 +1,47 @@
-nr;kuerzel;bezeichnung;einzelabrechnung;gesamtabrechnung;ruecklagen_relevant;umlage;beleg_pflicht;beschluss_pflicht;vier_augen_schwelle;sperre_nach_jahresabschluss;system_buchungsart;default_konto_soll_pattern;default_konto_haben_pattern;aktiv;tilgungs_prioritaet;erloeskonto_default_nr;bankkonto_typ;buchungstyp
-001;SAVO-S;Saldenvortrag Sachkonten;nein;False;False;gesperrt;False;False;;True;True;;;True;;;;sachkonto
-002;SAVO-P;Saldenvortrag Personenkonten;nein;False;False;gesperrt;False;False;;True;True;;;True;;;;personenkonto
-003;SAVO-K;Saldenvortrag Kreditoren;nein;False;False;gesperrt;False;False;;True;True;;;True;;;;kreditor
-004;SAVO-B;Saldenvortrag Bankkonten;nein;False;False;gesperrt;False;False;;True;True;;;True;;;;sachkonto
-010;HGV;Sollstellung Hausgeldvorauszahlung;ja;True;False;gesperrt;False;False;;True;True;;;True;;;;personenkonto
-011;RLZ;Sollstellung Rücklagenzuführung;nein;False;True;gesperrt;False;False;;True;True;.911;;True;;;;personenkonto
-012;SU;Sollstellung Sonderumlage;ja;True;False;pflicht;True;True;5000;True;True;;;True;;;;personenkonto
-013;NZJA;Nachzahlung aus Jahresabrechnung;nein;False;False;gesperrt;False;False;;True;True;;;True;;;;personenkonto
-014;GJA;Guthaben aus Jahresabrechnung;nein;False;False;gesperrt;False;False;;True;True;;;True;;;;personenkonto
-015;MIETE;Miete (ZH/SEV);nein;False;False;gesperrt;False;False;;True;True;;;True;;;;personenkonto
-016;NKVZ;Nebenkostenvorauszahlung (ZH/SEV);nein;False;False;gesperrt;False;False;;True;True;;;True;;;;personenkonto
-020;EING-P;Eingang Personenkonto (Zahlung);nein;False;False;gesperrt;False;False;;True;False;;;True;;;;personenkonto
-021;AUSG-P;Ausgang Personenkonto (Erstattung);nein;False;False;gesperrt;False;False;;True;False;;;True;;;;personenkonto
-022;UMB-P;Umbuchung Personenkonto;nein;False;False;gesperrt;False;False;;True;False;;;True;;;;personenkonto
-023;MAHNG;Mahngebühr;nein;False;False;gesperrt;False;False;;True;True;;;True;;;;personenkonto
-024;VERZZ;Verzugszinsen (§ 288 BGB);nein;False;False;gesperrt;False;False;;True;True;;;True;;;;
-040;SACH-A;Sachkontenbuchung Aufwand (Bewirtschaftung);ja;True;False;pflicht;True;False;10000;True;False;;;True;;;;sachkonto
-041;SACH-AR;Sachkontenbuchung Aufwand (Rücklage);nein;False;True;gesperrt;True;True;5000;True;False;;.911;True;;;;sachkonto
-042;SACH-E;Sachkontenbuchung Ertrag (Bewirtschaftung);ja;True;False;optional;True;False;;True;False;;;True;;;;sachkonto
-043;SACH-ER;Sachkontenbuchung Ertrag (Rücklage / Zinsen);nein;False;True;gesperrt;True;False;;True;False;;.911;True;;;;sachkonto
-044;SACH-U;Sachkonten-Umbuchung (nicht abr.-relevant);nein;False;False;gesperrt;False;False;;True;False;;;True;;;;sachkonto
-050;EING-K;Eingang Kreditor (Rechnungseingang);ja;True;False;optional;True;False;;True;False;;;True;;;;kreditor
-051;AUSG-K;Ausgang Kreditor (Zahlung);nein;False;False;gesperrt;False;False;;True;False;;;True;;;;kreditor
-052;GS-K;Kreditoren-Gutschrift;nein;False;False;gesperrt;True;False;;True;False;;;True;;;;kreditor
-053;SKT-K;Skonto / Rabatt Kreditor;nein;False;False;gesperrt;False;False;;True;False;;;True;;;;kreditor
-080;ARAP-B;ARAP-Bildung;nein;False;False;gesperrt;True;False;;True;False;;;True;;;;sachkonto
-081;ARAP-A;ARAP-Auflösung;ja;True;False;optional;False;False;;True;False;;;True;;;;sachkonto
-082;PRAP-B;PRAP-Bildung;nein;False;False;gesperrt;True;False;;True;False;;;True;;;;sachkonto
-083;PRAP-A;PRAP-Auflösung;ja;True;False;optional;False;False;;True;False;;;True;;;;sachkonto
-090;JA-ABS;Jahresabschluss-Buchung;nein;False;False;gesperrt;True;False;;True;True;;;True;;;;sachkonto
-091;RL-ENT;Rücklagenentwicklung (Jahresbuchung);nein;False;True;gesperrt;True;False;;True;True;;.911;True;;;;sachkonto
-098;STO;Storno (spiegelt Original-BA);nein;False;False;gesperrt;True;False;;True;False;;;True;;;;
-099;KOR;Korrekturbuchung (spiegelt Original-BA);nein;False;False;gesperrt;True;False;;True;False;;;True;;;;
+nr;kuerzel;bezeichnung;buchungstyp;aktiv;richtung
+1;SAVO-SK;Saldenvortrag Sachkonten;sachkonto;WAHR;
+2;SAVO-PK;Saldenvortrag Personenkonten;personenkonto;WAHR;
+3;SAVO-KR;Saldenvortrag Kreditoren;kreditor;WAHR;
+4;SAVO-BK;Saldenvortrag Bankkonten;sachkonto;WAHR;
+10;HGV;Sollstellung Hausgeldvorauszahlung;personenkonto;WAHR;eingang
+11;RLZ;Sollstellung Rücklagenzuführung;personenkonto;WAHR;eingang
+12;SU;Sonderumlage;personenkonto;WAHR;eingang
+13;NZJA;Nachzahlung aus Jahresabrechnung;personenkonto;WAHR;eingang
+14;GJA;Guthaben aus Jahresabrechnung;personenkonto;WAHR;abgang
+15;MIETE;Miete (ZH/SEV);;WAHR;
+16;NKVZ;Nebenkostenvorauszahlung (ZH/SEV);;WAHR;
+20;EING-P;Eingang Personenkonto (Zahlung);personenkonto;WAHR;eingang
+21;AUSG-P;Ausgang Personenkonto (Erstattung);personenkonto;WAHR;abgang
+22;UMB-P;Umbuchung Personenkonto;personenkonto;WAHR;
+23;MAHNG;Mahngebühr;personenkonto;WAHR;eingang
+24;VERZZ;Verzugszinsen (§ 288 BGB);personenkonto;WAHR;eingang
+40;SACH-KTO;Sachkontenbuchung;sachkonto;WAHR;
+41;SACH-AR;Sachkontenbuchung Aufwand (Rücklage);sachkonto;False;
+42;SACH-E;Sachkontenbuchung Ertrag (Bewirtschaftung);sachkonto;False;
+43;SACH-ER;Sachkontenbuchung Ertrag (Rücklage, Zinsen);sachkonto;False;
+44;SACH-U;Sachkonten-Umbuchung (nicht abr.-relevant);sachkonto;False;
+50;EING-K;Eingang Kreditor (Rechnungseingang);kreditor;WAHR;
+51;AUSG-K;Ausgang Kreditor (Zahlung);kreditor;WAHR;
+52;GS-K;Kreditoren-Gutschrift;kreditor;WAHR;
+53;SKT-K;Skonto / Rabatt Kreditor;kreditor;WAHR;
+80;ARAP-B;ARAP-Bildung;sachkonto;WAHR;
+81;ARAP-A;ARAP-Auflösung;sachkonto;WAHR;
+82;PRAP-B;PRAP-Bildung;sachkonto;WAHR;
+83;PRAP-A;PRAP-Auflösung;sachkonto;WAHR;
+90;JA-ABS;Jahresabschluss-Buchung;;WAHR;
+91;RL-ENT;Rücklagenentwicklung (Jahresbuchung);;WAHR;
+98;STO;Storno (spiegelt Original-BA);;WAHR;
+99;KOR;Korrekturbuchung (spiegelt Original-BA);;WAHR;
+900;HG;Hausgeld;;WAHR;
+911;RL1;Rücklage I;;WAHR;
+912;RL2;Rücklage II;;WAHR;
+913;RL3;Rücklage III;;WAHR;
+914;RL4;Rücklage IV;;WAHR;
+915;RL5;Rücklage V;;WAHR;
+916;RL6;Rücklage VI;;WAHR;
+917;RL7;Rücklage VII;;WAHR;
+918;RL8;Rücklage VIII;;WAHR;
+930;SU;Sonderumlage;;WAHR;
+940;MAH;Mahngebühren;;WAHR;
+941;RLG;Rücklastschriftgebühren;;WAHR;
+950;ABR;Abrechnung Vorjahr;;WAHR;

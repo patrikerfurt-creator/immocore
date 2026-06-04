@@ -195,6 +195,14 @@ class Rechnung(models.Model):
         default=False,
         help_text='Zahlung erfolgt per SEPA-Lastschrift (Abbuchung durch Kreditor)',
     )
+    ist_gutschrift = models.BooleanField(
+        default=False,
+        help_text=(
+            'Gutschrift / Guthaben: Lieferant schuldet der WEG Geld. '
+            'betrag_brutto bleibt positiv — Buchungslogik wird invertiert: '
+            'Phase 1 Soll 70xxx / Haben 15900, Phase 2 Soll 15900 / Haben 55xxx + Soll 13600 / Haben 70xxx.'
+        ),
+    )
 
     class Meta:
         verbose_name = 'Rechnung'
@@ -208,6 +216,26 @@ class Rechnung(models.Model):
             else self.lieferant_name or '?'
         )
         return f"Rechnung {self.rechnungsnummer or self.id} — {name} | {self.betrag_brutto} € [{self.status}]"
+
+
+class RechnungSplitPosition(models.Model):
+    """Split-Positionen einer Rechnung auf mehrere Aufwandskonten."""
+    rechnung       = models.ForeignKey(Rechnung, on_delete=models.CASCADE, related_name='splits')
+    aufwandskonto  = models.ForeignKey(
+        Konto, on_delete=models.PROTECT, related_name='+',
+        help_text='Aufwandskonto dieser Split-Position',
+    )
+    betrag         = models.DecimalField(max_digits=12, decimal_places=2)
+    position       = models.PositiveIntegerField(default=0, help_text='Reihenfolge (0-basiert)')
+
+    class Meta:
+        app_label = 'rechnungen'
+        ordering  = ['position', 'id']
+        verbose_name        = 'Rechnung-Split-Position'
+        verbose_name_plural = 'Rechnung-Split-Positionen'
+
+    def __str__(self):
+        return f"Split {self.position}: {self.aufwandskonto} | {self.betrag} €"
 
 
 class KreditorRegel(models.Model):

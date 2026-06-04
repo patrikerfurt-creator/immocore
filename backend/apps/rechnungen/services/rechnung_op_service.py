@@ -1,8 +1,13 @@
 """
 OP-Buchung Phase 1 – Rechnungsfreigabe (§28 WEG).
 
-Phase 1 (Freigabe):  Soll 15900 (Schwebende ER) / Haben Kreditorenkonto (70xxx)
-                     + KreditorOP mit Nummer JJNNNNNN (z.B. 26000001)
+Normale Rechnung:
+  Phase 1 (Freigabe):  Soll 15900 (Schwebende ER) / Haben Kreditorenkonto (70xxx)
+                       KreditorOP.betrag_ursprung = +Betrag (WEG schuldet Lieferant)
+
+Gutschrift (ist_gutschrift=True):
+  Phase 1 (Freigabe):  Soll Kreditorenkonto (70xxx) / Haben 15900 (Schwebende ER)
+                       KreditorOP.betrag_ursprung = -Betrag (Lieferant schuldet WEG)
 
 Phase 2 (Zahlung):   → rechnung_zahlung_service
 """
@@ -74,17 +79,18 @@ def get_or_create_kreditor_konto(kreditor, objekt) -> Konto:
 
 def _validiere_aufwandskonto(konto: Konto, objekt_id) -> None:
     nr = konto.kontonummer
-    if not (KONTO_BEREICH_AUFWAND_VON <= nr <= KONTO_BEREICH_AUFWAND_BIS):
+    # Erlaubt: direktes_buchen=True (für alle Wege freigegeben)
+    #       ODER Aufwandsbereich 50000–55999 (nur System, aber gültiges Aufwandskonto)
+    in_aufwandsbereich = KONTO_BEREICH_AUFWAND_VON <= nr <= KONTO_BEREICH_AUFWAND_BIS
+    if not (konto.direktes_buchen or in_aufwandsbereich):
         raise ValidationError(
-            f"Aufwandskonto {nr} liegt außerhalb {KONTO_BEREICH_AUFWAND_VON}–{KONTO_BEREICH_AUFWAND_BIS}."
+            f"Aufwandskonto {nr} ist weder im Aufwandsbereich "
+            f"{KONTO_BEREICH_AUFWAND_VON}–{KONTO_BEREICH_AUFWAND_BIS} "
+            f"noch als 'Direktes Buchen' freigegeben."
         )
-    if konto.kontoart != "standard":
+    if konto.kontoart == "summierung":
         raise ValidationError(
-            f"Aufwandskonto {nr} ist kein Standardkonto (ist: {konto.kontoart})."
-        )
-    if konto.direktes_buchen:
-        raise ValidationError(
-            f"Aufwandskonto {nr} ist als 'Direktes Buchen' markiert und nicht für den OP-Workflow zulässig."
+            f"Aufwandskonto {nr} ist ein Summierungskonto und darf nicht direkt bebucht werden."
         )
     konto_objekt_id = konto.wirtschaftsjahr.objekt_id if konto.wirtschaftsjahr_id else None
     if str(konto_objekt_id) != str(objekt_id):
@@ -92,7 +98,7 @@ def _validiere_aufwandskonto(konto: Konto, objekt_id) -> None:
 
 
 @transaction.atomic
-def rechnung_freigeben(rechnung, aufwandskonto: Konto, freigegeben_von=None):
+def rechnung_freigeben(rechnung, aufwandskonto: Konto, freigegeben_von=None, buchungsdatum: date = None):
     """
     Phase 1: OP-Buchung anlegen und KreditorOP erstellen.
 
@@ -100,6 +106,7 @@ def rechnung_freigeben(rechnung, aufwandskonto: Konto, freigegeben_von=None):
     KreditorOP:   fortlaufende Nummer JJNNNNNN (z.B. 26000001)
 
     freigegeben_von darf None sein (System-Auto-Buchung via Erkennungs-Pipeline).
+    buchungsdatum: Nachbuchung in vergangenes WJ — defaults to today.
     """
     if rechnung.op_buchung_id:
         raise ValidationError("OP-Buchung existiert bereits.")
@@ -117,11 +124,25 @@ def rechnung_freigeben(rechnung, aufwandskonto: Konto, freigegeben_von=None):
     if not rechnung.kreditor_id:
         raise ValidationError("Kein Kreditor zugeordnet – Freigabe nicht möglich.")
 
-    _validiere_aufwandskonto(aufwandskonto, rechnung.objekt_id)
+    hat_splits = rechnung.splits.exists()
+    if aufwandskonto is not None:
+        _validiere_aufwandskonto(aufwandskonto, rechnung.objekt_id)
+    elif not hat_splits:
+        raise ValidationError("Kein Aufwandskonto gesetzt und keine Split-Positionen vorhanden – Freigabe nicht möglich.")
 
-    konto_15900 = Konto.objects.select_related('wirtschaftsjahr').filter(
-        wirtschaftsjahr__objekt_id=rechnung.objekt_id, kontonummer=KONTO_SCHWEBENDE_ER
-    ).first()
+    heute = buchungsdatum or date.today()
+
+    konto_15900 = (
+        Konto.objects.select_related('wirtschaftsjahr').filter(
+            wirtschaftsjahr__objekt_id=rechnung.objekt_id,
+            kontonummer=KONTO_SCHWEBENDE_ER,
+            wirtschaftsjahr__jahr=heute.year,
+        ).first()
+        or Konto.objects.select_related('wirtschaftsjahr').filter(
+            wirtschaftsjahr__objekt_id=rechnung.objekt_id,
+            kontonummer=KONTO_SCHWEBENDE_ER,
+        ).order_by('-wirtschaftsjahr__jahr').first()
+    )
     if not konto_15900:
         raise ValidationError(
             f"Konto {KONTO_SCHWEBENDE_ER} (Schwebende ER) ist im Objekt nicht angelegt."
@@ -130,17 +151,31 @@ def rechnung_freigeben(rechnung, aufwandskonto: Konto, freigegeben_von=None):
     kreditor_konto = get_or_create_kreditor_konto(rechnung.kreditor, rechnung.objekt)
 
     kreditor_str = rechnung.kreditor.name
-    heute = date.today()
     wj = konto_15900.wirtschaftsjahr
+    ist_gutschrift = getattr(rechnung, 'ist_gutschrift', False)
+
+    # Buchungsrichtung: bei Gutschrift Soll/Haben invertiert
+    if ist_gutschrift:
+        # Gutschrift: Lieferant schuldet WEG → Forderung
+        # Soll 70xxx (Kreditor) / Haben 15900 (Schwebende ER)
+        soll_konto  = kreditor_konto
+        haben_konto = konto_15900
+        buchungstext_prefix = "GS"   # Gutschrift
+    else:
+        # Normal: WEG schuldet Lieferant → Verbindlichkeit
+        # Soll 15900 (Schwebende ER) / Haben 70xxx (Kreditor)
+        soll_konto  = konto_15900
+        haben_konto = kreditor_konto
+        buchungstext_prefix = "ER"   # Eingangsrechnung
 
     buchung = Buchung.objects.create(
         objekt=rechnung.objekt,
-        soll_konto=konto_15900,
-        haben_konto=kreditor_konto,
+        soll_konto=soll_konto,
+        haben_konto=haben_konto,
         betrag=rechnung.betrag_brutto,
         buchungsdatum=heute,
         buchungstext=(
-            f"ER {rechnung.rechnungsnummer or rechnung.dateiname or str(rechnung.id)[:8]}"
+            f"{buchungstext_prefix} {rechnung.rechnungsnummer or rechnung.dateiname or str(rechnung.id)[:8]}"
             f" / {kreditor_str}"
         ),
         belegnr=_naechste_belegnr(heute),
@@ -151,6 +186,8 @@ def rechnung_freigeben(rechnung, aufwandskonto: Konto, freigegeben_von=None):
         erstellt_von=freigegeben_von,
     )
 
+    # KreditorOP: bei Gutschrift negativer Betrag (Forderung gegen Lieferant)
+    op_betrag = -rechnung.betrag_brutto if ist_gutschrift else rechnung.betrag_brutto
     op_nummer = _naechste_op_nummer()
     KreditorOP.objects.create(
         op_nummer=op_nummer,
@@ -158,12 +195,18 @@ def rechnung_freigeben(rechnung, aufwandskonto: Konto, freigegeben_von=None):
         kreditor=rechnung.kreditor,
         objekt=rechnung.objekt,
         buchung=buchung,
-        betrag_ursprung=rechnung.betrag_brutto,
-        betrag_offen=rechnung.betrag_brutto,
+        betrag_ursprung=op_betrag,
+        betrag_offen=op_betrag,
         faellig_ab=rechnung.faelligkeitsdatum or heute,
     )
 
-    rechnung.aufwandskonto = aufwandskonto
+    if aufwandskonto is not None:
+        rechnung.aufwandskonto = aufwandskonto
+    elif hat_splits:
+        # Bei Splits das erste Split-Konto als Hauptaufwandskonto setzen (für Anzeige)
+        erster_split = rechnung.splits.order_by('position').first()
+        if erster_split:
+            rechnung.aufwandskonto = erster_split.aufwandskonto
     rechnung.op_buchung = buchung
     rechnung.status = "gebucht"
     rechnung.save(update_fields=["aufwandskonto", "op_buchung", "status"])

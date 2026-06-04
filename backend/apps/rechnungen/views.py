@@ -102,8 +102,12 @@ class KreditorViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'], url_path='kontoauszug')
     def kontoauszug(self, request, pk=None):
-        """Kreditorenkonto: Rechnungen + WKZ-OPs eines Kreditors."""
-        from apps.buchhaltung.models import KreditorOP
+        """Kreditorenkonto: Rechnungen + WKZ-OPs + Buchungszeilen (Soll/Haben) eines Kreditors."""
+        from decimal import Decimal
+        from django.db.models import Q
+        from apps.buchhaltung.models import KreditorOP, Buchung
+        from apps.konten.models import Konto
+
         kreditor = self.get_object()
         objekt_id = request.query_params.get('objekt')
         jahr = request.query_params.get('jahr')
@@ -177,6 +181,57 @@ class KreditorViewSet(viewsets.ModelViewSet):
 
         positionen.sort(key=lambda p: p['faelligkeitsdatum'] or '', reverse=True)
 
+        # --- Buchungszeilen (Soll/Haben) für das Kreditorenkonto (70xxx) ---
+        buchungen_list = []
+        kreditorkonto_nr = kreditor.kreditorennummer or ''
+        buchungen_saldo = 0.0
+
+        if kreditorkonto_nr:
+            konto_qs = Konto.objects.filter(kontonummer=kreditorkonto_nr)
+            if objekt_id:
+                konto_qs = konto_qs.filter(wirtschaftsjahr__objekt_id=objekt_id)
+            konto_ids = set(konto_qs.values_list('id', flat=True))
+
+            if konto_ids:
+                bu_qs = Buchung.objects.filter(
+                    Q(soll_konto_id__in=konto_ids) | Q(haben_konto_id__in=konto_ids)
+                ).exclude(status='storniert')
+                if jahr:
+                    bu_qs = bu_qs.filter(buchungsdatum__year=int(jahr))
+                bu_qs = bu_qs.select_related(
+                    'soll_konto', 'haben_konto'
+                ).order_by('buchungsdatum', 'erstellt_am')
+
+                saldo = Decimal('0.00')
+                for b in bu_qs:
+                    ist_soll = b.soll_konto_id in konto_ids
+                    if ist_soll:
+                        soll = b.betrag
+                        haben = Decimal('0.00')
+                        gegenkonto = (
+                            f"{b.haben_konto.kontonummer} {b.haben_konto.kontoname}"
+                            if b.haben_konto else '—'
+                        )
+                    else:
+                        soll = Decimal('0.00')
+                        haben = b.betrag
+                        gegenkonto = (
+                            f"{b.soll_konto.kontonummer} {b.soll_konto.kontoname}"
+                            if b.soll_konto else '—'
+                        )
+                    saldo += soll - haben
+                    buchungen_list.append({
+                        'id': str(b.id),
+                        'bu_nr': b.belegnr or f'BU-{str(b.id)[:8].upper()}',
+                        'buchungsdatum': str(b.buchungsdatum),
+                        'buchungstext': b.buchungstext,
+                        'gegenkonto': gegenkonto,
+                        'soll': float(soll) if soll else None,
+                        'haben': float(haben) if haben else None,
+                        'saldo': float(saldo),
+                    })
+                buchungen_saldo = float(saldo)
+
         return Response({
             'kreditor': {
                 'id': str(kreditor.id),
@@ -184,7 +239,10 @@ class KreditorViewSet(viewsets.ModelViewSet):
                 'iban': kreditor.iban or '',
                 'ort': kreditor.ort or '',
             },
+            'kreditorkonto_nr': kreditorkonto_nr,
             'positionen': positionen,
+            'buchungen': buchungen_list,
+            'buchungen_saldo': buchungen_saldo,
         })
 
 
@@ -229,6 +287,7 @@ class RechnungViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='freigeben')
     def freigeben(self, request, pk=None):
+        from datetime import date, datetime
         from apps.konten.models import Konto
         from .services.rechnung_op_service import rechnung_freigeben as op_freigeben
         from django.core.exceptions import ValidationError as DjangoValidationError
@@ -241,6 +300,12 @@ class RechnungViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        buchungsdatum_str = request.data.get('buchungsdatum')
+        try:
+            buchungsdatum = datetime.strptime(buchungsdatum_str, '%Y-%m-%d').date() if buchungsdatum_str else None
+        except ValueError:
+            buchungsdatum = None
+
         lernen = request.data.get('lernen', True)
         neues_konto_id = request.data.get('aufwandskonto_id')
 
@@ -252,9 +317,10 @@ class RechnungViewSet(viewsets.ModelViewSet):
                     neues_konto = Konto.objects.get(
                         pk=neues_konto_id, wirtschaftsjahr__objekt=rechnung.objekt,
                     )
-                    if not (50000 <= int(neues_konto.kontonummer) <= 55999) or neues_konto.direktes_buchen:
+                    _nr = int(neues_konto.kontonummer)
+                    if not (neues_konto.direktes_buchen or 50000 <= _nr <= 55999):
                         return Response(
-                            {'error': 'Aufwandskonto muss im Bereich 50000–55999 liegen und direktes_buchen=False haben'},
+                            {'error': 'Aufwandskonto muss direktes_buchen=True haben oder im Bereich 50000–55999 liegen'},
                             status=status.HTTP_400_BAD_REQUEST,
                         )
                     rechnung.aufwandskonto = neues_konto
@@ -263,13 +329,13 @@ class RechnungViewSet(viewsets.ModelViewSet):
                     return Response({'error': 'Aufwandskonto nicht gefunden oder gehört nicht zu diesem Objekt'}, status=status.HTTP_400_BAD_REQUEST)
             try:
                 aufwandskonto = rechnung.aufwandskonto
-                op_freigeben(rechnung, aufwandskonto, request.user)
+                op_freigeben(rechnung, aufwandskonto, request.user, buchungsdatum=buchungsdatum)
             except DjangoValidationError as exc:
                 return Response({'error': exc.message}, status=status.HTTP_400_BAD_REQUEST)
         elif rechnung.aufwandskonto_id:
             # Aufwandskonto bereits gesetzt — direkt OP-Buchung durchführen
             try:
-                op_freigeben(rechnung, rechnung.aufwandskonto, request.user)
+                op_freigeben(rechnung, rechnung.aufwandskonto, request.user, buchungsdatum=buchungsdatum)
             except DjangoValidationError as exc:
                 return Response({'error': exc.message}, status=status.HTTP_400_BAD_REQUEST)
         else:
@@ -487,6 +553,66 @@ class RechnungViewSet(viewsets.ModelViewSet):
         )
         return Response(RechnungSerializer(rechnung, context={'request': request}).data)
 
+    @action(detail=True, methods=['post'], url_path='splits')
+    def splits_speichern(self, request, pk=None):
+        """
+        Speichert Split-Positionen für eine Rechnung (ersetzt alle vorhandenen).
+        Body: { "positionen": [{"aufwandskonto": "<uuid>", "betrag": "150.00"}, ...] }
+        Mindestens 2 Positionen, Summe muss = betrag_brutto.
+        """
+        from decimal import Decimal, InvalidOperation
+        from django.db import transaction
+        from apps.konten.models import Konto
+        from .models import RechnungSplitPosition
+        from .serializers import RechnungSplitPositionSerializer
+
+        rechnung = self.get_object()
+        positionen = request.data.get('positionen', [])
+
+        if len(positionen) < 2:
+            return Response({'error': 'Mindestens 2 Split-Positionen erforderlich.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        summe = Decimal('0.00')
+        for pos in positionen:
+            try:
+                b = Decimal(str(pos.get('betrag', '')))
+                if b <= 0:
+                    raise ValueError
+                summe += b
+            except (ValueError, InvalidOperation):
+                return Response({'error': 'Ungültiger Betrag in Split-Position.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if rechnung.betrag_brutto:
+            if abs(summe - Decimal(str(rechnung.betrag_brutto))) > Decimal('0.005'):
+                return Response(
+                    {'error': f'Split-Summe {summe} ≠ Rechnungsbetrag {rechnung.betrag_brutto}.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        with transaction.atomic():
+            rechnung.splits.all().delete()
+            for i, pos in enumerate(positionen):
+                try:
+                    konto = Konto.objects.get(pk=pos['aufwandskonto'])
+                except (Konto.DoesNotExist, KeyError):
+                    return Response({'error': f'Konto {pos.get("aufwandskonto")} nicht gefunden.'}, status=status.HTTP_400_BAD_REQUEST)
+                RechnungSplitPosition.objects.create(
+                    rechnung=rechnung,
+                    aufwandskonto=konto,
+                    betrag=Decimal(str(pos['betrag'])),
+                    position=i,
+                )
+
+        serializer = RechnungSplitPositionSerializer(rechnung.splits.all(), many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['delete'], url_path='splits/loeschen')
+    def splits_loeschen(self, request, pk=None):
+        """Löscht alle Split-Positionen einer Rechnung."""
+        rechnung = self.get_object()
+        count, _ = rechnung.splits.all().delete()
+        return Response({'geloescht': count})
+
     @action(detail=True, methods=['get'], url_path='pdf')
     def pdf(self, request, pk=None):
         """PDF-Datei aus dem Dateisystem liefern."""
@@ -675,9 +801,9 @@ class RechnungViewSet(viewsets.ModelViewSet):
                 nr = int(aufwandskonto.kontonummer)
             except (ValueError, TypeError):
                 nr = 0
-            if not (50000 <= nr <= 55999) or aufwandskonto.direktes_buchen:
+            if not (aufwandskonto.direktes_buchen or 50000 <= nr <= 55999):
                 return Response(
-                    {'error': 'Aufwandskonto muss im Bereich 50000–55999 liegen und direktes_buchen=False haben'},
+                    {'error': 'Aufwandskonto muss direktes_buchen=True haben oder im Bereich 50000–55999 liegen'},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -825,9 +951,9 @@ class RechnungViewSet(viewsets.ModelViewSet):
             nr = int(aufwandskonto.kontonummer)
         except (ValueError, TypeError):
             nr = 0
-        if not (50000 <= nr <= 55999) or aufwandskonto.direktes_buchen:
+        if not (aufwandskonto.direktes_buchen or 50000 <= nr <= 55999):
             return Response(
-                {'error': 'Aufwandskonto muss im Bereich 50000–55999 liegen und direktes_buchen=False haben'},
+                {'error': 'Aufwandskonto muss direktes_buchen=True haben oder im Bereich 50000–55999 liegen'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

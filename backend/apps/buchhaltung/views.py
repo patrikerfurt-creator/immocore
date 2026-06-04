@@ -61,7 +61,7 @@ class BuchungsartViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=False, methods=['get'], url_path='manuell-waehlbar')
     def manuell_waehlbar(self, request):
         """Manuell wählbare BAs, optional gefiltert nach ?buchungstyp=sachkonto|personenkonto|kreditor."""
-        qs = self.get_queryset().filter(system_buchungsart=False)
+        qs = self.get_queryset().filter(system_buchungsart=False, aktiv=True)
         buchungstyp = request.query_params.get('buchungstyp')
         if buchungstyp:
             qs = qs.filter(buchungstyp=buchungstyp)
@@ -1545,6 +1545,8 @@ class HausgeldSollstellungViewSet(viewsets.ReadOnlyModelViewSet):
             qs = qs.filter(objekt_id=objekt_id)
         if ev_id := p.get('eigentumsverhaeltnis'):
             qs = qs.filter(eigentumsverhaeltnis_id=ev_id)
+        if pk_id := p.get('personenkonto'):
+            qs = qs.filter(eigentumsverhaeltnis__personenkonto_id=pk_id)
         if s := p.get('status'):
             qs = qs.filter(status_cached=s)
         if typ := p.get('typ'):

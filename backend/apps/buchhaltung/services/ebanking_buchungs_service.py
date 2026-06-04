@@ -32,20 +32,29 @@ def _buchungstext(ku, gk, ev, kr) -> str:
     return ' — '.join(p for p in parts if p) or 'Banktransaktion'
 
 
-def _ermittle_wirtschaftsjahr(ku):
-    """Gibt das passende Wirtschaftsjahr-Objekt für Buchungsdatum + Objekt zurück."""
+def _ermittle_wirtschaftsjahr_fuer_datum(objekt, datum):
+    """Gibt das Wirtschaftsjahr zurück das zum angegebenen Datum passt (nach Jahr)."""
     from apps.objekte.models import Wirtschaftsjahr
-    if not ku.objekt or not ku.buchungsdatum:
+    if not objekt or not datum:
         return None
     return (
-        Wirtschaftsjahr.objects
-        .filter(objekt=ku.objekt, jahr=ku.buchungsdatum.year)
-        .first()
+        Wirtschaftsjahr.objects.filter(objekt=objekt, jahr=datum.year).first()
+        or Wirtschaftsjahr.objects.filter(objekt=objekt, status='offen').order_by('-jahr').first()
+        or Wirtschaftsjahr.objects.filter(objekt=objekt).order_by('-jahr').first()
     )
 
 
+def _ermittle_wirtschaftsjahr(ku):
+    """Gibt das passende Wirtschaftsjahr-Objekt für Buchungsdatum + Objekt zurück."""
+    return _ermittle_wirtschaftsjahr_fuer_datum(ku.objekt, ku.buchungsdatum) if ku.objekt else None
+
+
 def _ermittle_bank_sachkonto(ku):
-    """Findet Sachkonto 18xxx für den Bankabgang/-eingang."""
+    """
+    Findet Sachkonto 18xxx für den Bankabgang/-eingang.
+    Wählt das Konto aus dem Wirtschaftsjahr, das zum Buchungsdatum passt.
+    Fallback: neuestes aktives Wirtschaftsjahr.
+    """
     from apps.konten.models import Konto
 
     if ku.objekt is None:
@@ -56,12 +65,21 @@ def _ermittle_bank_sachkonto(ku):
     else:
         kontonummern = ['18000', '18911']
 
+    buchungs_jahr = ku.buchungsdatum.year if ku.buchungsdatum else None
+
     for knr in kontonummern:
-        konto = Konto.objects.filter(
+        qs = Konto.objects.filter(
             wirtschaftsjahr__objekt=ku.objekt,
             kontonummer=knr,
             aktiv=True,
-        ).order_by('-wirtschaftsjahr__jahr').first()
+        )
+        # Zuerst passendes WJ-Jahr versuchen
+        if buchungs_jahr:
+            konto = qs.filter(wirtschaftsjahr__jahr=buchungs_jahr).first()
+            if konto:
+                return konto
+        # Fallback: neuestes WJ
+        konto = qs.order_by('-wirtschaftsjahr__jahr').first()
         if konto:
             return konto
     return None
@@ -135,6 +153,7 @@ def verbuche(ku, verbucht_von,
     if notiz:
         buchungstext = f"{buchungstext} — {notiz[:60]}"
 
+    wj = _ermittle_wirtschaftsjahr(ku)
     b = Buchung.objects.create(
         objekt=ku.objekt,
         betrag=betrag_abs,
@@ -142,7 +161,8 @@ def verbuche(ku, verbucht_von,
         haben_konto=haben_konto,
         buchungsdatum=ku.buchungsdatum,
         belegdatum=ku.buchungsdatum,
-        wirtschaftsjahr=_ermittle_wirtschaftsjahr(ku),
+        wirtschaftsjahr=wj,
+        wirtschaftsjahr_nr=wj.jahr if wj else (ku.buchungsdatum.year if ku.buchungsdatum else None),
         buchungstext=buchungstext,
         verwendungszweck=ku.verwendungszweck,
         belegnr=f'EB-{ku.buchungsdatum.strftime("%Y%m%d")}-{str(ku.id)[:8].upper()}',
@@ -247,13 +267,17 @@ def storniere(ku, begruendung: str, storniert_von):
     if not original:
         raise ValidationError("Keine Buchung zum Stornieren gefunden.")
 
+    storno_datum = timezone.now().date()
+    storno_wj = _ermittle_wirtschaftsjahr_fuer_datum(ku.objekt, storno_datum)
     storno = Buchung.objects.create(
         objekt=ku.objekt,
         betrag=original.betrag,
         soll_konto=original.haben_konto,
         haben_konto=original.soll_konto,
-        buchungsdatum=timezone.now().date(),
-        belegdatum=timezone.now().date(),
+        buchungsdatum=storno_datum,
+        belegdatum=storno_datum,
+        wirtschaftsjahr=storno_wj,
+        wirtschaftsjahr_nr=storno_wj.jahr if storno_wj else storno_datum.year,
         buchungstext=f"Storno: {original.buchungstext[:80]} — {begruendung[:60]}",
         status='festgeschrieben',
         storno_von=original,
