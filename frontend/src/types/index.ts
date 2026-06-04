@@ -747,6 +747,7 @@ export interface RechnungList {
   lock_user: string | null
   op_nummer: number | null
   sepa_lastschrift: boolean
+  ist_gutschrift: boolean
 }
 
 export interface Freigabe {
@@ -781,6 +782,15 @@ export interface Rechnung extends RechnungList {
   aufwandskonto: string | null
   op_buchung: string | null
   aufwand_buchung: string | null
+  splits: RechnungSplitPosition[]
+}
+
+export interface RechnungSplitPosition {
+  id: string
+  aufwandskonto: string        // UUID
+  aufwandskonto_label: string
+  betrag: string               // Decimal als String
+  position: number
 }
 
 export interface RechnungsMatchRegel {

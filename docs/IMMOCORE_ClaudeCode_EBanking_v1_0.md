@@ -36,7 +36,7 @@ verbuchte Bankbuchungen** sichtbar sind — mit:
 | 🆕 Diese Spec | Bearbeitungs-Übersicht **importiert → verbucht**, Lernlogik, camt.054-Stub |
 | 🚫 Ausdrücklich nicht hier | EBICS-Anbindung (automatischer Upload/Download) — eigene Spec v2 |
 | 🚫 Ausdrücklich nicht hier | UNC-Ordner-Watchdog (`PollingObserver`) — eigene Spec, falls gewünscht |
-| 🚫 Ausdrücklich nicht hier | camt.054-Verarbeitungslogik (R-Transactions) — nur Abzweig, leerer Stub |
+| 🚫 Ausdrücklich nicht hier | camt.054-Vollverarbeitung — nur Abzweig, leerer Stub (Priorisierung nach Raiffeisenbank-Umstellung auf Vollauflösung, siehe CAMT_BUCHUNGSLOGIK Kap. 3) |
 
 **Bezug:**
 `IMMOCORE_Ausgangsspezifikation_v1.1.docx` (Kap. 8, 9),
@@ -934,7 +934,7 @@ Wenn alle 9 Punkte grün sind, ist diese Spec implementierungs-vollständig.
 | **GoBD: KEIN HARD-DELETE** Weder `BankBuchung` noch `BankMatchRegel` werden je gelöscht. Status-Wechsel nur (`verbucht` → `storniert`, `aktiv` → `veraltet`). |
 | --- |
 
-| **camt.054 IST EIN ABZWEIG, KEINE LOGIK** Datei wird angenommen, geparkt, im UI angezeigt — **nicht** verarbeitet. Der vollständige Pfad (Tilgung zurückrollen, Rücklastschriftgebühr ansetzen) gehört in die Mahnwesen-Spec. Der Hook-Punkt steht bereit. |
+| **camt.054 IST EIN ABZWEIG, KEINE LOGIK (v1.0)** Datei wird angenommen, geparkt, im UI angezeigt — **nicht** verarbeitet. camt.054 deckt MEHR als nur Rücklastschriften: er enthält alle Transaktionstypen (Hausgeld-Eingänge, Lieferantenzahlungen, SEPA-Lastschriften, Sammeleinzüge). Die **Rückkoppelung für Sammeleinzüge** (automatische Zuordnung Zahler → Eigentümer → OP-Tilgung) ist **nur** über camt.054 mit **Vollauflösung** möglich. Voraussetzung: Raiffeisenbank muss auf Detailformat umstellen (derzeit: nur Batchsummary). Vollimplementierung folgt nach Bankumstellung — siehe CAMT_BUCHUNGSLOGIK Kap. 3. |
 | --- |
 
 ---

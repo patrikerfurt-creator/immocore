@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { rechnungenApi } from '../../api/rechnungen'
@@ -7,6 +7,7 @@ import { wirtschaftsjahreApi } from '../../api/wirtschaftsjahre'
 import { wkzApi } from '../../api/wkz'
 import client from '../../api/client'
 import { Button } from '../../components/ui/Button'
+import { SplitEditor } from '../../components/rechnungen/SplitEditor'
 import type { Rechnung, Kreditor, Konto, DublettKandidat, Wirtschaftsjahr } from '../../types'
 
 const EUR = (v: string | number | null) =>
@@ -31,8 +32,11 @@ export default function PrueffallDetail() {
   const [wirtschaftsjahrId, setWirtschaftsjahrId]     = useState('')
   const [aufwandskontoId, setAufwandskontoId]         = useState('')
   const [aufwandskontoAendern, setAufwandskontoAendern] = useState(false)
+  const [splitModus, setSplitModus] = useState(false)
   const [lernen, setLernen]                           = useState(true)
   const [sepaLastschrift, setSepaLastschrift]         = useState(false)
+  const [istGutschrift, setIstGutschrift]             = useState(false)
+  const [buchungsdatum, setBuchungsdatum]             = useState(() => new Date().toISOString().slice(0, 10))
 
   // Editierbare OCR-Felder
   const [lieferantName, setLieferantName]         = useState('')
@@ -53,6 +57,8 @@ export default function PrueffallDetail() {
     setObjektId(prev => prev || rechnung.objekt || '')
     setAufwandskontoId(prev => prev || rechnung.aufwandskonto_id || '')
     setSepaLastschrift(rechnung.sepa_lastschrift ?? false)
+    setIstGutschrift(rechnung.ist_gutschrift ?? false)
+    if ((rechnung.splits?.length ?? 0) >= 2) setSplitModus(true)
     if (rechnung.erkennungs_stufe === '3') {
       setNeuName(prev => prev || rechnung.lieferant_name || '')
       setNeuIban(prev => prev || rechnung.lieferant_iban || '')
@@ -88,6 +94,27 @@ export default function PrueffallDetail() {
     setWirtschaftsjahrId(latest.id)
   }, [wirtschaftsjahre])
 
+  // PDF auto-laden
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null)
+  const pdfUrlRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!rechnung?.id) return
+    if (!(rechnung.pfad || rechnung.pdf_upload)) return
+    let cancelled = false
+    rechnungenApi.getPdfBlobUrl(rechnung.id).then(url => {
+      if (cancelled) { URL.revokeObjectURL(url); return }
+      if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current)
+      pdfUrlRef.current = url
+      setPdfUrl(url)
+    }).catch(() => { /* kein PDF verfügbar */ })
+    return () => { cancelled = true }
+  }, [rechnung?.id])
+
+  // Blob-URL beim Unmount freigeben
+  useEffect(() => {
+    return () => { if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current) }
+  }, [])
+
   const { data: konten } = useQuery<Konto[]>({
     queryKey: ['konten-alle', wirtschaftsjahrId, effektivObjektId],
     queryFn: () => {
@@ -108,10 +135,12 @@ export default function PrueffallDetail() {
   })
   const duplikatKandidaten = duplikatResult?.kandidaten ?? []
 
-  // Aufwandskonten: 50000–55999 ohne direktes_buchen
+  // Aufwandskonten-Auswahl:
+  //   direktes_buchen=true  → Konto für Dialogbuchung UND alle anderen Wege freigegeben → immer anzeigen
+  //   direktes_buchen=false → nur über System buchbar → nur anzeigen wenn im Aufwandsbereich 50000–55999
   const aufwandskonten = (konten ?? []).filter(k =>
-    k.aktiv && k.kontoart === 'standard' && !k.direktes_buchen &&
-    k.kontonummer >= '50000' && k.kontonummer <= '55999'
+    k.aktiv && k.kontoart !== 'summierung' &&
+    (k.direktes_buchen || (k.kontonummer >= '50000' && k.kontonummer <= '55999'))
   )
 
   // Identifikations-Mutationen (für pruefung_match / nicht_erkannt)
@@ -143,6 +172,7 @@ export default function PrueffallDetail() {
       aufwandskonto_id: aufwandskontoAendern
         ? (aufwandskontoId || undefined)
         : undefined,
+      buchungsdatum,
     }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['rechnungen'] }); navigate(-1) },
   })
@@ -159,6 +189,11 @@ export default function PrueffallDetail() {
 
   const mutSepa = useMutation({
     mutationFn: (val: boolean) => rechnungenApi.update(id!, { sepa_lastschrift: val } as never),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['rechnung', id] }),
+  })
+
+  const mutGutschrift = useMutation({
+    mutationFn: (val: boolean) => rechnungenApi.update(id!, { ist_gutschrift: val } as never),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['rechnung', id] }),
   })
 
@@ -228,11 +263,12 @@ export default function PrueffallDetail() {
   )
   const kannDirektfreigeben = kannSpeichern && rechnung.darf_direkt_freigeben
 
-  // Für Freigabe-Modus: Aufwandskonto muss gesetzt sein (entweder vorhandenes oder neues)
+  // Für Freigabe-Modus: Aufwandskonto muss gesetzt sein (entweder vorhandenes oder neues oder Splits)
   const effektivesAufwandskontoId = aufwandskontoAendern
     ? aufwandskontoId
     : (rechnung.aufwandskonto_id || aufwandskontoId)
-  const kannFreigeben = istFreigabeModus && !!effektivesAufwandskontoId
+  const hasSplits = (rechnung.splits?.length ?? 0) >= 2
+  const kannFreigeben = istFreigabeModus && (!!effektivesAufwandskontoId || hasSplits)
 
   const konfidenz = rechnung.erkennungs_konfidenz
 
@@ -245,7 +281,9 @@ export default function PrueffallDetail() {
     : null
 
   return (
-    <div className="max-w-5xl mx-auto p-6 space-y-6">
+    <div className={pdfUrl ? 'flex gap-0 items-start min-h-screen' : 'max-w-5xl mx-auto p-6 space-y-6'}>
+    {/* ── Formular-Bereich ── */}
+    <div className={pdfUrl ? 'flex-1 min-w-0 p-6 space-y-6 overflow-y-auto' : 'space-y-6'}>
       {/* Kontext-Banner */}
       {istFreigabeModus && (
         <div className="rounded-lg bg-indigo-50 border border-indigo-200 px-4 py-2 text-sm text-indigo-800">
@@ -290,8 +328,11 @@ export default function PrueffallDetail() {
           </div>
         </div>
         {(rechnung.pfad || rechnung.pdf_upload) && (
-          <Button variant="secondary" onClick={() => rechnungenApi.openPdf(rechnung.id).catch(() => alert('PDF konnte nicht geladen werden.'))}>
-            PDF ansehen
+          <Button
+            variant="secondary"
+            onClick={() => rechnungenApi.openPdf(rechnung.id).catch(() => alert('PDF konnte nicht geladen werden.'))}
+          >
+            ↗ In neuem Tab öffnen
           </Button>
         )}
       </div>
@@ -390,50 +431,75 @@ export default function PrueffallDetail() {
                 )}
               </DimensionCard>
 
-              {/* Aufwandskonto — mit "Sachkonto ändern"-Toggle */}
+              {/* Aufwandskonto — mit Split-Toggle */}
               <DimensionCard
                 titel="Aufwandskonto"
-                erkannt={aufwandskontoErkannt}
-                erkannterWert={rechnung.aufwandskonto_label}
+                erkannt={aufwandskontoErkannt || hasSplits}
+                erkannterWert={hasSplits ? `${rechnung.splits!.length} Split-Positionen` : rechnung.aufwandskonto_label}
               >
-                {aufwandskontoErkannt && !aufwandskontoAendern ? (
+                {/* Modus-Toggle */}
+                <div className="flex gap-2 mb-2 text-xs">
                   <button
                     type="button"
-                    onClick={() => setAufwandskontoAendern(true)}
-                    className="text-xs text-blue-600 hover:underline"
-                  >
-                    Sachkonto ändern
-                  </button>
-                ) : (
-                  <>
-                    <WjSelektor
-                      wirtschaftsjahre={wirtschaftsjahre}
-                      wirtschaftsjahrId={wirtschaftsjahrId}
-                      onChange={id => { setWirtschaftsjahrId(id); setAufwandskontoId('') }}
-                    />
-                    <select
-                      value={aufwandskontoId}
-                      onChange={e => setAufwandskontoId(e.target.value)}
-                      className="border rounded px-2 py-1.5 text-sm w-full"
+                    onClick={() => setSplitModus(false)}
+                    className={`px-2 py-0.5 rounded border ${!splitModus ? 'bg-blue-600 text-white border-blue-600' : 'text-gray-500 border-gray-300 hover:border-blue-400'}`}
+                  >Einzelkonto</button>
+                  <button
+                    type="button"
+                    onClick={() => setSplitModus(true)}
+                    className={`px-2 py-0.5 rounded border ${splitModus ? 'bg-blue-600 text-white border-blue-600' : 'text-gray-500 border-gray-300 hover:border-blue-400'}`}
+                  >Aufteilen</button>
+                </div>
+
+                {!splitModus ? (
+                  aufwandskontoErkannt && !aufwandskontoAendern ? (
+                    <button
+                      type="button"
+                      onClick={() => setAufwandskontoAendern(true)}
+                      className="text-xs text-blue-600 hover:underline"
                     >
-                      <option value="">— Aufwandskonto wählen (50xxx–55xxx) —</option>
-                      {aufwandskonten.map(k => (
-                        <option key={k.id} value={k.id}>{k.kontonummer} — {k.kontoname}</option>
-                      ))}
-                    </select>
-                    {aufwandskontoAendern && (
-                      <button
-                        type="button"
-                        onClick={() => { setAufwandskontoAendern(false); setAufwandskontoId('') }}
-                        className="text-xs text-gray-400 hover:underline mt-1"
+                      Sachkonto ändern
+                    </button>
+                  ) : (
+                    <>
+                      <WjSelektor
+                        wirtschaftsjahre={wirtschaftsjahre}
+                        wirtschaftsjahrId={wirtschaftsjahrId}
+                        onChange={id => { setWirtschaftsjahrId(id); setAufwandskontoId('') }}
+                      />
+                      <select
+                        value={aufwandskontoId}
+                        onChange={e => setAufwandskontoId(e.target.value)}
+                        className="border rounded px-2 py-1.5 text-sm w-full"
                       >
-                        Abbrechen
-                      </button>
-                    )}
-                    {!aufwandskonten.length && (
-                      <p className="text-xs text-gray-400 mt-1">Keine Aufwandskonten für dieses Objekt</p>
-                    )}
-                  </>
+                        <option value="">— Aufwandskonto wählen (50xxx–55xxx) —</option>
+                        {aufwandskonten.map(k => (
+                          <option key={k.id} value={k.id}>{k.kontonummer} — {k.kontoname}</option>
+                        ))}
+                      </select>
+                      {aufwandskontoAendern && (
+                        <button
+                          type="button"
+                          onClick={() => { setAufwandskontoAendern(false); setAufwandskontoId('') }}
+                          className="text-xs text-gray-400 hover:underline mt-1"
+                        >
+                          Abbrechen
+                        </button>
+                      )}
+                      {!aufwandskonten.length && (
+                        <p className="text-xs text-gray-400 mt-1">Keine Aufwandskonten für dieses Objekt</p>
+                      )}
+                    </>
+                  )
+                ) : (
+                  <SplitEditor
+                    rechnungId={id!}
+                    betragBrutto={rechnung.betrag_brutto != null ? String(rechnung.betrag_brutto) : null}
+                    vorhandene={rechnung.splits ?? []}
+                    konten={aufwandskonten}
+                    onSaved={() => qc.invalidateQueries({ queryKey: ['rechnung', id] })}
+                    onGeloescht={() => { setSplitModus(false); qc.invalidateQueries({ queryKey: ['rechnung', id] }) }}
+                  />
                 )}
               </DimensionCard>
 
@@ -444,32 +510,56 @@ export default function PrueffallDetail() {
                 </div>
               )}
 
-              {/* SEPA-Lastschrift */}
-              <label className="flex items-center gap-2 cursor-pointer select-none pt-1">
-                <input
-                  type="checkbox"
-                  checked={sepaLastschrift}
-                  onChange={e => { setSepaLastschrift(e.target.checked); mutSepa.mutate(e.target.checked) }}
-                  disabled={mutSepa.isPending}
-                  className="w-4 h-4 accent-blue-600"
-                />
-                <span className="text-sm text-gray-700">SEPA-Lastschrift</span>
-                {mutSepa.isPending && <span className="text-xs text-gray-400">…</span>}
-              </label>
+              {/* SEPA-Lastschrift + Gutschrift */}
+              <div className="flex flex-col gap-2 pt-1">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={sepaLastschrift}
+                    onChange={e => { setSepaLastschrift(e.target.checked); mutSepa.mutate(e.target.checked) }}
+                    disabled={mutSepa.isPending}
+                    className="w-4 h-4 accent-blue-600"
+                  />
+                  <span className="text-sm text-gray-700">SEPA-Lastschrift</span>
+                  {mutSepa.isPending && <span className="text-xs text-gray-400">…</span>}
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={istGutschrift}
+                    onChange={e => { setIstGutschrift(e.target.checked); mutGutschrift.mutate(e.target.checked) }}
+                    disabled={mutGutschrift.isPending}
+                    className="w-4 h-4 accent-amber-500"
+                  />
+                  <span className="text-sm text-gray-700">Gutschrift / Guthaben</span>
+                  {mutGutschrift.isPending && <span className="text-xs text-gray-400">…</span>}
+                </label>
+              </div>
 
               {/* Freigabe-Aktionen */}
-              <div className="flex gap-3 pt-2">
-                <Button
-                  onClick={() => mutFreigabeGenehmigen.mutate()}
-                  disabled={!kannFreigeben || mutFreigabeGenehmigen.isPending}
-                  variant="primary"
-                >
-                  {mutFreigabeGenehmigen.isPending ? 'Wird freigegeben…' : 'Freigeben'}
-                </Button>
+              <div className="flex flex-col gap-2 pt-2">
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-gray-500 whitespace-nowrap">Buchungsdatum</label>
+                  <input
+                    type="date"
+                    value={buchungsdatum}
+                    onChange={e => setBuchungsdatum(e.target.value)}
+                    className="text-sm border border-gray-300 rounded px-2 py-1"
+                  />
+                </div>
+                <div className="flex gap-3">
+                  <Button
+                    onClick={() => mutFreigabeGenehmigen.mutate()}
+                    disabled={!kannFreigeben || mutFreigabeGenehmigen.isPending}
+                    variant="primary"
+                  >
+                    {mutFreigabeGenehmigen.isPending ? 'Wird freigegeben…' : 'Freigeben'}
+                  </Button>
+                </div>
               </div>
               {!kannFreigeben && (
                 <p className="text-xs text-gray-400">
-                  {effektivesAufwandskontoId ? '' : 'Bitte zuerst ein Aufwandskonto wählen.'}
+                  Bitte zuerst ein Aufwandskonto wählen oder Splits anlegen.
                 </p>
               )}
             </>
@@ -573,53 +663,79 @@ export default function PrueffallDetail() {
                 </select>
               </DimensionCard>
 
-              {/* Karte 3: Aufwandskonto mit "Sachkonto ändern"-Toggle */}
+              {/* Karte 3: Aufwandskonto mit Split-Toggle */}
               <DimensionCard
                 titel="Aufwandskonto"
-                erkannt={aufwandskontoErkannt}
-                erkannterWert={rechnung.aufwandskonto_label}
+                erkannt={aufwandskontoErkannt || hasSplits}
+                erkannterWert={hasSplits ? `${rechnung.splits!.length} Split-Positionen` : rechnung.aufwandskonto_label}
               >
-                {aufwandskontoErkannt && !aufwandskontoAendern ? (
+                {/* Modus-Toggle */}
+                <div className="flex gap-2 mb-2 text-xs">
                   <button
                     type="button"
-                    onClick={() => setAufwandskontoAendern(true)}
-                    className="text-xs text-blue-600 hover:underline"
-                  >
-                    Sachkonto ändern
-                  </button>
-                ) : (
-                  <>
-                    {(objektId || rechnung.objekt) && (
-                      <WjSelektor
-                        wirtschaftsjahre={wirtschaftsjahre}
-                        wirtschaftsjahrId={wirtschaftsjahrId}
-                        onChange={id => { setWirtschaftsjahrId(id); setAufwandskontoId('') }}
-                      />
-                    )}
-                    <select
-                      value={aufwandskontoId}
-                      onChange={e => setAufwandskontoId(e.target.value)}
-                      className="border rounded px-2 py-1.5 text-sm w-full"
-                      disabled={!(objektId || rechnung.objekt)}
+                    onClick={() => setSplitModus(false)}
+                    className={`px-2 py-0.5 rounded border ${!splitModus ? 'bg-blue-600 text-white border-blue-600' : 'text-gray-500 border-gray-300 hover:border-blue-400'}`}
+                  >Einzelkonto</button>
+                  <button
+                    type="button"
+                    onClick={() => setSplitModus(true)}
+                    disabled={!(objektId || rechnung.objekt)}
+                    className={`px-2 py-0.5 rounded border ${splitModus ? 'bg-blue-600 text-white border-blue-600' : 'text-gray-500 border-gray-300 hover:border-blue-400'} disabled:opacity-40`}
+                  >Aufteilen</button>
+                </div>
+
+                {!splitModus ? (
+                  aufwandskontoErkannt && !aufwandskontoAendern ? (
+                    <button
+                      type="button"
+                      onClick={() => setAufwandskontoAendern(true)}
+                      className="text-xs text-blue-600 hover:underline"
                     >
-                      <option value="">— Aufwandskonto wählen (50xxx–55xxx) —</option>
-                      {aufwandskonten.map(k => (
-                        <option key={k.id} value={k.id}>{k.kontonummer} — {k.kontoname}</option>
-                      ))}
-                    </select>
-                    {aufwandskontoAendern && (
-                      <button
-                        type="button"
-                        onClick={() => { setAufwandskontoAendern(false); setAufwandskontoId('') }}
-                        className="text-xs text-gray-400 hover:underline mt-1"
+                      Sachkonto ändern
+                    </button>
+                  ) : (
+                    <>
+                      {(objektId || rechnung.objekt) && (
+                        <WjSelektor
+                          wirtschaftsjahre={wirtschaftsjahre}
+                          wirtschaftsjahrId={wirtschaftsjahrId}
+                          onChange={id => { setWirtschaftsjahrId(id); setAufwandskontoId('') }}
+                        />
+                      )}
+                      <select
+                        value={aufwandskontoId}
+                        onChange={e => setAufwandskontoId(e.target.value)}
+                        className="border rounded px-2 py-1.5 text-sm w-full"
+                        disabled={!(objektId || rechnung.objekt)}
                       >
-                        Abbrechen
-                      </button>
-                    )}
-                    {!(objektId || rechnung.objekt) && (
-                      <p className="text-xs text-gray-400 mt-1">Erst Objekt wählen</p>
-                    )}
-                  </>
+                        <option value="">— Aufwandskonto wählen (50xxx–55xxx) —</option>
+                        {aufwandskonten.map(k => (
+                          <option key={k.id} value={k.id}>{k.kontonummer} — {k.kontoname}</option>
+                        ))}
+                      </select>
+                      {aufwandskontoAendern && (
+                        <button
+                          type="button"
+                          onClick={() => { setAufwandskontoAendern(false); setAufwandskontoId('') }}
+                          className="text-xs text-gray-400 hover:underline mt-1"
+                        >
+                          Abbrechen
+                        </button>
+                      )}
+                      {!(objektId || rechnung.objekt) && (
+                        <p className="text-xs text-gray-400 mt-1">Erst Objekt wählen</p>
+                      )}
+                    </>
+                  )
+                ) : (
+                  <SplitEditor
+                    rechnungId={id!}
+                    betragBrutto={rechnung.betrag_brutto != null ? String(rechnung.betrag_brutto) : null}
+                    vorhandene={rechnung.splits ?? []}
+                    konten={aufwandskonten}
+                    onSaved={() => qc.invalidateQueries({ queryKey: ['rechnung', id] })}
+                    onGeloescht={() => { setSplitModus(false); qc.invalidateQueries({ queryKey: ['rechnung', id] }) }}
+                  />
                 )}
               </DimensionCard>
 
@@ -632,18 +748,31 @@ export default function PrueffallDetail() {
                 Einzelfall — keine Regel speichern
               </label>
 
-              {/* SEPA-Lastschrift */}
-              <label className="flex items-center gap-2 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={sepaLastschrift}
-                  onChange={e => { setSepaLastschrift(e.target.checked); mutSepa.mutate(e.target.checked) }}
-                  disabled={mutSepa.isPending}
-                  className="w-4 h-4 accent-blue-600"
-                />
-                <span className="text-sm text-gray-700">SEPA-Lastschrift</span>
-                {mutSepa.isPending && <span className="text-xs text-gray-400">…</span>}
-              </label>
+              {/* SEPA-Lastschrift + Gutschrift */}
+              <div className="flex flex-col gap-2">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={sepaLastschrift}
+                    onChange={e => { setSepaLastschrift(e.target.checked); mutSepa.mutate(e.target.checked) }}
+                    disabled={mutSepa.isPending}
+                    className="w-4 h-4 accent-blue-600"
+                  />
+                  <span className="text-sm text-gray-700">SEPA-Lastschrift</span>
+                  {mutSepa.isPending && <span className="text-xs text-gray-400">…</span>}
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={istGutschrift}
+                    onChange={e => { setIstGutschrift(e.target.checked); mutGutschrift.mutate(e.target.checked) }}
+                    disabled={mutGutschrift.isPending}
+                    className="w-4 h-4 accent-amber-500"
+                  />
+                  <span className="text-sm text-gray-700">Gutschrift / Guthaben</span>
+                  {mutGutschrift.isPending && <span className="text-xs text-gray-400">…</span>}
+                </label>
+              </div>
 
               {/* Fehleranzeige */}
               {mutErrorMsg && (
@@ -689,6 +818,28 @@ export default function PrueffallDetail() {
           </div>
         </div>
       </div>
+    </div>{/* Ende Formular-Bereich */}
+
+    {/* ── PDF-Vorschau ── */}
+    {pdfUrl && (
+      <div className="w-[48%] shrink-0 sticky top-0 h-screen border-l border-gray-200 bg-gray-50">
+        <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 bg-white">
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">PDF-Vorschau</span>
+          <button
+            onClick={() => rechnungenApi.openPdf(rechnung!.id).catch(() => {})}
+            className="text-xs text-blue-600 hover:underline"
+          >
+            ↗ In neuem Tab
+          </button>
+        </div>
+        <iframe
+          src={pdfUrl}
+          className="w-full border-0"
+          style={{ height: 'calc(100vh - 41px)' }}
+          title="Rechnungs-PDF"
+        />
+      </div>
+    )}
     </div>
   )
 }

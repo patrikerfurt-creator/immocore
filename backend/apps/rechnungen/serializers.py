@@ -1,5 +1,17 @@
 from rest_framework import serializers
-from .models import Kreditor, Rechnung, Freigabe, Verarbeitungslog, RechnungsMatchRegel, RechnungsErkennungsLog
+from .models import Kreditor, Rechnung, Freigabe, Verarbeitungslog, RechnungsMatchRegel, RechnungsErkennungsLog, RechnungSplitPosition
+
+
+class RechnungSplitPositionSerializer(serializers.ModelSerializer):
+    aufwandskonto_label = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = RechnungSplitPosition
+        fields = ['id', 'aufwandskonto', 'aufwandskonto_label', 'betrag', 'position']
+
+    def get_aufwandskonto_label(self, obj):
+        k = obj.aufwandskonto
+        return f"{k.kontonummer} — {k.kontoname}" if k else None
 
 
 class KreditorSerializer(serializers.ModelSerializer):
@@ -64,6 +76,7 @@ class RechnungSerializer(serializers.ModelSerializer):
     aufwandskonto_label    = serializers.SerializerMethodField()
     darf_direkt_freigeben  = serializers.SerializerMethodField()
     op_nummer              = serializers.SerializerMethodField()
+    splits                 = RechnungSplitPositionSerializer(many=True, read_only=True)
 
     class Meta:
         model = Rechnung
@@ -120,7 +133,7 @@ class RechnungListSerializer(serializers.ModelSerializer):
             'zugewiesen_an_id', 'zugewiesen_an_name',
             'routing_ziel', 'leistungstext',
             'lock_user', 'op_nummer',
-            'sepa_lastschrift',
+            'sepa_lastschrift', 'ist_gutschrift',
         ]
 
     def get_kreditor_name(self, obj):

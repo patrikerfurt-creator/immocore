@@ -77,6 +77,20 @@ function fmtEur(val: number | null) {
 }
 
 // ---------------------------------------------------------------------------
+// Typen Buchungszeile
+// ---------------------------------------------------------------------------
+interface KreditorBuchungszeile {
+  id: string
+  bu_nr: string
+  buchungsdatum: string
+  buchungstext: string | null
+  gegenkonto: string
+  soll: number | null
+  haben: number | null
+  saldo: number
+}
+
+// ---------------------------------------------------------------------------
 // Kreditorenkonto-Modal
 // ---------------------------------------------------------------------------
 function KreditorKontoModal({
@@ -90,6 +104,7 @@ function KreditorKontoModal({
   const currentYear = new Date().getFullYear()
   const years = Array.from({ length: 6 }, (_, i) => currentYear - i)
   const [selectedJahr, setSelectedJahr] = useState('')
+  const [activeTab, setActiveTab] = useState<'opos' | 'buchungen'>('opos')
 
   const { data, isLoading } = useQuery({
     queryKey: ['kreditor-kontoauszug', kreditor.id, selectedJahr],
@@ -97,9 +112,20 @@ function KreditorKontoModal({
   })
 
   const positionen: KreditorKontoPosition[] = data?.positionen ?? []
+  const buchungen: KreditorBuchungszeile[] = data?.buchungen ?? []
+  const buchungenSaldo: number = data?.buchungen_saldo ?? 0
+  const kreditorkonto_nr: string = data?.kreditorkonto_nr ?? ''
+
   const gesamtOffen = positionen
     .filter(p => p.status !== 'bezahlt' && p.status !== 'storniert' && p.betrag_offen != null)
     .reduce((s, p) => s + (p.betrag_offen ?? 0), 0)
+
+  const tabClass = (t: 'opos' | 'buchungen') =>
+    `px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+      activeTab === t
+        ? 'border-indigo-600 text-indigo-700'
+        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+    }`
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-50 overflow-y-auto py-10">
@@ -108,7 +134,14 @@ function KreditorKontoModal({
         <div className="flex justify-between items-start p-6 border-b">
           <div>
             <h2 className="text-xl font-bold text-gray-900">Kreditorenkonto</h2>
-            <p className="text-gray-500 text-sm mt-0.5">{kreditor.name}</p>
+            <p className="text-gray-500 text-sm mt-0.5">
+              {kreditor.name}
+              {kreditorkonto_nr && (
+                <span className="ml-2 font-mono text-xs text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">
+                  {kreditorkonto_nr}
+                </span>
+              )}
+            </p>
             {kreditor.iban && (
               <p className="text-xs text-gray-400 font-mono mt-0.5">
                 {kreditor.iban}{kreditor.bic ? ` · ${kreditor.bic}` : ''}
@@ -136,89 +169,179 @@ function KreditorKontoModal({
         {/* Saldo-Info */}
         <div className="px-6 py-3 bg-gray-50 border-b flex gap-8 text-sm">
           <div>
-            <span className="text-gray-500">Rechnungen gesamt</span>
+            <span className="text-gray-500">Rechnungen / OPs</span>
             <span className="ml-2 font-semibold text-gray-800">{positionen.length}</span>
           </div>
           <div>
             <span className="text-gray-500">Offene Verbindlichkeiten</span>
             <span className="ml-2 font-semibold text-orange-700">{fmtEur(gesamtOffen)}</span>
           </div>
+          {buchungen.length > 0 && (
+            <div>
+              <span className="text-gray-500">Buchungssaldo {kreditorkonto_nr}</span>
+              <span className={`ml-2 font-semibold ${buchungenSaldo < 0 ? 'text-blue-700' : buchungenSaldo > 0 ? 'text-gray-800' : 'text-gray-400'}`}>
+                {fmtEur(Math.abs(buchungenSaldo))}
+                <span className="text-xs font-normal text-gray-400 ml-1">
+                  {buchungenSaldo > 0 ? 'S' : buchungenSaldo < 0 ? 'H' : ''}
+                </span>
+              </span>
+            </div>
+          )}
         </div>
 
-        {/* Tabelle */}
+        {/* Tabs */}
+        <div className="flex border-b px-6">
+          <button className={tabClass('opos')} onClick={() => setActiveTab('opos')}>
+            OPOS / Rechnungen
+            <span className="ml-1.5 text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded-full">{positionen.length}</span>
+          </button>
+          <button className={tabClass('buchungen')} onClick={() => setActiveTab('buchungen')}>
+            Buchungszeilen
+            {kreditorkonto_nr && (
+              <span className="ml-1.5 font-mono text-xs text-indigo-500">({kreditorkonto_nr})</span>
+            )}
+            <span className="ml-1.5 text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded-full">{buchungen.length}</span>
+          </button>
+        </div>
+
+        {/* Tab-Inhalt */}
         <div className="p-6">
           {isLoading ? (
             <div className="text-gray-400 text-sm text-center py-10">Lade Kontoauszug…</div>
-          ) : positionen.length === 0 ? (
-            <div className="text-gray-400 text-sm text-center py-10">
-              Keine Rechnungen für diesen Kreditor vorhanden.
-            </div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b">
-                <tr>
-                  <th className="text-left px-3 py-2 text-gray-500 font-medium">OPOS-Nr.</th>
-                  <th className="text-left px-3 py-2 text-gray-500 font-medium">Bezeichnung / Rech.-Nr.</th>
-                  <th className="text-left px-3 py-2 text-gray-500 font-medium">Datum</th>
-                  <th className="text-left px-3 py-2 text-gray-500 font-medium">Fälligkeit</th>
-                  <th className="text-left px-3 py-2 text-gray-500 font-medium">Objekt</th>
-                  <th className="text-left px-3 py-2 text-gray-500 font-medium">Sachkonto</th>
-                  <th className="text-right px-3 py-2 text-gray-500 font-medium">Betrag</th>
-                  <th className="text-right px-3 py-2 text-gray-500 font-medium">Offen</th>
-                  <th className="text-left px-3 py-2 text-gray-500 font-medium">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {positionen.map(p => (
-                  <tr
-                    key={p.id}
-                    className={`border-t hover:bg-gray-50 ${p.herkunft === 'wkz' ? 'bg-blue-50/30' : ''} ${p.rechnung_id ? 'cursor-pointer' : ''}`}
-                    onClick={() => {
-                      if (p.rechnung_id) {
-                        onClose()
-                        navigate(`/rechnungen/${p.rechnung_id}/prueffall`)
-                      }
-                    }}
-                  >
-                    <td className="px-3 py-2 font-mono text-xs text-blue-700 font-semibold">
-                      {p.opos_nr ?? '—'}
-                    </td>
-                    <td className="px-3 py-2 text-gray-700">
-                      <div className="flex items-center gap-1.5">
-                        {p.herkunft === 'wkz' && (
-                          <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium shrink-0">WKZ</span>
-                        )}
-                        <span className="truncate max-w-xs" title={p.rechnungsnummer}>{p.rechnungsnummer || '—'}</span>
-                        {p.rechnung_id && (
-                          <span className="text-xs text-gray-400 shrink-0">↗</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-3 py-2 text-gray-600">{fmt(p.rechnungsdatum)}</td>
-                    <td className="px-3 py-2 text-gray-600">{fmt(p.faelligkeitsdatum)}</td>
-                    <td className="px-3 py-2 text-gray-600">{p.objekt ?? '—'}</td>
-                    <td className="px-3 py-2 text-gray-600 text-xs">
-                      {p.sachkonto_nr ? `${p.sachkonto_nr} ${p.sachkonto_name ?? ''}` : '—'}
-                    </td>
-                    <td className="px-3 py-2 text-right font-medium text-gray-800">
-                      {fmtEur(p.betrag_brutto)}
-                    </td>
-                    <td className="px-3 py-2 text-right font-medium">
-                      {p.betrag_offen != null && p.betrag_offen > 0
-                        ? <span className="text-orange-700">{fmtEur(p.betrag_offen)}</span>
-                        : p.betrag_offen === 0
-                          ? <span className="text-green-700">{fmtEur(0)}</span>
-                          : '—'}
-                    </td>
-                    <td className="px-3 py-2">
-                      <span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_COLOR[p.status] ?? 'bg-gray-100 text-gray-600'}`}>
-                        {STATUS_LABEL[p.status] ?? p.status}
-                      </span>
-                    </td>
+          ) : activeTab === 'opos' ? (
+            /* ── Tab: OPOS / Rechnungen ── */
+            positionen.length === 0 ? (
+              <div className="text-gray-400 text-sm text-center py-10">
+                Keine Rechnungen für diesen Kreditor vorhanden.
+              </div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b">
+                  <tr>
+                    <th className="text-left px-3 py-2 text-gray-500 font-medium">OPOS-Nr.</th>
+                    <th className="text-left px-3 py-2 text-gray-500 font-medium">Bezeichnung / Rech.-Nr.</th>
+                    <th className="text-left px-3 py-2 text-gray-500 font-medium">Datum</th>
+                    <th className="text-left px-3 py-2 text-gray-500 font-medium">Fälligkeit</th>
+                    <th className="text-left px-3 py-2 text-gray-500 font-medium">Objekt</th>
+                    <th className="text-left px-3 py-2 text-gray-500 font-medium">Sachkonto</th>
+                    <th className="text-right px-3 py-2 text-gray-500 font-medium">Betrag</th>
+                    <th className="text-right px-3 py-2 text-gray-500 font-medium">Offen</th>
+                    <th className="text-left px-3 py-2 text-gray-500 font-medium">Status</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {positionen.map(p => (
+                    <tr
+                      key={p.id}
+                      className={`border-t hover:bg-gray-50 ${p.herkunft === 'wkz' ? 'bg-blue-50/30' : ''} ${p.rechnung_id ? 'cursor-pointer' : ''}`}
+                      onClick={() => {
+                        if (p.rechnung_id) {
+                          onClose()
+                          navigate(`/rechnungen/${p.rechnung_id}/prueffall`)
+                        }
+                      }}
+                    >
+                      <td className="px-3 py-2 font-mono text-xs text-blue-700 font-semibold">
+                        {p.opos_nr ?? '—'}
+                      </td>
+                      <td className="px-3 py-2 text-gray-700">
+                        <div className="flex items-center gap-1.5">
+                          {p.herkunft === 'wkz' && (
+                            <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium shrink-0">WKZ</span>
+                          )}
+                          <span className="truncate max-w-xs" title={p.rechnungsnummer ?? undefined}>{p.rechnungsnummer || '—'}</span>
+                          {p.rechnung_id && (
+                            <span className="text-xs text-gray-400 shrink-0">↗</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 text-gray-600">{fmt(p.rechnungsdatum)}</td>
+                      <td className="px-3 py-2 text-gray-600">{fmt(p.faelligkeitsdatum)}</td>
+                      <td className="px-3 py-2 text-gray-600">{p.objekt ?? '—'}</td>
+                      <td className="px-3 py-2 text-gray-600 text-xs">
+                        {p.sachkonto_nr ? `${p.sachkonto_nr} ${p.sachkonto_name ?? ''}` : '—'}
+                      </td>
+                      <td className="px-3 py-2 text-right font-medium text-gray-800">
+                        {fmtEur(p.betrag_brutto)}
+                      </td>
+                      <td className="px-3 py-2 text-right font-medium">
+                        {p.betrag_offen != null && p.betrag_offen > 0
+                          ? <span className="text-orange-700">{fmtEur(p.betrag_offen)}</span>
+                          : p.betrag_offen === 0
+                            ? <span className="text-green-700">{fmtEur(0)}</span>
+                            : '—'}
+                      </td>
+                      <td className="px-3 py-2">
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_COLOR[p.status] ?? 'bg-gray-100 text-gray-600'}`}>
+                          {STATUS_LABEL[p.status] ?? p.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )
+          ) : (
+            /* ── Tab: Buchungszeilen (Soll/Haben) ── */
+            buchungen.length === 0 ? (
+              <div className="text-gray-400 text-sm text-center py-10">
+                {kreditorkonto_nr
+                  ? `Keine Buchungen auf Konto ${kreditorkonto_nr} vorhanden.`
+                  : 'Dieser Kreditor hat noch keine Kreditorennummer — bitte zuerst vergeben.'}
+              </div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b">
+                  <tr>
+                    <th className="text-left px-3 py-2 text-gray-500 font-medium w-36">BU-Nr.</th>
+                    <th className="text-left px-3 py-2 text-gray-500 font-medium w-28">Datum</th>
+                    <th className="text-left px-3 py-2 text-gray-500 font-medium w-40">Gegenkonto</th>
+                    <th className="text-left px-3 py-2 text-gray-500 font-medium">Buchungstext</th>
+                    <th className="text-right px-3 py-2 text-gray-500 font-medium w-28">Soll</th>
+                    <th className="text-right px-3 py-2 text-gray-500 font-medium w-28">Haben</th>
+                    <th className="text-right px-3 py-2 text-gray-500 font-medium w-28">Saldo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {buchungen.map(b => (
+                    <tr key={b.id} className="border-t hover:bg-gray-50">
+                      <td className="px-3 py-2 font-mono text-xs text-gray-500">{b.bu_nr}</td>
+                      <td className="px-3 py-2 text-gray-700 whitespace-nowrap">{fmt(b.buchungsdatum)}</td>
+                      <td className="px-3 py-2 font-mono text-xs text-gray-600 truncate max-w-0">{b.gegenkonto}</td>
+                      <td className="px-3 py-2 text-gray-800 truncate max-w-xs">{b.buchungstext || '—'}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-gray-800">
+                        {b.soll != null ? fmtEur(b.soll) : ''}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums text-blue-700">
+                        {b.haben != null ? fmtEur(b.haben) : ''}
+                      </td>
+                      <td className={`px-3 py-2 text-right tabular-nums font-semibold ${
+                        b.saldo > 0 ? 'text-gray-800' : b.saldo < 0 ? 'text-blue-700' : 'text-gray-400'
+                      }`}>
+                        {fmtEur(Math.abs(b.saldo))}
+                        <span className="text-xs font-normal text-gray-400 ml-0.5">
+                          {b.saldo > 0 ? 'S' : b.saldo < 0 ? 'H' : ''}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot className="bg-gray-50 border-t-2 border-gray-300">
+                  <tr>
+                    <td colSpan={4} className="px-3 py-3 text-right font-semibold text-gray-700 text-sm">
+                      Abschlusssaldo
+                    </td>
+                    <td className="px-3 py-3 text-right tabular-nums font-bold text-gray-800">
+                      {buchungenSaldo > 0 ? fmtEur(buchungenSaldo) : ''}
+                    </td>
+                    <td className="px-3 py-3 text-right tabular-nums font-bold text-blue-700">
+                      {buchungenSaldo < 0 ? fmtEur(Math.abs(buchungenSaldo)) : ''}
+                    </td>
+                    <td />
+                  </tr>
+                </tfoot>
+              </table>
+            )
           )}
         </div>
       </div>

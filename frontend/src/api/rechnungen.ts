@@ -1,5 +1,5 @@
 import client from './client'
-import type { Kreditor, DublettKandidat, Rechnung, RechnungList, RechnungsMatchRegel } from '../types'
+import type { Kreditor, DublettKandidat, Rechnung, RechnungList, RechnungsMatchRegel, RechnungSplitPosition } from '../types'
 
 export const rechnungenApi = {
   // Kreditoren
@@ -27,7 +27,7 @@ export const rechnungenApi = {
     client.post<Rechnung>('/rechnungen/', data).then(r => r.data),
   update: (id: string, data: Partial<Rechnung>) =>
     client.patch<Rechnung>(`/rechnungen/${id}/`, data).then(r => r.data),
-  freigeben: (id: string, data?: { begruendung?: string; aufwandskonto_id?: string }) =>
+  freigeben: (id: string, data?: { begruendung?: string; aufwandskonto_id?: string; buchungsdatum?: string }) =>
     client.post(`/rechnungen/${id}/freigeben/`, data ?? {}).then(r => r.data),
   ablehnen: (id: string, begruendung: string) =>
     client.post(`/rechnungen/${id}/ablehnen/`, { begruendung }).then(r => r.data),
@@ -43,6 +43,10 @@ export const rechnungenApi = {
     const response = await client.get(`/rechnungen/${id}/pdf/`, { responseType: 'blob' })
     const url = URL.createObjectURL(response.data)
     window.open(url, '_blank')
+  },
+  getPdfBlobUrl: async (id: string): Promise<string> => {
+    const response = await client.get(`/rechnungen/${id}/pdf/`, { responseType: 'blob' })
+    return URL.createObjectURL(response.data)
   },
   logs: (id: string) =>
     client.get(`/rechnungen/${id}/logs/`).then(r => r.data),
@@ -61,6 +65,12 @@ export const rechnungenApi = {
     client.post<Rechnung>(`/rechnungen/${id}/identifizieren/`, data).then(r => r.data),
   manuellErfassen: (id: string, data: Record<string, unknown>) =>
     client.post<Rechnung>(`/rechnungen/${id}/manuell-erfassen/`, data).then(r => r.data),
+
+  // Splits
+  splitsSpeichern: (id: string, positionen: { aufwandskonto: string; betrag: string }[]) =>
+    client.post<RechnungSplitPosition[]>(`/rechnungen/${id}/splits/`, { positionen }).then(r => r.data),
+  splitsLoeschen: (id: string) =>
+    client.delete(`/rechnungen/${id}/splits/loeschen/`).then(r => r.data),
 
   // Frontoffice Lock
   lockSetzen: (id: string) =>

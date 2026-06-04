@@ -495,11 +495,12 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
 
         pk_obj = self.get_object()
 
-        bank_konto_id  = request.data.get('bank_sachkonto_id')
-        betrag_raw     = request.data.get('betrag')
-        buchungsdatum  = request.data.get('buchungsdatum')
-        buchungstext   = request.data.get('buchungstext', '')
-        wj_id          = request.data.get('wirtschaftsjahr_id')
+        bank_konto_id      = request.data.get('bank_sachkonto_id')
+        betrag_raw         = request.data.get('betrag')
+        buchungsdatum      = request.data.get('buchungsdatum')
+        buchungstext       = request.data.get('buchungstext', '')
+        wj_id              = request.data.get('wirtschaftsjahr_id')
+        sollstellungs_ids  = request.data.get('sollstellungs_ids') or None
 
         if not bank_konto_id or not betrag_raw or not buchungsdatum:
             return Response(
@@ -538,6 +539,7 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
                 buchungstext=buchungstext,
                 wirtschaftsjahr=wj,
                 user=request.user,
+                sollstellungs_ids=sollstellungs_ids,
             )
         except Exception as exc:
             return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -546,6 +548,75 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
             'buchung_id': str(buchung.id),
             'betrag': float(buchung.betrag),
             'nachricht': f'Zahlungseingang {float(betrag):.2f} EUR erfolgreich gebucht.',
+        }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='abgang')
+    def abgang(self, request, pk=None):
+        """
+        Bucht einen Abgang (Erstattung/Rückzahlung) auf ein Personenkonto.
+        Buchungssatz: Soll Bankkonto (18xxx) / Haben Personenkonto
+        Body: { bank_sachkonto_id, betrag, buchungsdatum, buchungstext?, buchungsart_id? }
+        """
+        from decimal import Decimal
+        from apps.buchhaltung.models import Buchung, Buchungsart
+        from apps.konten.models import Konto
+        from apps.objekte.models import Wirtschaftsjahr
+
+        pk_obj        = self.get_object()
+        bank_konto_id = request.data.get('bank_sachkonto_id')
+        betrag_raw    = request.data.get('betrag')
+        buchungsdatum = request.data.get('buchungsdatum')
+        buchungstext  = request.data.get('buchungstext', '')
+        ba_id         = request.data.get('buchungsart_id')
+
+        if not bank_konto_id or not betrag_raw or not buchungsdatum:
+            return Response(
+                {'error': 'bank_sachkonto_id, betrag und buchungsdatum sind erforderlich'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            betrag = Decimal(str(betrag_raw))
+            if betrag <= 0:
+                raise ValueError
+        except (ValueError, Exception):
+            return Response({'error': 'Ungültiger Betrag'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            bank_konto = Konto.objects.get(pk=bank_konto_id)
+        except Konto.DoesNotExist:
+            return Response({'error': 'Sachkonto nicht gefunden'}, status=status.HTTP_404_NOT_FOUND)
+
+        ba = Buchungsart.objects.filter(pk=ba_id).first() if ba_id else None
+
+        obj = pk_obj.objekt
+        wj = (
+            Wirtschaftsjahr.objects.filter(objekt=obj, status='offen').order_by('-jahr').first()
+            or Wirtschaftsjahr.objects.filter(objekt=obj).order_by('-jahr').first()
+        )
+
+        try:
+            buchung = Buchung.objects.create(
+                objekt=obj,
+                buchungsart=ba,
+                betrag=betrag,
+                soll_konto=bank_konto,
+                haben_konto=None,
+                personenkonto=pk_obj,
+                buchungsdatum=buchungsdatum,
+                belegdatum=buchungsdatum,
+                buchungstext=buchungstext or 'Abgang / Erstattung',
+                wirtschaftsjahr=wj,
+                status='festgeschrieben',
+                erstellt_von=request.user,
+            )
+        except Exception as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            'buchung_id': str(buchung.id),
+            'betrag': float(buchung.betrag),
+            'nachricht': f'Abgang {float(betrag):.2f} EUR erfolgreich gebucht.',
         }, status=status.HTTP_201_CREATED)
 
 

@@ -161,8 +161,8 @@ BA:    099 KOR  (Korrekturbuchung)
 
 ### Fall 5 — CRDT: Zinsgutschrift Bank ❌ fehlt
 
-**Erkennungsmerkmal:** `CdtDbtInd = CRDT`, Dbtr-IBAN = eigene Bank (identisch mit Svcr-IBAN
-im Statement-Header), Verwendungszweck enthält "Zinsen", "Guthabenzinsen" o.ä.
+**Erkennungsmerkmal:** `CdtDbtInd = CRDT`, Dbtr-IBAN = interne Bank-IBAN,
+Verwendungszweck enthält "Habenzinsen", "Zinsen für Guthaben", "ZINSEN"
 
 **Buchungssatz:**
 ```
@@ -171,15 +171,91 @@ Haben: 36xxx Zinserträge (Sachkonto)
 BA:    042 SACH-E
 ```
 
-**Erkennung:** Debtor-IBAN stammt von der gleichen Bank wie das eigene Konto
-(BIC-Präfix oder IBAN-Prefix vergleichen)
+**Reales Beispiel aus camt.053 DKB (Theresenstraße, 01.10.2025):**
+```
+CRDT | 84,07 € | Dbtr: "Unbekannt" | IBAN: DE02120300009000922261
+RmtInf: "Habenzinsen ZINSEN"
+EndToEndId: NONREF   ← DKB-spezifisch (nicht NOTPROVIDED!)
+BkTxCd: fehlt komplett
+```
+
+**⚠️ Bankabhängige Unterschiede:**
+
+| Bank | Zinsbuchung | BkTxCd | EndToEndId |
+|---|---|---|---|
+| DKB | Separate CRDT-Buchung "Habenzinsen ZINSEN" | **keiner** | `NONREF` |
+| Raiffeisenbank | Im Sammel-ABSCHLUSS (`ACMT/OPCL/ACCC`) enthalten | `NMSC+805+00905` | — |
+
+**Erkennung (bankbergreifend zuverlässig):**
+Freitextsuche in `RmtInf/Ustrd`:
+- enthält "Zins" + CRDT → Zinsgutschrift
+- Debtor-IBAN ist eine interne Bank-IBAN (nicht in `Person.ibans`, BIC stimmt mit Svcr überein)
 
 ---
 
-### Fall 6 — DBIT: Bankgebühren ❌ fehlt
+### Fall 5b — DBIT: Kapitalertragsteuer (Zinsabschlagsteuer) ❌ fehlt
 
-**Erkennungsmerkmal:** `CdtDbtInd = DBIT`, spezifischer BkTxCd (bankabhängig),
-typischerweise Verwendungszweck "Entgelt", "Kontoführung", "Gebühr"
+**Erkennungsmerkmal:** `CdtDbtInd = DBIT`, Cdtr-IBAN = interne Finanzamt-IBAN der Bank,
+Verwendungszweck: "Kapitalertragsteuer ABSCHLUSS"
+
+**Buchungssatz:**
+```
+Soll:  Kapitalertragsteuer-Sachkonto (z.B. 49xxx oder 25% von Zinsen)
+Haben: 18000 Bankkonto
+BA:    040 SACH-A
+```
+
+**Reales Beispiel aus camt.053 DKB (Theresenstraße, 01.10.2025):**
+```
+DBIT | 21,02 € | Cdtr: "Unbekannt" | IBAN: DE73120300009000299504
+RmtInf: "Kapitalertragsteuer ABSCHLUSS"
+EndToEndId: NONREF
+BkTxCd: fehlt komplett
+
+DBIT |  1,15 € | Cdtr: "Unbekannt" | IBAN: DE51120300009000299512
+RmtInf: "Solidaritätszuschlag ABSCHLUSS"
+EndToEndId: NONREF
+```
+
+> **Hinweis Kirchensteuer:** Bei kirchensteuerpflichtigen Kontoinhabern
+> erscheint ggf. ein weiterer DBIT-Eintrag "Kirchensteuer ABSCHLUSS".
+
+**Erkennung:** Freitextsuche `RmtInf/Ustrd`:
+- "Kapitalertragsteuer" → Sachkonto Kapitalertragsteuer
+- "Solidaritätszuschlag" → Sachkonto Solidaritätszuschlag
+- "Kirchensteuer" → Sachkonto Kirchensteuer
+
+---
+
+### Fall 5c — CRDT Betrag 0,00: Abrechnungsinformationssatz ⚠️ ignorieren
+
+**Erkennungsmerkmal:** `CdtDbtInd = CRDT`, `Amt = 0,00`, kein `RltdPties`,
+ausführlicher Abrechnungstext im Verwendungszweck
+
+**Reales Beispiel aus camt.053 DKB (Theresenstraße, 01.10.2025):**
+```
+CRDT | 0,00 € | (kein Dbtr/Cdtr)
+RmtInf: "Abrechnung 30.09.2025 ... Zinsen für Guthaben 84,07+ 1,2000 v.H. ..."
+```
+
+Dieser Eintrag ist ein **reiner Informationssatz** der DKB — er enthält die
+Berechnung als Freitext, hat aber keinen Buchungswert. Der Parser muss
+0-Betrag-Einträge **erkennen und überspringen** (keine Buchung anlegen).
+
+---
+
+### Fall 6 — DBIT: Bankgebühren / Kontoabschluss ❌ fehlt
+
+**Erkennungsmerkmal:** `CdtDbtInd = DBIT`,
+- Raiffeisenbank: `BkTxCd = ACMT/OPCL/ACCC`, proprietär `NMSC+805+00905`, AddtlNtryInf: "ABSCHLUSS"
+- DKB: kein BkTxCd, Verwendungszweck "ABSCHLUSS PER ..."
+
+**Reales Beispiel Raiffeisenbank (Lortzingstr., 30.04.2026):**
+```
+DBIT | 3,90 € | BkTxCd: ACMT/OPCL/ACCC | NMSC+805+00905
+RmtInf: "ABSCHLUSS PER 30.04.2026"
+AddtlNtryInf: "ABSCHLUSS"
+```
 
 **Buchungssatz:**
 ```
@@ -188,8 +264,14 @@ Haben: 18000 Bankkonto
 BA:    040 SACH-A
 ```
 
-**Erkennung:** Proprietäre BkTxCd-Codes sind bankabhängig (DK = Deutsche Kreditbank/DKB).
-Zuverlässiger: Freitextsuche im Verwendungszweck.
+**Erkennung (bankbergreifend):**
+- `BkTxCd Domn = ACMT` → Kontoabschluss/Gebühren
+- **oder** Freitextsuche: "ABSCHLUSS", "Entgelt", "Kontoführung", "Gebühr"
+
+**⚠️ Wichtig:** Bei der DKB (Theresenstraße) werden Zinsen und Steuern als
+**separate Einzelbuchungen** geliefert — der Abschluss-Satz ist nur die
+Zusammenfassung/Gebühr. Bei der Raiffeisenbank (Lortzingstr.) ist der
+ABSCHLUSS-Satz eine einzelne Buchung, die Zinsen + Gebühren gebündelt enthält.
 
 ---
 
@@ -229,7 +311,112 @@ nur DBIT statt CRDT).
 
 ---
 
-## 3. Implementierungsstand
+## 3. camt.054 — Einzelbenachrichtigung und Sammelauflösung
+
+### 3.1 Was ist camt.054?
+
+`camt.054` ("Bank to Customer Debit Credit Notification") ist **kein Kontoauszug**,
+sondern eine **Einzelbenachrichtigung** der Bank für jede Bewegung — typischerweise
+am Abend nach Buchung. Im Gegensatz zu camt.053 enthält er **keinen Eröffnungs-
+oder Schlusssaldo**.
+
+Er wird von der Bank für alle Transaktionstypen geliefert:
+- Eingehende Überweisungen (Hausgeld-Zahlungen von Eigentümern)
+- Ausgehende Überweisungen (Lieferantenzahlungen)
+- SEPA-Lastschriften (Energieversorger, Stadtgebühren)
+- **Sammeleinzüge** (Hausgeld-Lastschriften der WEG an Eigentümer)
+
+### 3.2 Warum ist camt.054 für die Rückkoppelung entscheidend?
+
+Wenn die WEG Hausgeld per SEPA-Lastschrift **gebündelt einzieht** (Sammeleinzug),
+liefert die Bank im camt.053 nur eine Summenposition:
+
+```
+CRDT | 2.404,76 € | "Hausgeld 05/2026" | 7 Einzeltransaktionen → unsichtbar
+```
+
+Der **camt.054** ist das einzige Instrument, das die einzelnen Zahler
+(Eigentümer-IBAN, -Name, Betrag je Einheit) auflöst. Nur so kann das System
+automatisch zuordnen, **wer** gezahlt hat → **welchem Eigentümer** → **welcher
+offene Hausgeld-OP** wird getilgt.
+
+Ohne camt.054-Vollauflösung ist keine automatische Rückkoppelung möglich.
+
+### 3.3 Vollauflösung vs. Batchsummary — Abhängigkeit von Bankeinstellung
+
+Der ISO-20022-Standard erlaubt innerhalb eines `<Ntry>` mehrere `<TxDtls>`,
+einen pro Einzelzahler:
+
+**Vollauflösung (Standard-konform — was wir brauchen):**
+```xml
+<NtryDtls>
+  <Btch><NbOfTxs>7</NbOfTxs><TtlAmt>2404.76</TtlAmt></Btch>
+  <TxDtls>  <!-- Zahler 1 -->
+    <Refs><EndToEndId>...</EndToEndId><MndtId>...</MndtId></Refs>
+    <Amt>380.00</Amt>
+    <RltdPties><Dbtr><Nm>Max Mustermann</Nm></Dbtr><DbtrAcct><IBAN>DE12...</IBAN></DbtrAcct></RltdPties>
+  </TxDtls>
+  <TxDtls>  <!-- Zahler 2 ... bis 7 --></TxDtls>
+</NtryDtls>
+```
+
+**Batchsummary (was Raiffeisenbank aktuell liefert — unzureichend):**
+```xml
+<NtryDtls>
+  <Btch><NbOfTxs>7</NbOfTxs><TtlAmt>2404.76</TtlAmt></Btch>
+  <TxDtls>  <!-- NUR EINE TxDtls für ALLE 7 — kein Debtor, kein Einzelbetrag -->
+    <RmtInf><Ustrd>TAN:SECUREGO PLUS</Ustrd></RmtInf>
+  </TxDtls>
+</NtryDtls>
+```
+
+### 3.4 ⚠️ Handlungsbedarf Raiffeisenbank
+
+**Aktuell liefert die Raiffeisenbank camt.054 nur im Batchsummary-Modus.**
+Das bedeutet: Die 7 Einzelzahler des Sammeleinzugs "Hausgeld 05/2026" sind
+**nicht erkennbar**. Die automatische Hausgeld-Zuordnung (Nebenbuch-Tilgung)
+ist damit für Sammeleinzüge **nicht möglich**.
+
+**Maßnahme:**
+> Bei der **Raiffeisenbank** die Einstellung **"camt.054 mit vollständiger
+> Transaktionsauflösung"** (auch: "Detailformat") aktivieren lassen.
+> Das ist eine Konfigurationsoption im Online-Banking-Business-Bereich —
+> kein technisches Problem, sondern eine Kontoeinstellung.
+
+Bis diese Einstellung aktiviert ist, müssen Sammeleinzüge manuell aufgeteilt
+werden.
+
+### 3.5 EndToEndId-Situation in den Testdaten
+
+Aus der Analyse der Testdateien (12 × camt.054, Zeitraum 13.04.–26.05.2026,
+Konto DE50550606110000258148, WEG Lortzingstr. 14):
+
+| EndToEndId | Häufigkeit | Typ |
+|---|---|---|
+| `NOTPROVIDED` | 18 von 22 Tx | Manuelle Überweisungen |
+| `CCB.120.UE.POS00215884` | 1 Tx | Commerzbank-Überweisung |
+| `1KVT0000000008372202` | 1 Tx | SEPA-Lastschrift goldgas |
+| `585451` | 1 Tx | SEPA-Lastschrift Energiehaus |
+| `26-0165-90` | 1 Tx | SEPA-Lastschrift Stadt Mörfelden |
+
+**Konsequenz:** `NOTPROVIDED` muss vom Parser als `null` behandelt werden —
+nicht als Referenzwert speichern, Stufe-1a-Matching darf auf `NOTPROVIDED`
+**nicht** ansprechen.
+
+### 3.6 Transaktionstypen in camt.054 (aus Testdaten)
+
+| BkTxCd Fmly | SubFmly | Bedeutung | Richtung |
+|---|---|---|---|
+| `ICDT` | `ESCT` | Ausgehende Überweisung (WEG zahlt) | DBIT |
+| `RCDT` | `ESCT` | Eingehende Überweisung (Eigentümer zahlt) | CRDT |
+| `RRCT` | `ESCT` | Rücküberweisung / Gutschrift (Eingang) | CRDT |
+| `RDDT` | `ESDD` | SEPA-Lastschrift Belastung (Lieferant zieht ein) | DBIT |
+| `IDDT` | `ESDD` | SEPA-Sammeleinzug (WEG zieht Hausgeld ein) | CRDT |
+| `ACMT` | `OPCL` | Kontoabschluss / Bankgebühren | DBIT |
+
+---
+
+## 4. Implementierungsstand
 
 | Fall | Beschreibung | Status |
 |------|--------------|--------|
@@ -238,9 +425,21 @@ nur DBIT statt CRDT).
 | 3 | DBIT Sammelüberweisung (Zahlungslauf) | ❌ fehlt |
 | 4 | CRDT Rücküberweisung / Gutschrift | ❌ fehlt |
 | 5 | CRDT Zinsgutschrift Bank | ❌ fehlt |
-| 6 | DBIT Bankgebühren | ❌ fehlt |
+| 5b | DBIT Kapitalertragsteuer (Zinsabschlagsteuer) | ❌ fehlt |
+| 5c | CRDT Betrag 0,00 — Informationssatz | ❌ fehlt (muss ignoriert werden) |
+| 6 | DBIT Bankgebühren / Kontoabschluss | ❌ fehlt |
 | 7 | DBIT Direktzahlung ohne Rechnung | ⚠️ manuell möglich |
 | 8 | DBIT Erstattung an Eigentümer | ⚠️ manuell möglich |
+
+**Parser-Sonderfälle (bankspezifisch):**
+
+| Sonderfall | DKB (Theresenstraße) | Raiffeisenbank (Lortzingstr.) |
+|---|---|---|
+| EndToEndId ohne Wert | `NONREF` | `NOTPROVIDED` |
+| BkTxCd bei Zinsen | **fehlt komplett** | `ACMT/OPCL/ACCC` |
+| Zinsen separate Buchung? | ✅ ja (CRDT 84,07 €) | ❌ nein (im Abschluss gebündelt) |
+| Kapitalertragsteuer | separate DBIT-Buchung | im Abschluss gebündelt |
+| 0-Betrag Infosatz | ✅ vorhanden (ignorieren) | ❌ nicht vorhanden |
 
 ---
 

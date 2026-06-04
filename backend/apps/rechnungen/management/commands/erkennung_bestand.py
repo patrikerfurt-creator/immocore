@@ -35,23 +35,44 @@ class Command(BaseCommand):
         parser.add_argument(
             '--batch-size', type=int, default=100,
         )
+        parser.add_argument(
+            '--monat', type=str, default=None,
+            help='Nur Rechnungen aus diesem Monat verarbeiten (Format: YYYY-MM, z.B. 2025-01).',
+        )
 
     def handle(self, *args, **options):
         from apps.rechnungen.models import Rechnung
         from apps.rechnungen.recognition import fuehre_erkennung_aus
+        import calendar
 
         dry_run    = options['dry_run']
         verbose    = options['verbose']
         batch_size = options['batch_size']
         statuse    = [s.strip() for s in options['status'].split(',') if s.strip()]
+        monat      = options.get('monat')
 
         qs = Rechnung.objects.filter(status__in=statuse).order_by('erstellt_am')
+
+        if monat:
+            try:
+                jahr, mon = int(monat.split('-')[0]), int(monat.split('-')[1])
+                letzter_tag = calendar.monthrange(jahr, mon)[1]
+                from datetime import date
+                qs = qs.filter(
+                    erstellt_am__date__gte=date(jahr, mon, 1),
+                    erstellt_am__date__lte=date(jahr, mon, letzter_tag),
+                )
+            except (ValueError, IndexError):
+                self.stderr.write(f'Ungültiges Monatsformat: {monat} — erwartet YYYY-MM')
+                return
         gesamt = qs.count()
 
         self.stdout.write('\n' + '-' * 70)
         self.stdout.write('  IMMOCORE — Erkennungs-Pipeline Bestandslauf')
         self.stdout.write('-' * 70)
         self.stdout.write(f'  Status-Filter : {", ".join(statuse)}')
+        if monat:
+            self.stdout.write(f'  Monats-Filter : {monat}')
         self.stdout.write(f'  Gefunden      : {gesamt} Rechnungen')
         if dry_run:
             self.stdout.write(self.style.WARNING('  --dry-run: keine Änderungen\n'))

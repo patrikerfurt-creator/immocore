@@ -42,6 +42,7 @@ def reset_testdaten(request):
         Buchung, WiederkehrendeBuchungOP, WiederkehrendeBuchungVorlage,
         HausgeldSollstellung, HausgeldSollstellungslauf, LastschriftLauf,
         AutoLaufProtokoll, CamtImportLog, Kontoumsatz, BankImport,
+        KreditorOP, SollstellungZahlung, OffenerPosten,
     )
     from apps.abrechnung_wp.models import Wirtschaftsplan
     from apps.rechnungen.models import Rechnung
@@ -51,17 +52,28 @@ def reset_testdaten(request):
     with transaction.atomic():
         # Reihenfolge streng nach PROTECT-Abhängigkeiten (Kind vor Eltern):
         #
-        # AutoLaufProtokoll → PROTECT → HausgeldSollstellungslauf
-        # AutoLaufProtokoll → PROTECT → LastschriftLauf
-        # LastschriftLauf   → PROTECT → HausgeldSollstellungslauf
-        # HausgeldSollstellung referenziert HausgeldSollstellungslauf
+        # AutoLaufProtokoll    → PROTECT → HausgeldSollstellungslauf
+        # AutoLaufProtokoll    → PROTECT → LastschriftLauf
+        # LastschriftLauf      → PROTECT → HausgeldSollstellungslauf
+        # KreditorOP           → PROTECT → Rechnung   (war fehlend → blockierte Rechnung.delete)
+        # KreditorOP           → PROTECT → Buchung    (war fehlend → blockierte Buchung.delete)
+        # SollstellungZahlung  → PROTECT → HausgeldSollstellung (war fehlend → blockierte Sollstellung.delete)
+        # SollstellungZahlung  → PROTECT → Buchung    (war fehlend → blockierte Buchung.delete)
+        # OffenerPosten        → PROTECT → Buchung    (war fehlend → blockierte Buchung.delete)
         # Rechnung.op_buchung / aufwand_buchung → PROTECT → Buchung
         counts['auto_lauf_protokolle'],    _ = AutoLaufProtokoll.objects.all().delete()
+        # WiederkehrendeBuchungOP → PROTECT → KreditorOP + Buchung: muss vor KreditorOP kommen
+        counts['wkz_ops'],                 _ = WiederkehrendeBuchungOP.objects.all().delete()
+        # KreditorOP zuerst: schützt Rechnung UND Buchung vor Löschung
+        counts['kreditor_ops'],            _ = KreditorOP.objects.all().delete()
+        counts['wkz_vorlagen'],            _ = WiederkehrendeBuchungVorlage.objects.all().delete()
+        # SollstellungZahlung: schützt HausgeldSollstellung UND Buchung vor Löschung
+        counts['sollstellung_zahlungen'],  _ = SollstellungZahlung.objects.all().delete()
+        # OffenerPosten: schützt Buchung vor Löschung
+        counts['offene_posten'],           _ = OffenerPosten.objects.all().delete()
         counts['lastschrift_laeufe'],      _ = LastschriftLauf.objects.all().delete()
         counts['hausgeld_sollstellungen'], _ = HausgeldSollstellung.objects.all().delete()
         counts['hausgeld_laeufe'],         _ = HausgeldSollstellungslauf.objects.all().delete()
-        counts['wkz_ops'],                 _ = WiederkehrendeBuchungOP.objects.all().delete()
-        counts['wkz_vorlagen'],            _ = WiederkehrendeBuchungVorlage.objects.all().delete()
         counts['wirtschaftsplaene'],       _ = Wirtschaftsplan.objects.all().delete()
         counts['belege'],                  _ = Beleg.objects.all().delete()
         counts['rechnungen'],              _ = Rechnung.objects.all().delete()

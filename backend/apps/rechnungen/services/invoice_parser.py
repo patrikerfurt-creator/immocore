@@ -43,9 +43,16 @@ Extrahiere folgende Felder:
 - invoice_number   : Rechnungsnummer als String
 - invoice_date     : Rechnungsdatum im Format YYYY-MM-DD
 - due_date         : Fälligkeitsdatum im Format YYYY-MM-DD (falls vorhanden, sonst null)
-- gross_amount     : Bruttobetrag als Dezimalzahl (ohne Währungssymbol)
-- net_amount       : Nettobetrag als Dezimalzahl (ohne Währungssymbol, falls vorhanden)
-- vat_rate         : MwSt-Satz als Zahl (z.B. 19 für 19%)
+- gross_amount     : Endbetrag inkl. MwSt als Dezimalzahl (ohne Währungssymbol).
+                     WICHTIG: Bei Gutschriften, Guthaben oder negativen Salden (z.B. Jahresabrechnung
+                     Gas/Strom bei der der Verbrauch kleiner als die geleisteten Abschläge ist)
+                     muss gross_amount NEGATIV sein (z.B. -150.00). Der Betrag spiegelt immer
+                     den tatsächlichen Endsaldo des Dokuments wider.
+- net_amount       : Nettobetrag als Dezimalzahl (ohne Währungssymbol, falls vorhanden, sonst null).
+                     Ebenfalls negativ bei Gutschrift/Guthaben.
+- vat_rate         : MwSt-Satz als Zahl (z.B. 19 für 19%), bei Gutschrift meist 0 oder null
+- is_credit_note   : true wenn das Dokument eine Gutschrift, ein Guthaben oder einen negativen
+                     Endsaldo ausweist (gross_amount < 0), sonst false
 - currency         : Währungskürzel, fast immer "EUR"
 - supplier         : Firmenname des Lieferanten (NICHT die eigene Firma)
 - iban             : IBAN des Lieferanten falls vorhanden, sonst null
@@ -55,9 +62,9 @@ Extrahiere folgende Felder:
 
 Regeln:
 - Felder die du nicht sicher erkennen kannst → null (niemals raten)
-- gross_amount ist der Gesamtbetrag inkl. MwSt
 - Zahlen: Dezimaltrennzeichen immer Punkt, kein Tausendertrennzeichen
 - Datumsformat strikt: YYYY-MM-DD
+- Beispiel Gutschrift: "Ihr Guthaben: 150,00 EUR" → gross_amount: -150.00, is_credit_note: true
 
 Antworte NUR mit dem JSON-Objekt.
 """
@@ -223,11 +230,15 @@ def _parse_pdf_direct_with_ai(filepath: str) -> dict:
 
 
 def _safe_decimal(value) -> Optional[Decimal]:
+    """
+    Konvertiert Wert sicher in Decimal.
+    Negative Werte (Gutschriften/Guthaben) sind erlaubt — nur exakt 0 wird verworfen.
+    """
     if value is None:
         return None
     try:
         d = Decimal(str(value))
-        return d if d > 0 else None
+        return d if d != 0 else None
     except InvalidOperation:
         return None
 
@@ -254,14 +265,24 @@ def extract_invoice_data(filepath: str) -> dict:
     invoice_number_raw = ai.get('invoice_number')
     iban_raw = ai.get('iban')
 
+    gross_raw = _safe_decimal(ai.get('gross_amount'))
+    net_raw   = _safe_decimal(ai.get('net_amount'))
+
+    # is_credit_note: KI-Flag oder aus negativem Betrag ableiten
+    is_credit_note = bool(ai.get('is_credit_note')) or (gross_raw is not None and gross_raw < 0)
+
+    # betrag_brutto / betrag_netto immer positiv speichern — Flag ist_gutschrift trägt das Vorzeichen
+    gross_amount = abs(gross_raw) if gross_raw is not None else None
+    net_amount   = abs(net_raw)   if net_raw   is not None else None
+
     return {
         'text': text,
         'invoice_number': invoice_number_raw,
         'invoice_number_normalized': normalize_invoice_number(invoice_number_raw),
         'invoice_date': _safe_date(ai.get('invoice_date')),
         'due_date': _safe_date(ai.get('due_date')),
-        'gross_amount': _safe_decimal(ai.get('gross_amount')),
-        'net_amount': _safe_decimal(ai.get('net_amount')),
+        'gross_amount': gross_amount,
+        'net_amount': net_amount,
         'vat_rate': _safe_decimal(ai.get('vat_rate')),
         'currency': ai.get('currency') or 'EUR',
         'supplier': ai.get('supplier'),
@@ -270,4 +291,5 @@ def extract_invoice_data(filepath: str) -> dict:
         'description': ai.get('description'),
         'property_address': ai.get('property_address'),
         'customer_number': str(ai.get('customer_number')).strip() if ai.get('customer_number') else '',
+        'is_credit_note': is_credit_note,
     }

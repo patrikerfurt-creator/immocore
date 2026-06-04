@@ -7,6 +7,15 @@ import { useObjektStore } from '../../stores/objekt'
 import { Button } from '../../components/ui/Button'
 import type { Konto, Buchungsart, PersonenkontoSaldo, Kreditor, Wirtschaftsjahr } from '../../types'
 
+interface HausgeldSollstellung {
+  id: string
+  periode: string | null
+  buchungsart_kuerzel: string | null
+  sollstellungs_typ?: string | null
+  soll_betrag: number | string
+  ist_betrag: number | string
+}
+
 const EUR = (v: number | string) =>
   Number(v).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })
 const DATUM = (s: string) => new Date(s).toLocaleDateString('de-DE')
@@ -16,12 +25,6 @@ function today() {
 }
 
 type KontoTyp = 'sachkonto' | 'personenkonto' | 'kreditorenkonto'
-
-const TYP_LABELS: Record<KontoTyp, string> = {
-  sachkonto: 'Sachkonto',
-  personenkonto: 'Personenkonto',
-  kreditorenkonto: 'Kreditor',
-}
 
 interface FormState {
   buchungsart: string
@@ -47,6 +50,8 @@ interface ZeFormState {
   betrag: string
   buchungsdatum: string
   buchungstext: string
+  buchungsart: string
+  selectedSsIds: string[]
 }
 
 const EMPTY: FormState = {
@@ -71,36 +76,8 @@ const ZE_EMPTY: ZeFormState = {
   betrag: '',
   buchungsdatum: today(),
   buchungstext: '',
-}
-
-// ── Typ-Wähler Tabs ─────────────────────────────────────────────────────────
-interface TypSelectorProps {
-  seite: 'soll' | 'haben'
-  currentTyp: KontoTyp
-  onChange: (typ: KontoTyp) => void
-}
-
-function TypSelector({ seite, currentTyp, onChange }: TypSelectorProps) {
-  return (
-    <div className="flex gap-1 mb-2">
-      {(['sachkonto', 'personenkonto', 'kreditorenkonto'] as KontoTyp[]).map(typ => (
-        <button
-          key={typ}
-          type="button"
-          onClick={() => onChange(typ)}
-          className={`px-2 py-0.5 text-xs rounded font-medium transition-colors ${
-            currentTyp === typ
-              ? seite === 'soll'
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-700 text-white'
-              : 'bg-white text-gray-500 hover:bg-gray-100 border border-gray-200'
-          }`}
-        >
-          {TYP_LABELS[typ]}
-        </button>
-      ))}
-    </div>
-  )
+  buchungsart: '',
+  selectedSsIds: [],
 }
 
 // ── Konto-Dropdown ───────────────────────────────────────────────────────────
@@ -247,6 +224,21 @@ export function Dialogbuchhaltung() {
     enabled: !!objektId,
   })
 
+  // Richtung aus gewählter Buchungsart ableiten
+  const selectedBa = (buchungsarten ?? []).find((ba: Buchungsart) => ba.id === zeForm.buchungsart)
+  const zeRichtung: 'eingang' | 'abgang' | null = (selectedBa as (Buchungsart & { richtung?: string }))?.richtung as 'eingang' | 'abgang' | null ?? null
+
+  // Offene Sollstellungen für ausgewähltes Personenkonto (nur bei Eingang + Betrag)
+  const { data: offeneSollstellungen } = useQuery({
+    queryKey: ['ze-sollstellungen', zeForm.personenkonto_id, objektId],
+    queryFn: () => buchhaltungApi.hausgeldSollstellungen({
+      personenkonto: zeForm.personenkonto_id,
+      objekt: objektId!,
+      status: 'offen',
+    }),
+    enabled: modus === 'personenkonto' && zeRichtung === 'eingang' && !!zeForm.personenkonto_id && !!objektId,
+  })
+
   const invalidateAll = () => {
     qc.invalidateQueries({ queryKey: ['buchungen-dialog', objektId] })
     qc.invalidateQueries({ queryKey: ['buchungen'] })
@@ -312,14 +304,26 @@ export function Dialogbuchhaltung() {
   })
 
   const zeMut = useMutation({
-    mutationFn: () =>
-      buchhaltungApi.zahlungseingang(zeForm.personenkonto_id, {
+    mutationFn: () => {
+      if (zeRichtung === 'abgang') {
+        return buchhaltungApi.abgang(zeForm.personenkonto_id, {
+          bank_sachkonto_id: zeForm.bank_sachkonto_id,
+          betrag: Number(zeForm.betrag),
+          buchungsdatum: zeForm.buchungsdatum,
+          buchungstext: zeForm.buchungstext || undefined,
+          buchungsart_id: zeForm.buchungsart || undefined,
+        })
+      }
+      return buchhaltungApi.zahlungseingang(zeForm.personenkonto_id, {
         bank_sachkonto_id: zeForm.bank_sachkonto_id,
         betrag: Number(zeForm.betrag),
         buchungsdatum: zeForm.buchungsdatum,
         buchungstext: zeForm.buchungstext || undefined,
+        buchungsart_id: zeForm.buchungsart || undefined,
         wirtschaftsjahr_id: aktivesWj?.id,
-      }),
+        sollstellungs_ids: zeForm.selectedSsIds.length > 0 ? zeForm.selectedSsIds : undefined,
+      })
+    },
     onSuccess: () => {
       invalidateAll()
       setZeForm({ ...ZE_EMPTY, buchungsdatum: zeForm.buchungsdatum })
@@ -501,7 +505,15 @@ export function Dialogbuchhaltung() {
         ] as const).map(({ key, label }) => (
           <button
             key={key}
-            onClick={() => { setModus(key); setForm(EMPTY); setZeForm(ZE_EMPTY) }}
+            onClick={() => {
+              setModus(key)
+              setZeForm(ZE_EMPTY)
+              setForm({
+                ...EMPTY,
+                soll_typ: 'sachkonto',
+                haben_typ: key === 'kreditor' ? 'kreditorenkonto' : 'sachkonto',
+              })
+            }}
             className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${modus === key ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
           >
             {label}
@@ -512,14 +524,31 @@ export function Dialogbuchhaltung() {
       {/* ── Personenkonto-Maske ── */}
       {modus === 'personenkonto' && (
         <div className="bg-white rounded-xl border shadow-sm p-6 mb-6">
+
+          {/* Buchungsart */}
+          <div className="mb-5">
+            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Buchungsart</label>
+            <select
+              value={zeForm.buchungsart}
+              onChange={setZe('buchungsart')}
+              className="border rounded-lg px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">— wählen —</option>
+              {(buchungsarten ?? []).map((ba: Buchungsart) => (
+                <option key={ba.id} value={ba.id}>{ba.nr} {ba.kuerzel} — {ba.bezeichnung}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Personenkonto + Bankkonto */}
           <div className="grid grid-cols-2 gap-4 mb-5">
             <div>
               <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
-                Personenkonto (Eigentümer) *
+                {zeRichtung === 'abgang' ? 'Soll — Personenkonto *' : 'Haben — Personenkonto *'}
               </label>
               <select
                 value={zeForm.personenkonto_id}
-                onChange={setZe('personenkonto_id')}
+                onChange={e => setZeForm(prev => ({ ...prev, personenkonto_id: e.target.value, selectedSsIds: [] })) }
                 className="border rounded-lg px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="">— Eigentümer wählen —</option>
@@ -532,7 +561,7 @@ export function Dialogbuchhaltung() {
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
-                Bankkonto (Sachkonto 18xxx) *
+                {zeRichtung === 'abgang' ? 'Haben — Bankkonto (18xxx) *' : 'Soll — Bankkonto (18xxx) *'}
               </label>
               <select
                 value={zeForm.bank_sachkonto_id}
@@ -541,66 +570,111 @@ export function Dialogbuchhaltung() {
               >
                 <option value="">— Bankkonto wählen —</option>
                 {bankKonten.map((k: Konto) => (
-                  <option key={k.id} value={k.id}>
-                    {k.kontonummer} — {k.kontoname}
-                  </option>
+                  <option key={k.id} value={k.id}>{k.kontonummer} — {k.kontoname}</option>
                 ))}
               </select>
             </div>
           </div>
 
+          {/* Betrag + Datum */}
           <div className="grid grid-cols-2 gap-4 mb-5">
             <div>
-              <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
-                Buchungsdatum *
-              </label>
-              <input
-                type="date"
-                value={zeForm.buchungsdatum}
-                onChange={setZe('buchungsdatum')}
-                className="border rounded-lg px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
+              <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Buchungsdatum *</label>
+              <input type="date" value={zeForm.buchungsdatum} onChange={setZe('buchungsdatum')}
+                className="border rounded-lg px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
-                Betrag (EUR) *
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={zeForm.betrag}
-                onChange={setZe('betrag')}
-                placeholder="0,00"
-                className="border rounded-lg px-3 py-2 text-sm w-full text-right tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
+              <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Betrag (EUR) *</label>
+              <input type="number" step="0.01" min="0" value={zeForm.betrag}
+                onChange={setZe('betrag')} placeholder="0,00"
+                className="border rounded-lg px-3 py-2 text-sm w-full text-right tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
           </div>
 
+          {/* Offene Posten (nur Eingang) */}
+          {zeRichtung === 'eingang' && zeForm.personenkonto_id && Number(zeForm.betrag) > 0 && (
+            <div className="mb-5">
+              <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
+                Offene Posten
+                <span className="ml-2 font-normal text-gray-400 normal-case">
+                  {zeForm.selectedSsIds.length === 0
+                    ? '— keine Auswahl → wird auf BA 900 (Hausgeld) gebucht'
+                    : `${zeForm.selectedSsIds.length} ausgewählt`}
+                </span>
+              </label>
+              {(offeneSollstellungen as HausgeldSollstellung[] | undefined ?? []).length === 0 ? (
+                <div className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2 border border-amber-100">
+                  Keine offenen Sollstellungen — Buchung erfolgt gegen BA 900 (Hausgeld).
+                </div>
+              ) : (
+                <div className="border rounded-lg overflow-hidden max-h-52 overflow-y-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-gray-50 sticky top-0">
+                      <tr>
+                        <th className="px-2 py-1.5 w-7" />
+                        <th className="text-left px-2 py-1.5 text-gray-600">Periode</th>
+                        <th className="text-left px-2 py-1.5 text-gray-600">Typ</th>
+                        <th className="text-right px-2 py-1.5 text-gray-600">Soll</th>
+                        <th className="text-right px-2 py-1.5 text-gray-600">Offen</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(offeneSollstellungen as HausgeldSollstellung[]).map(ss => {
+                        const isSelected = zeForm.selectedSsIds.includes(ss.id)
+                        const offen = Number(ss.soll_betrag) - Number(ss.ist_betrag)
+                        const periode = ss.periode
+                          ? new Date(ss.periode).toLocaleDateString('de-DE', { month: '2-digit', year: 'numeric' })
+                          : '—'
+                        return (
+                          <tr
+                            key={ss.id}
+                            onClick={() => setZeForm(prev => ({
+                              ...prev,
+                              selectedSsIds: isSelected
+                                ? prev.selectedSsIds.filter(id => id !== ss.id)
+                                : [...prev.selectedSsIds, ss.id],
+                            }))}
+                            className={`border-t cursor-pointer transition-colors ${isSelected ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
+                          >
+                            <td className="px-2 py-2 text-center">
+                              <input type="checkbox" checked={isSelected} readOnly className="pointer-events-none" />
+                            </td>
+                            <td className="px-2 py-2">{periode}</td>
+                            <td className="px-2 py-2 text-gray-500">{ss.sollstellungs_typ}</td>
+                            <td className="px-2 py-2 text-right tabular-nums">{EUR(ss.soll_betrag)}</td>
+                            <td className={`px-2 py-2 text-right tabular-nums font-medium ${offen > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                              {EUR(offen)}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Buchungstext */}
           <div className="mb-5">
-            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
-              Buchungstext
-            </label>
-            <input
-              type="text"
-              value={zeForm.buchungstext}
-              onChange={setZe('buchungstext')}
-              placeholder="z.B. Überweisung Hausgeld Januar"
-              className="border rounded-lg px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Buchungstext</label>
+            <input type="text" value={zeForm.buchungstext} onChange={setZe('buchungstext')}
+              placeholder={zeRichtung === 'abgang' ? 'z.B. Erstattung Guthaben' : 'z.B. Überweisung Hausgeld Januar'}
+              className="border rounded-lg px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
 
+          {/* Buchungssatz-Vorschau */}
           {zeForm.personenkonto_id && zeForm.bank_sachkonto_id && zeForm.betrag && (
             <div className="mb-4 px-4 py-3 bg-blue-50 rounded-lg text-sm text-blue-800 border border-blue-100">
-              Soll{' '}
-              <span className="font-mono font-semibold">
-                {bankKonten.find((k: Konto) => k.id === zeForm.bank_sachkonto_id)?.kontonummer}
-              </span>
-              {' '}/ Haben{' '}
-              <span className="font-mono font-semibold">41xxx</span>
-              {' '}—{' '}
-              <span className="font-semibold tabular-nums">{EUR(zeForm.betrag)}</span>
-              <span className="text-blue-600 ml-2 text-xs">Splits werden automatisch nach offenen Sollstellungen ermittelt</span>
+              {zeRichtung !== 'abgang' ? (
+                <>Soll <span className="font-mono font-semibold">{bankKonten.find((k: Konto) => k.id === zeForm.bank_sachkonto_id)?.kontonummer}</span>
+                {' '}/ Haben <span className="font-mono font-semibold">PK</span> — <span className="font-semibold tabular-nums">{EUR(zeForm.betrag)}</span>
+                {zeForm.selectedSsIds.length === 0 && <span className="text-blue-600 ml-2 text-xs">→ BA 900</span>}</>
+              ) : (
+                <>Soll <span className="font-mono font-semibold">PK</span>
+                {' '}/ Haben <span className="font-mono font-semibold">{bankKonten.find((k: Konto) => k.id === zeForm.bank_sachkonto_id)?.kontonummer}</span>
+                {' '}— <span className="font-semibold tabular-nums">{EUR(zeForm.betrag)}</span></>
+              )}
             </div>
           )}
 
@@ -612,23 +686,17 @@ export function Dialogbuchhaltung() {
 
           {zeSuccess && (
             <div className="mb-4 text-sm text-green-700 bg-green-50 rounded-lg px-4 py-2 border border-green-200">
-              Zahlungseingang erfolgreich gebucht. Offene Posten wurden aktualisiert.
+              {zeRichtung === 'abgang' ? 'Abgang' : 'Zahlungseingang'} erfolgreich gebucht.
             </div>
           )}
 
           <div className="flex justify-between items-center">
-            <button
-              type="button"
-              onClick={() => setZeForm(ZE_EMPTY)}
-              className="text-sm text-gray-400 hover:text-gray-600 transition-colors"
-            >
+            <button type="button" onClick={() => setZeForm(ZE_EMPTY)}
+              className="text-sm text-gray-400 hover:text-gray-600 transition-colors">
               Felder leeren
             </button>
-            <Button
-              onClick={() => zeMut.mutate()}
-              disabled={!kannZeBuchen || zeMut.isPending}
-            >
-              {zeMut.isPending ? 'Buche…' : 'Zahlungseingang buchen'}
+            <Button onClick={() => zeMut.mutate()} disabled={!kannZeBuchen || zeMut.isPending}>
+              {zeMut.isPending ? 'Buche…' : zeRichtung === 'abgang' ? 'Abgang buchen' : 'Eingang buchen'}
             </Button>
           </div>
         </div>
@@ -696,11 +764,6 @@ export function Dialogbuchhaltung() {
             <label className="block text-xs font-semibold text-blue-700 uppercase tracking-wide mb-2">
               Soll *
             </label>
-            <TypSelector
-              seite="soll"
-              currentTyp={form.soll_typ}
-              onChange={typ => setForm(prev => ({ ...prev, soll_typ: typ, soll_konto: '', soll_personenkonto: '', soll_kreditor: '' }))}
-            />
             <KontoDropdown
               seite="soll"
               typ={form.soll_typ}
@@ -747,11 +810,6 @@ export function Dialogbuchhaltung() {
             <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
               Haben *
             </label>
-            <TypSelector
-              seite="haben"
-              currentTyp={form.haben_typ}
-              onChange={typ => setForm(prev => ({ ...prev, haben_typ: typ, haben_konto: '', haben_personenkonto: '', haben_kreditor: '' }))}
-            />
             <KontoDropdown
               seite="haben"
               typ={form.haben_typ}

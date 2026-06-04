@@ -70,6 +70,15 @@ class Buchungsart(models.Model):
         null=True, blank=True,
         help_text='Buchungstyp für den Dialogbuchhaltung-Filter. Leer = nicht in der Dialogbuchhaltung wählbar.',
     )
+    RICHTUNG_CHOICES = [
+        ('eingang', 'Eingang (Bank → Personenkonto)'),
+        ('abgang',  'Abgang (Personenkonto → Bank)'),
+    ]
+    richtung = models.CharField(
+        max_length=10, choices=RICHTUNG_CHOICES,
+        null=True, blank=True,
+        help_text='Nur für Personenkontobuchungen: bestimmt Buchungsrichtung automatisch.',
+    )
 
     class Meta:
         verbose_name = 'Buchungsart'

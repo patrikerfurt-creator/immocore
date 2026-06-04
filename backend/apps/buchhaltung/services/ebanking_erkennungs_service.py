@@ -48,7 +48,11 @@ def verwendungszweck_hash(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _ermittle_bank_sachkonto(ku):
-    """Findet das Sachkonto 18xxx für den Bankabgang/-eingang."""
+    """
+    Findet das Sachkonto 18xxx für den Bankabgang/-eingang.
+    Wählt das Konto aus dem Wirtschaftsjahr das zum Buchungsdatum passt.
+    Fallback: neuestes aktives Wirtschaftsjahr.
+    """
     from apps.konten.models import Konto
 
     if ku.objekt is None:
@@ -59,23 +63,40 @@ def _ermittle_bank_sachkonto(ku):
     else:
         kontonummern = ['18000', '18911']
 
+    buchungs_jahr = ku.buchungsdatum.year if ku.buchungsdatum else None
+
     for knr in kontonummern:
-        konto = Konto.objects.filter(
+        qs = Konto.objects.filter(
             wirtschaftsjahr__objekt=ku.objekt,
             kontonummer=knr,
             aktiv=True,
-        ).order_by('-wirtschaftsjahr__jahr').first()
+        )
+        if buchungs_jahr:
+            konto = qs.filter(wirtschaftsjahr__jahr=buchungs_jahr).first()
+            if konto:
+                return konto
+        konto = qs.order_by('-wirtschaftsjahr__jahr').first()
         if konto:
             return konto
     return None
 
 
 def _ermittle_wirtschaftsjahr(ku):
-    """Findet das aktive/neueste Wirtschaftsjahr für das Objekt."""
+    """
+    Gibt das Wirtschaftsjahr zurück das zum Buchungsdatum passt.
+    Fallback: neuestes offenes, dann neuestes beliebiges Wirtschaftsjahr.
+    """
     from apps.objekte.models import Wirtschaftsjahr
 
     if ku.objekt is None:
         return None
+
+    if ku.buchungsdatum:
+        wj = Wirtschaftsjahr.objects.filter(
+            objekt=ku.objekt, jahr=ku.buchungsdatum.year,
+        ).first()
+        if wj:
+            return wj
 
     return (
         Wirtschaftsjahr.objects.filter(objekt=ku.objekt, status='offen')
@@ -87,10 +108,22 @@ def _ermittle_wirtschaftsjahr(ku):
     )
 
 
-def _finde_kreditorkonto(kreditor_rechnungen, objekt):
+def _ermittle_konto(objekt, kontonummer, buchungsdatum=None):
+    """Findet ein Sachkonto im WJ passend zum Buchungsdatum, Fallback: neuestes."""
+    from apps.konten.models import Konto
+    qs = Konto.objects.filter(wirtschaftsjahr__objekt=objekt, kontonummer=kontonummer, aktiv=True)
+    if buchungsdatum:
+        k = qs.filter(wirtschaftsjahr__jahr=buchungsdatum.year).first()
+        if k:
+            return k
+    return qs.order_by('-wirtschaftsjahr__jahr').first()
+
+
+def _finde_kreditorkonto(kreditor_rechnungen, objekt, buchungsdatum=None):
     """
     Sucht das Sachkonto (70xxx) für einen Kreditor im Kontenplan des Objekts.
     Die Kontonummer entspricht der Kreditorennummer (z.B. '70004').
+    Wählt bevorzugt das WJ das zum Buchungsdatum passt.
     """
     from apps.konten.models import Konto
     if not kreditor_rechnungen or not objekt:
@@ -98,11 +131,16 @@ def _finde_kreditorkonto(kreditor_rechnungen, objekt):
     kreditor_nr = getattr(kreditor_rechnungen, 'kreditorennummer', None)
     if not kreditor_nr:
         return None
-    return Konto.objects.filter(
+    qs = Konto.objects.filter(
         wirtschaftsjahr__objekt=objekt,
         kontonummer=kreditor_nr,
         aktiv=True,
-    ).order_by('-wirtschaftsjahr__jahr').first()
+    )
+    if buchungsdatum:
+        konto = qs.filter(wirtschaftsjahr__jahr=buchungsdatum.year).first()
+        if konto:
+            return konto
+    return qs.order_by('-wirtschaftsjahr__jahr').first()
 
 
 def _get_system_user():
@@ -391,6 +429,37 @@ def fuehre_erkennung_aus(ku):
             _save_all(ku, log)
             return ku
 
+    # ---- Stufe 1b2: Sammellastschrift-Match (Betrag = LastschriftLauf.gesamt_summe) ----
+    if ku.betrag > 0 and ku.objekt:
+        try:
+            konto_13650 = _ermittle_konto(ku.objekt, '13650', ku.buchungsdatum)
+            if konto_13650:
+                from apps.buchhaltung.models import LastschriftLauf
+                from datetime import timedelta
+                toleranz = timedelta(days=7)
+                lauf = LastschriftLauf.objects.filter(
+                    objekt=ku.objekt,
+                    gesamt_summe=ku.betrag,
+                    faelligkeitsdatum__gte=ku.buchungsdatum - toleranz,
+                    faelligkeitsdatum__lte=ku.buchungsdatum + toleranz,
+                ).first()
+                if lauf:
+                    ku.erkannt_gegenkonto     = konto_13650
+                    ku.erkennungs_quelle      = 'sammellastschrift'
+                    ku.erkennungs_konfidenz   = Decimal('1.00')
+                    ku.erkennungs_begruendung = (
+                        f"Betrag {ku.betrag} € stimmt mit LastschriftLauf {lauf.bezeichnung or str(lauf.id)[:8]} "
+                        f"(Fälligkeit {lauf.faelligkeitsdatum}) überein → Konto 13650."
+                    )
+                    ku.status = 'erkannt'
+                    log.stufe_erreicht = '1b2'
+                    log.quelle         = 'sammellastschrift'
+                    log.konfidenz      = Decimal('1.00')
+                    _save_all(ku, log)
+                    return ku
+        except Exception as exc:
+            logger.warning("E-Banking Stufe 1b2 (Sammellastschrift) Fehler: %s", exc)
+
     # ---- Stufe 1c: Kreditor-OP Rechnungsnummer-Match ----
     if ku.betrag < 0:
         try:
@@ -411,7 +480,7 @@ def fuehre_erkennung_aus(ku):
                         break
 
             # Kreditorkonto (70xxx) automatisch nachschlagen
-            kreditorkonto = _finde_kreditorkonto(op.kreditor, ku.objekt)
+            kreditorkonto = _finde_kreditorkonto(op.kreditor, ku.objekt, ku.buchungsdatum)
 
             ku.status                 = 'erkannt' if kreditorkonto else 'vorschlag'
             ku.erkannt_kreditor       = person_kreditor
@@ -506,7 +575,7 @@ def fuehre_erkennung_aus(ku):
         ).first()
 
         if person_kreditor or kred_obj:
-            kreditorkonto = _finde_kreditorkonto(kred_obj, ku.objekt)
+            kreditorkonto = _finde_kreditorkonto(kred_obj, ku.objekt, ku.buchungsdatum)
 
             if person_kreditor:
                 anzeigename = _person_anzeigename(person_kreditor)

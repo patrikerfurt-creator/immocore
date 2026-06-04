@@ -171,7 +171,15 @@ def _vorschlage_konto_ki(leistungsbeschreibung: str, objekt):
 
     if not leistungsbeschreibung or not objekt:
         return None
-    konten = list(Konto.objects.filter(wirtschaftsjahr__objekt=objekt, direktes_buchen=False, aktiv=True)[:80])
+    from django.db.models import Q
+    konten = list(Konto.objects.filter(
+        wirtschaftsjahr__objekt=objekt,
+        aktiv=True,
+    ).exclude(
+        kontoart='summierung',
+    ).filter(
+        Q(direktes_buchen=True) | Q(kontonummer__gte='50000', kontonummer__lte='55999')
+    )[:80])
     if not konten:
         return None
     konten_text = "\n".join(f"{k.kontonummer}: {k.kontoname}" for k in konten)
@@ -294,6 +302,7 @@ def verarbeite_datei(datei_pfad: str, archiv_root: Path) -> dict:
             ziel_pfad = ziel_ordner / f'{pfad.stem}_{int(time.time())}{pfad.suffix}'
         shutil.move(str(pfad), str(ziel_pfad))
 
+        ist_gutschrift = parsed.get('is_credit_note', False)
         rechnung = Rechnung.objects.create(
             dateiname=dateiname,
             pfad=str(ziel_pfad),
@@ -310,8 +319,8 @@ def verarbeite_datei(datei_pfad: str, archiv_root: Path) -> dict:
             rechnungsnummer_normalisiert=parsed.get('invoice_number_normalized') or '',
             rechnungsdatum=parsed.get('invoice_date'),
             faelligkeitsdatum=parsed.get('due_date'),
-            betrag_brutto=parsed.get('gross_amount'),
-            betrag_netto=parsed.get('net_amount'),
+            betrag_brutto=parsed.get('gross_amount'),   # immer positiv (abs-Wert)
+            betrag_netto=parsed.get('net_amount'),       # immer positiv (abs-Wert)
             mwst_satz=parsed.get('vat_rate'),
             waehrung=parsed.get('currency') or 'EUR',
             leistungsbeschreibung=parsed.get('description') or '',
@@ -320,6 +329,7 @@ def verarbeite_datei(datei_pfad: str, archiv_root: Path) -> dict:
             verarbeitungsnotiz=notiz,
             kundennummer=kundennummer,
             vorgeschlagenes_konto=vorgeschlagenes_konto,
+            ist_gutschrift=ist_gutschrift,
         )
 
         Verarbeitungslog.objects.create(
@@ -383,14 +393,15 @@ def ocr_erneut_ausfuehren(rechnung: Rechnung) -> Rechnung:
     rechnung.rechnungsnummer_normalisiert = parsed.get('invoice_number_normalized') or ''
     rechnung.rechnungsdatum          = parsed.get('invoice_date')
     rechnung.faelligkeitsdatum       = parsed.get('due_date')
-    rechnung.betrag_brutto           = parsed.get('gross_amount')
-    rechnung.betrag_netto            = parsed.get('net_amount')
+    rechnung.betrag_brutto           = parsed.get('gross_amount')   # immer positiv (abs-Wert)
+    rechnung.betrag_netto            = parsed.get('net_amount')      # immer positiv (abs-Wert)
     rechnung.mwst_satz               = parsed.get('vat_rate')
     rechnung.leistungsbeschreibung   = parsed.get('description') or ''
     rechnung.leistungstext           = parsed.get('description') or ''
     rechnung.textauszug              = (parsed.get('text') or '')[:5000]
     rechnung.kreditor                = kreditor
     rechnung.kundennummer            = kundennummer
+    rechnung.ist_gutschrift          = parsed.get('is_credit_note', False)
 
     if fehlende:
         rechnung.verarbeitungsnotiz = f'OCR wiederholt – noch unvollständig: {", ".join(fehlende)}'

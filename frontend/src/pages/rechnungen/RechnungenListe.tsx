@@ -7,7 +7,8 @@ import { wkzApi } from '../../api/wkz'
 import { useObjektStore } from '../../stores/objekt'
 import { Button } from '../../components/ui/Button'
 import client from '../../api/client'
-import type { RechnungList, RechnungStatus, Konto, Bankkonto, Kreditor } from '../../types'
+import type { RechnungList, RechnungStatus, Konto, Bankkonto, Kreditor, RechnungSplitPosition } from '../../types'
+import { SplitEditor } from '../../components/rechnungen/SplitEditor'
 
 const EUR = (v: string | number | null) =>
   v == null ? '—' : Number(v).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })
@@ -50,15 +51,26 @@ const PRUEFFALL_STATI = new Set(['pruefung_match', 'nicht_erkannt', 'in_pruefung
 // ---------------------------------------------------------------------------
 // Sachkonto erfassen (kein Buchungssatz — Buchung erfolgt erst bei Zahlung)
 // ---------------------------------------------------------------------------
-function SachkontoForm({ rechnung, onSuccess }: { rechnung: RechnungList; onSuccess: () => void }) {
+function SachkontoForm({
+  rechnung,
+  vorhandeneSplits = [],
+  onSuccess,
+}: {
+  rechnung: RechnungList
+  vorhandeneSplits?: RechnungSplitPosition[]
+  onSuccess: () => void
+}) {
   const qc = useQueryClient()
   const [objektId, setObjektId] = useState(rechnung.objekt_id ?? '')
-  const [kontoId, setKontoId] = useState(rechnung.aufwandskonto_id ?? rechnung.kostenstelle_id ?? rechnung.vorgeschlagenes_konto_id ?? '')
+  const [kontoId, setKontoId] = useState(
+    rechnung.aufwandskonto_id ?? rechnung.kostenstelle_id ?? rechnung.vorgeschlagenes_konto_id ?? '',
+  )
+  const [splitModus, setSplitModus] = useState(vorhandeneSplits.length >= 2)
 
   const { data: objekte } = useQuery({ queryKey: ['objekte'], queryFn: () => objekteApi.list() })
   const { data: konten } = useQuery({
     queryKey: ['konten', objektId],
-    queryFn: () => client.get<Konto[]>('/konten/', { params: { objekt: objektId, direktes_buchen: 'true' } }).then(r => r.data),
+    queryFn: () => client.get<Konto[]>('/konten/', { params: { objekt: objektId } }).then(r => r.data),
     enabled: !!objektId,
   })
 
@@ -67,45 +79,94 @@ function SachkontoForm({ rechnung, onSuccess }: { rechnung: RechnungList; onSucc
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['rechnungen'] }); onSuccess() },
   })
 
+  const aufwandskonten = (konten ?? []).filter(k =>
+    k.aktiv && k.kontoart !== 'summierung' &&
+    (k.direktes_buchen || (k.kontonummer >= '50000' && k.kontonummer <= '55999'))
+  )
   const gewKonto = konten?.find(k => k.id === kontoId)
 
   return (
     <div className="border-t pt-4 space-y-3">
       <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Sachkonto erfassen</div>
 
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">Objekt</label>
-          <select value={objektId} onChange={e => { setObjektId(e.target.value); setKontoId('') }}
-                  className="border rounded px-2 py-1.5 text-sm w-full">
-            <option value="">— Objekt wählen —</option>
-            {(objekte ?? []).map(o => <option key={o.id} value={o.id}>{o.bezeichnung}</option>)}
-          </select>
-        </div>
-
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">Sachkonto (Aufwand)</label>
-          <select value={kontoId} onChange={e => setKontoId(e.target.value)}
-                  className="border rounded px-2 py-1.5 text-sm w-full" disabled={!objektId}>
-            <option value="">— Konto wählen —</option>
-            {(konten ?? []).filter(k => k.aktiv).map(k => (
-              <option key={k.id} value={k.id}>{k.kontonummer} — {k.kontoname}</option>
-            ))}
-          </select>
-        </div>
+      <div>
+        <label className="block text-xs text-gray-500 mb-1">Objekt</label>
+        <select
+          value={objektId}
+          onChange={e => { setObjektId(e.target.value); setKontoId('') }}
+          className="border rounded px-2 py-1.5 text-sm w-full"
+        >
+          <option value="">— Objekt wählen —</option>
+          {(objekte ?? []).map(o => <option key={o.id} value={o.id}>{o.bezeichnung}</option>)}
+        </select>
       </div>
 
-      {gewKonto && rechnung.betrag_brutto && (
-        <div className="bg-amber-50 border border-amber-200 rounded px-3 py-2 text-xs text-amber-800 font-mono">
-          Sachkonto: {gewKonto.kontonummer} {gewKonto.kontoname} &nbsp;|&nbsp; {EUR(rechnung.betrag_brutto)} (Buchung bei Zahlung)
+      {/* Modus-Toggle: Einzelkonto vs. Split */}
+      {objektId && (
+        <div className="flex gap-2 text-xs">
+          <button
+            type="button"
+            onClick={() => setSplitModus(false)}
+            className={`px-3 py-1 rounded border ${
+              !splitModus ? 'bg-blue-600 text-white border-blue-600 font-medium' : 'text-gray-600 border-gray-300 hover:border-blue-400'
+            }`}
+          >
+            Einzelkonto
+          </button>
+          <button
+            type="button"
+            onClick={() => setSplitModus(true)}
+            className={`px-3 py-1 rounded border ${
+              splitModus ? 'bg-blue-600 text-white border-blue-600 font-medium' : 'text-gray-600 border-gray-300 hover:border-blue-400'
+            }`}
+          >
+            Aufteilen (Split)
+          </button>
         </div>
       )}
 
-      {mut.isError && <div className="text-xs text-red-600">Fehler. Bitte prüfen.</div>}
+      {/* Einzelkonto-Modus */}
+      {objektId && !splitModus && (
+        <>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Sachkonto (Aufwand)</label>
+            <select
+              value={kontoId}
+              onChange={e => setKontoId(e.target.value)}
+              className="border rounded px-2 py-1.5 text-sm w-full"
+            >
+              <option value="">— Konto wählen —</option>
+              {aufwandskonten.map(k => (
+                <option key={k.id} value={k.id}>{k.kontonummer} — {k.kontoname}</option>
+              ))}
+            </select>
+          </div>
 
-      <Button onClick={() => mut.mutate()} disabled={!objektId || !kontoId || mut.isPending}>
-        {mut.isPending ? 'Speichere…' : 'Sachkonto speichern'}
-      </Button>
+          {gewKonto && rechnung.betrag_brutto && (
+            <div className="bg-amber-50 border border-amber-200 rounded px-3 py-2 text-xs text-amber-800 font-mono">
+              Sachkonto: {gewKonto.kontonummer} {gewKonto.kontoname} &nbsp;|&nbsp; {EUR(rechnung.betrag_brutto)} (Buchung bei Zahlung)
+            </div>
+          )}
+
+          {mut.isError && <div className="text-xs text-red-600">Fehler. Bitte prüfen.</div>}
+
+          <Button onClick={() => mut.mutate()} disabled={!objektId || !kontoId || mut.isPending}>
+            {mut.isPending ? 'Speichere…' : 'Sachkonto speichern'}
+          </Button>
+        </>
+      )}
+
+      {/* Split-Modus */}
+      {objektId && splitModus && (
+        <SplitEditor
+          rechnungId={rechnung.id}
+          betragBrutto={rechnung.betrag_brutto}
+          vorhandene={vorhandeneSplits}
+          konten={aufwandskonten}
+          onSaved={onSuccess}
+          onGeloescht={() => setSplitModus(false)}
+        />
+      )}
     </div>
   )
 }
@@ -156,10 +217,12 @@ function BankabgangForm({ rechnung, onSuccess }: { rechnung: RechnungList; onSuc
 
   return (
     <div className="border-t pt-4 space-y-3">
-      <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Bankabgang erfassen</div>
+      <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+        {rechnung.ist_gutschrift ? 'Bankeingang erfassen' : 'Bankabgang erfassen'}
+      </div>
 
       <div className="bg-teal-50 border border-teal-200 rounded px-3 py-2 text-xs text-teal-800 font-mono">
-        13600 / Bankkonto &nbsp;|&nbsp; {EUR(rechnung.betrag_brutto)}
+        {rechnung.ist_gutschrift ? 'Bankkonto / 13600' : '13600 / Bankkonto'} &nbsp;|&nbsp; {EUR(rechnung.betrag_brutto)}
       </div>
 
       <div className="grid grid-cols-2 gap-3">
@@ -213,6 +276,27 @@ function SepaToggle({ rechnung }: { rechnung: RechnungList }) {
         className="w-4 h-4 accent-blue-600"
       />
       <span className="text-sm text-gray-700">SEPA-Lastschrift</span>
+      {mut.isPending && <span className="text-xs text-gray-400">…</span>}
+    </label>
+  )
+}
+
+function GutschriftToggle({ rechnung }: { rechnung: RechnungList }) {
+  const qc = useQueryClient()
+  const mut = useMutation({
+    mutationFn: (val: boolean) => rechnungenApi.update(rechnung.id, { ist_gutschrift: val } as never),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['rechnungen'] }),
+  })
+  return (
+    <label className="flex items-center gap-2 cursor-pointer select-none">
+      <input
+        type="checkbox"
+        checked={rechnung.ist_gutschrift}
+        onChange={e => mut.mutate(e.target.checked)}
+        disabled={mut.isPending}
+        className="w-4 h-4 accent-amber-500"
+      />
+      <span className="text-sm text-gray-700">Gutschrift / Guthaben</span>
       {mut.isPending && <span className="text-xs text-gray-400">…</span>}
     </label>
   )
@@ -319,9 +403,16 @@ function DetailModal({ rechnung, onClose }: { rechnung: RechnungList; onClose: (
             <h2 className="text-lg font-bold text-gray-900">
               {rechnung.dateiname || rechnung.rechnungsnummer || 'Rechnung'}
             </h2>
-            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_STYLE[rechnung.status] ?? 'bg-gray-100'}`}>
-              {rechnung.status}
-            </span>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_STYLE[rechnung.status] ?? 'bg-gray-100'}`}>
+                {rechnung.status}
+              </span>
+              {rechnung.ist_gutschrift && (
+                <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700">
+                  Gutschrift
+                </span>
+              )}
+            </div>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
         </div>
@@ -424,8 +515,9 @@ function DetailModal({ rechnung, onClose }: { rechnung: RechnungList; onClose: (
             )}
           </div>
 
-          <div className="flex items-center gap-3 px-1">
+          <div className="flex items-center gap-6 px-1">
             <SepaToggle rechnung={rechnung} />
+            <GutschriftToggle rechnung={rechnung} />
           </div>
 
           {rechnung.duplikat_typ && (
@@ -473,7 +565,11 @@ function DetailModal({ rechnung, onClose }: { rechnung: RechnungList; onClose: (
           </div>
 
           {kannSachkonto && (
-            <SachkontoForm rechnung={rechnung} onSuccess={onClose} />
+            <SachkontoForm
+              rechnung={rechnung}
+              vorhandeneSplits={detail?.splits ?? []}
+              onSuccess={onClose}
+            />
           )}
 
           {kannBankabgang && (
@@ -691,7 +787,12 @@ export function RechnungenListe() {
                   </td>
                   <td className="px-4 py-3 font-mono text-xs text-gray-500">{r.rechnungsnummer || '—'}</td>
                   <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{DATUM(r.rechnungsdatum)}</td>
-                  <td className="px-4 py-3 text-right font-semibold tabular-nums">{EUR(r.betrag_brutto)}</td>
+                  <td className="px-4 py-3 text-right font-semibold tabular-nums">
+                    {r.ist_gutschrift
+                      ? <span className="text-amber-600">−{EUR(r.betrag_brutto)}</span>
+                      : EUR(r.betrag_brutto)
+                    }
+                  </td>
                   <td className="px-4 py-3">
                     {r.objekt_bezeichnung
                       ? <span className="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full font-medium">{r.objekt_bezeichnung}</span>
@@ -707,9 +808,16 @@ export function RechnungenListe() {
                     }
                   </td>
                   <td className="px-4 py-3">
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_STYLE[r.status] ?? 'bg-gray-100'}`}>
-                      {STATUS_LABEL[r.status] ?? r.status}
-                    </span>
+                    <div className="flex flex-wrap items-center gap-1">
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_STYLE[r.status] ?? 'bg-gray-100'}`}>
+                        {STATUS_LABEL[r.status] ?? r.status}
+                      </span>
+                      {r.ist_gutschrift && (
+                        <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700">
+                          Gutschrift
+                        </span>
+                      )}
+                    </div>
                     {r.op_nummer && (
                       <div className="text-xs text-gray-500 font-mono mt-0.5">OP-{r.op_nummer}</div>
                     )}
