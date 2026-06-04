@@ -62,6 +62,8 @@ class Person(models.Model):
     anrede = models.CharField(max_length=20, blank=True, default='', choices=ANREDE_CHOICES)
     titel  = models.CharField(max_length=50, blank=True, default='', verbose_name='Titel',
                               help_text='Akademischer Titel, z.B. Dr., Prof. Dr.')
+    titel2 = models.CharField(max_length=50, blank=True, default='', verbose_name='Titel 2. Person',
+                              help_text='Akademischer Titel der zweiten Person (bei Eheleuten)')
     ist_firma = models.BooleanField(default=False)
     vorname = models.CharField(max_length=100, blank=True)
     nachname = models.CharField(max_length=100, blank=True)
@@ -112,6 +114,7 @@ class Person(models.Model):
         firmenname: str = '',
         ist_firma: bool = False,
         titel: str = '',
+        titel2: str = '',
     ) -> tuple[str, str]:
         if ist_firma or anrede == 'Firma':
             return 'Sehr geehrte Damen und Herren,', ''
@@ -121,7 +124,7 @@ class Person(models.Model):
             a1, a2 = paar
             n1 = nachname.strip()
             n2 = (nachname2.strip() or nachname.strip())
-            return cls._zeile(a1, titel, n1, gross=True), cls._zeile(a2, '', n2, gross=False)
+            return cls._zeile(a1, titel, n1, gross=True), cls._zeile(a2, titel2, n2, gross=False)
 
         if anrede == 'Herr':
             return cls._zeile('Herr', titel, nachname.strip(), gross=True), ''
@@ -134,7 +137,7 @@ class Person(models.Model):
         if not self.briefanrede:
             self.briefanrede, self.briefanrede2 = self.auto_briefanreden(
                 self.anrede, self.nachname, self.nachname2, self.firmenname, self.ist_firma,
-                titel=self.titel,
+                titel=self.titel, titel2=self.titel2,
             )
         super().save(*args, **kwargs)
 

@@ -42,6 +42,7 @@ function autoBriefanreden(
   nachname2: string,
   istFirma: boolean,
   titel: string = '',
+  titel2: string = '',
 ): [string, string] {
   if (istFirma || anrede === 'Firma') return ['Sehr geehrte Damen und Herren,', '']
 
@@ -50,7 +51,7 @@ function autoBriefanreden(
     const [a1, a2] = paar
     const n1 = nachname.trim()
     const n2 = nachname2.trim() || nachname.trim()
-    return [briefanredeZeile(a1, titel, n1, true), briefanredeZeile(a2, '', n2, false)]
+    return [briefanredeZeile(a1, titel, n1, true), briefanredeZeile(a2, titel2, n2, false)]
   }
   if (anrede === 'Herr') return [briefanredeZeile('Herr', titel, nachname.trim(), true), '']
   if (anrede === 'Frau') return [briefanredeZeile('Frau', titel, nachname.trim(), true), '']
@@ -61,6 +62,7 @@ interface FormState {
   person_typ: string
   anrede: string
   titel: string
+  titel2: string
   ist_firma: boolean
   firmenname: string
   vorname: string
@@ -79,7 +81,8 @@ function toFormState(p?: Person): FormState {
   return {
     person_typ: (p as unknown as Record<string, string>)?.person_typ ?? '100',
     anrede: (p as unknown as Record<string, string>)?.anrede ?? '',
-    titel: (p as unknown as Record<string, string>)?.titel ?? '',
+    titel:  (p as unknown as Record<string, string>)?.titel  ?? '',
+    titel2: (p as unknown as Record<string, string>)?.titel2 ?? '',
     ist_firma: p?.ist_firma ?? false,
     firmenname: p?.firmenname ?? '',
     vorname: p?.vorname ?? '',
@@ -102,7 +105,7 @@ export function PersonForm({ person }: Props) {
   const [saving, setSaving] = useState(false)
   const [errors, setErrors] = useState<string[]>([])
 
-  const AUTO_FELDER = new Set(['anrede', 'titel', 'nachname', 'nachname2', 'firmenname', 'ist_firma'])
+  const AUTO_FELDER = new Set(['anrede', 'titel', 'titel2', 'nachname', 'nachname2', 'firmenname', 'ist_firma'])
 
   const set = <K extends keyof FormState>(field: K, value: FormState[K]) =>
     setForm(prev => {
@@ -114,6 +117,7 @@ export function PersonForm({ person }: Props) {
           field === 'nachname2' ? (value as string)  : prev.nachname2,
           field === 'ist_firma' ? (value as boolean) : prev.ist_firma,
           field === 'titel'     ? (value as string)  : prev.titel,
+          field === 'titel2'    ? (value as string)  : prev.titel2,
         )
         next.briefanrede  = ba1
         next.briefanrede2 = ba2
@@ -240,20 +244,34 @@ export function PersonForm({ person }: Props) {
             />
           </div>
           {PAAR_ANREDEN.has(form.anrede) && (
-            <div className="grid grid-cols-2 gap-4">
-              <Input
-                label="Vorname 2"
-                value={form.vorname2}
-                onChange={e => set('vorname2', e.target.value)}
-                placeholder="Maria"
-              />
-              <Input
-                label="Nachname 2"
-                value={form.nachname2}
-                onChange={e => set('nachname2', e.target.value)}
-                placeholder="Müller"
-              />
-            </div>
+            <>
+              <div className="grid grid-cols-2 gap-4">
+                <Input
+                  label="Vorname 2"
+                  value={form.vorname2}
+                  onChange={e => set('vorname2', e.target.value)}
+                  placeholder="Maria"
+                />
+                <Input
+                  label="Nachname 2"
+                  value={form.nachname2}
+                  onChange={e => set('nachname2', e.target.value)}
+                  placeholder="Müller"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-sm font-medium text-gray-700">Titel 2. Person</label>
+                <select
+                  value={form.titel2}
+                  onChange={e => set('titel2', e.target.value)}
+                  className="rounded border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none"
+                >
+                  {TITEL_WERTE.map(t => (
+                    <option key={t} value={t}>{t === '' ? '– kein Titel –' : t}</option>
+                  ))}
+                </select>
+              </div>
+            </>
           )}
         </div>
       )}
@@ -270,7 +288,7 @@ export function PersonForm({ person }: Props) {
               onClick={() => {
                 setBriefanredeManual(false)
                 const [ba1, ba2] = autoBriefanreden(
-                  form.anrede, form.nachname, form.nachname2, form.ist_firma, form.titel
+                  form.anrede, form.nachname, form.nachname2, form.ist_firma, form.titel, form.titel2
                 )
                 setForm(prev => ({ ...prev, briefanrede: ba1, briefanrede2: ba2 }))
               }}
