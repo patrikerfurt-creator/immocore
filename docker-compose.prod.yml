@@ -1,0 +1,80 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: immocore_db
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    # Kein Port nach außen — nur intern erreichbar
+
+  redis:
+    image: redis:7-alpine
+    container_name: immocore_redis
+    restart: unless-stopped
+    # Kein Port nach außen — nur intern erreichbar
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    container_name: immocore_backend
+    env_file: .env.prod
+    volumes:
+      - backend_media:/app/media
+      - backend_static:/app/staticfiles
+      - ./CamtDAT:/app/camt_dat
+      - ./Rechnungen:/app/rechnungen
+    depends_on:
+      - db
+      - redis
+    restart: unless-stopped
+
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    container_name: immocore_celery_worker
+    command: celery -A config worker --loglevel=info --concurrency=2
+    env_file: .env.prod
+    volumes:
+      - backend_media:/app/media
+      - ./CamtDAT:/app/camt_dat
+      - ./Rechnungen:/app/rechnungen
+    depends_on:
+      - db
+      - redis
+    restart: unless-stopped
+
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    container_name: immocore_celery_beat
+    command: celery -A config beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    env_file: .env.prod
+    volumes:
+      - backend_media:/app/media
+    depends_on:
+      - db
+      - redis
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+    container_name: immocore_frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  backend_media:
+  backend_static:

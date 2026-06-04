@@ -133,17 +133,19 @@ SIMPLE_JWT = {
 }
 
 # CORS
+_cors_extra = os.environ.get('CORS_ALLOWED_ORIGINS', '')
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:3000',
     'http://127.0.0.1:3000',
-]
+] + [o.strip() for o in _cors_extra.split(',') if o.strip()]
 
+_csrf_extra = os.environ.get('CSRF_TRUSTED_ORIGINS', '')
 CSRF_TRUSTED_ORIGINS = [
     'http://localhost:3000',
     'http://127.0.0.1:3000',
     'http://localhost:8000',
     'http://127.0.0.1:8000',
-]
+] + [o.strip() for o in _csrf_extra.split(',') if o.strip()]
 
 # Anthropic / KI
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
