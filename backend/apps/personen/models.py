@@ -80,8 +80,10 @@ class Person(models.Model):
         help_text='Briefanrede der zweiten Person (bei Eheleuten)',
     )
     firmenname = models.CharField(max_length=255, blank=True)
-    email = models.EmailField(blank=True)
-    telefon = models.CharField(max_length=50, blank=True)
+    email = models.EmailField(blank=True)       # Legacy — bleibt für Kompatibilität
+    telefon = models.CharField(max_length=50, blank=True)  # Legacy
+    emails        = models.JSONField(default=list, verbose_name='E-Mail-Adressen')
+    telefonnummern = models.JSONField(default=list, verbose_name='Telefonnummern')
     adresse = models.TextField(blank=True)
     ibans = models.JSONField(default=list)
     briefanrede  = models.CharField(max_length=200, blank=True, default='')

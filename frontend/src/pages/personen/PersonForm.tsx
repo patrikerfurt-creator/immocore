@@ -71,8 +71,8 @@ interface FormState {
   nachname2: string
   briefanrede: string
   briefanrede2: string
-  email: string
-  telefon: string
+  emails: string[]
+  telefonnummern: string[]
   adresse: string
   ibans: string[]
 }
@@ -91,8 +91,12 @@ function toFormState(p?: Person): FormState {
     nachname2: p?.nachname2 ?? '',
     briefanrede: p?.briefanrede ?? '',
     briefanrede2: p?.briefanrede2 ?? '',
-    email: p?.email ?? '',
-    telefon: p?.telefon ?? '',
+    emails:         (p as unknown as Record<string, string[]>)?.emails?.length
+                      ? (p as unknown as Record<string, string[]>).emails
+                      : (p?.email ? [p.email] : ['']),
+    telefonnummern: (p as unknown as Record<string, string[]>)?.telefonnummern?.length
+                      ? (p as unknown as Record<string, string[]>).telefonnummern
+                      : (p?.telefon ? [p.telefon] : ['']),
     adresse: (p as unknown as Record<string, string>)?.adresse ?? '',
     ibans: p?.ibans ?? [''],
   }
@@ -137,6 +141,8 @@ export function PersonForm({ person }: Props) {
     setSaving(true)
     const payload = {
       ...form,
+      emails:         form.emails.map(v => v.trim()).filter(Boolean),
+      telefonnummern: form.telefonnummern.map(v => v.trim()).filter(Boolean),
       ibans: form.ibans.map(v => v.replace(/\s/g, '').toUpperCase()).filter(Boolean),
     }
     try {
@@ -330,22 +336,52 @@ export function PersonForm({ person }: Props) {
         </p>
       </div>
 
-      {/* Kontakt */}
-      <div className="grid grid-cols-2 gap-4">
-        <Input
-          label="E-Mail"
-          type="email"
-          value={form.email}
-          onChange={e => set('email', e.target.value)}
-          placeholder="k.mueller@email.de"
-        />
-        <Input
-          label="Telefon"
-          type="tel"
-          value={form.telefon}
-          onChange={e => set('telefon', e.target.value)}
-          placeholder="+49 69 123456"
-        />
+      {/* E-Mail-Adressen */}
+      <div className="flex flex-col gap-2">
+        <label className="text-sm font-medium text-gray-700">E-Mail-Adressen</label>
+        {form.emails.map((mail, idx) => (
+          <div key={idx} className="flex gap-2 items-center">
+            <input
+              type="email"
+              value={mail}
+              onChange={e => set('emails', form.emails.map((v, i) => i === idx ? e.target.value : v))}
+              placeholder="k.mueller@email.de"
+              className="flex-1 rounded border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none"
+            />
+            {form.emails.length > 1 && (
+              <button type="button" onClick={() => set('emails', form.emails.filter((_, i) => i !== idx))}
+                className="text-red-400 hover:text-red-600 text-lg leading-none px-1">×</button>
+            )}
+          </div>
+        ))}
+        <button type="button" onClick={() => set('emails', [...form.emails, ''])}
+          className="self-start text-xs text-primary-600 hover:text-primary-700 underline">
+          + E-Mail hinzufügen
+        </button>
+      </div>
+
+      {/* Telefonnummern */}
+      <div className="flex flex-col gap-2">
+        <label className="text-sm font-medium text-gray-700">Telefonnummern</label>
+        {form.telefonnummern.map((tel, idx) => (
+          <div key={idx} className="flex gap-2 items-center">
+            <input
+              type="tel"
+              value={tel}
+              onChange={e => set('telefonnummern', form.telefonnummern.map((v, i) => i === idx ? e.target.value : v))}
+              placeholder="+49 69 123456"
+              className="flex-1 rounded border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none"
+            />
+            {form.telefonnummern.length > 1 && (
+              <button type="button" onClick={() => set('telefonnummern', form.telefonnummern.filter((_, i) => i !== idx))}
+                className="text-red-400 hover:text-red-600 text-lg leading-none px-1">×</button>
+            )}
+          </div>
+        ))}
+        <button type="button" onClick={() => set('telefonnummern', [...form.telefonnummern, ''])}
+          className="self-start text-xs text-primary-600 hover:text-primary-700 underline">
+          + Telefonnummer hinzufügen
+        </button>
       </div>
 
       {/* Adresse */}
