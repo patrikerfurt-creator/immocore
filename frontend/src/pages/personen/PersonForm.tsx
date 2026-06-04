@@ -98,9 +98,7 @@ function toFormState(p?: Person): FormState {
 export function PersonForm({ person }: Props) {
   const navigate = useNavigate()
   const [form, setForm] = useState<FormState>(() => toFormState(person))
-  const [briefanredeManual, setBriefanredeManual] = useState(
-    !!(person && (person as unknown as Record<string, string>).briefanrede)
-  )
+  const [briefanredeManual, setBriefanredeManual] = useState(false)
   const [saving, setSaving] = useState(false)
   const [errors, setErrors] = useState<string[]>([])
 
