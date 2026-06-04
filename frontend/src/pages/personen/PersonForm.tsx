@@ -7,6 +7,8 @@ import { personenApi } from '../../api/personen'
 import type { Person } from '../../types'
 
 const ANREDE_WERTE = ['', 'Herr', 'Frau', 'Eheleute', 'Herren', 'Damen', 'Herr und Frau', 'Firma'] as const
+const TITEL_WERTE = ['', 'Dr.', 'Dr. med.', 'Dr. jur.', 'Dr. ing.', 'Prof.', 'Prof. Dr.', 'Prof. Dr. med.',
+                     'Dipl.-Ing.', 'Dipl.-Kfm.', 'Dipl.-Kffr.', 'M.Sc.', 'B.Sc.', 'MBA', 'LL.M.']
 const PERSON_TYP_OPTIONEN = [
   { value: '100', label: 'Eigentümer' },
   { value: '200', label: 'Mieter' },
@@ -27,10 +29,11 @@ const PAAR_EINZEL: Record<string, [string, string]> = {
   'Herr und Frau': ['Frau',  'Herr'],
 }
 
-function briefanredeZeile(einzelAnrede: string, name: string, gross: boolean): string {
+function briefanredeZeile(einzelAnrede: string, titel: string, name: string, gross: boolean): string {
   const prefix = gross ? 'Sehr' : 'sehr'
   const endung = einzelAnrede === 'Herr' ? 'er' : 'e'
-  return `${prefix} geehrt${endung} ${einzelAnrede} ${name},`
+  const titelPart = titel ? `${titel} ` : ''
+  return `${prefix} geehrt${endung} ${einzelAnrede} ${titelPart}${name},`
 }
 
 function autoBriefanreden(
@@ -38,6 +41,8 @@ function autoBriefanreden(
   nachname: string,
   nachname2: string,
   istFirma: boolean,
+  titel: string = '',
+  titel2: string = '',
 ): [string, string] {
   if (istFirma || anrede === 'Firma') return ['Sehr geehrte Damen und Herren,', '']
 
@@ -46,16 +51,18 @@ function autoBriefanreden(
     const [a1, a2] = paar
     const n1 = nachname.trim()
     const n2 = nachname2.trim() || nachname.trim()
-    return [briefanredeZeile(a1, n1, true), briefanredeZeile(a2, n2, false)]
+    return [briefanredeZeile(a1, titel, n1, true), briefanredeZeile(a2, titel2, n2, false)]
   }
-  if (anrede === 'Herr') return [briefanredeZeile('Herr', nachname.trim(), true), '']
-  if (anrede === 'Frau') return [briefanredeZeile('Frau', nachname.trim(), true), '']
+  if (anrede === 'Herr') return [briefanredeZeile('Herr', titel, nachname.trim(), true), '']
+  if (anrede === 'Frau') return [briefanredeZeile('Frau', titel, nachname.trim(), true), '']
   return ['', '']
 }
 
 interface FormState {
   person_typ: string
   anrede: string
+  titel: string
+  titel2: string
   ist_firma: boolean
   firmenname: string
   vorname: string
@@ -64,8 +71,8 @@ interface FormState {
   nachname2: string
   briefanrede: string
   briefanrede2: string
-  email: string
-  telefon: string
+  emails: string[]
+  telefonnummern: string[]
   adresse: string
   ibans: string[]
 }
@@ -74,6 +81,8 @@ function toFormState(p?: Person): FormState {
   return {
     person_typ: (p as unknown as Record<string, string>)?.person_typ ?? '100',
     anrede: (p as unknown as Record<string, string>)?.anrede ?? '',
+    titel:  (p as unknown as Record<string, string>)?.titel  ?? '',
+    titel2: (p as unknown as Record<string, string>)?.titel2 ?? '',
     ist_firma: p?.ist_firma ?? false,
     firmenname: p?.firmenname ?? '',
     vorname: p?.vorname ?? '',
@@ -82,8 +91,12 @@ function toFormState(p?: Person): FormState {
     nachname2: p?.nachname2 ?? '',
     briefanrede: p?.briefanrede ?? '',
     briefanrede2: p?.briefanrede2 ?? '',
-    email: p?.email ?? '',
-    telefon: p?.telefon ?? '',
+    emails:         (p as unknown as Record<string, string[]>)?.emails?.length
+                      ? (p as unknown as Record<string, string[]>).emails
+                      : (p?.email ? [p.email] : ['']),
+    telefonnummern: (p as unknown as Record<string, string[]>)?.telefonnummern?.length
+                      ? (p as unknown as Record<string, string[]>).telefonnummern
+                      : (p?.telefon ? [p.telefon] : ['']),
     adresse: (p as unknown as Record<string, string>)?.adresse ?? '',
     ibans: p?.ibans ?? [''],
   }
@@ -92,13 +105,11 @@ function toFormState(p?: Person): FormState {
 export function PersonForm({ person }: Props) {
   const navigate = useNavigate()
   const [form, setForm] = useState<FormState>(() => toFormState(person))
-  const [briefanredeManual, setBriefanredeManual] = useState(
-    !!(person && (person as unknown as Record<string, string>).briefanrede)
-  )
+  const [briefanredeManual, setBriefanredeManual] = useState(false)
   const [saving, setSaving] = useState(false)
   const [errors, setErrors] = useState<string[]>([])
 
-  const AUTO_FELDER = new Set(['anrede', 'nachname', 'nachname2', 'firmenname', 'ist_firma'])
+  const AUTO_FELDER = new Set(['anrede', 'titel', 'titel2', 'nachname', 'nachname2', 'firmenname', 'ist_firma'])
 
   const set = <K extends keyof FormState>(field: K, value: FormState[K]) =>
     setForm(prev => {
@@ -109,6 +120,8 @@ export function PersonForm({ person }: Props) {
           field === 'nachname'  ? (value as string)  : prev.nachname,
           field === 'nachname2' ? (value as string)  : prev.nachname2,
           field === 'ist_firma' ? (value as boolean) : prev.ist_firma,
+          field === 'titel'     ? (value as string)  : prev.titel,
+          field === 'titel2'    ? (value as string)  : prev.titel2,
         )
         next.briefanrede  = ba1
         next.briefanrede2 = ba2
@@ -128,6 +141,8 @@ export function PersonForm({ person }: Props) {
     setSaving(true)
     const payload = {
       ...form,
+      emails:         form.emails.map(v => v.trim()).filter(Boolean),
+      telefonnummern: form.telefonnummern.map(v => v.trim()).filter(Boolean),
       ibans: form.ibans.map(v => v.replace(/\s/g, '').toUpperCase()).filter(Boolean),
     }
     try {
@@ -179,6 +194,20 @@ export function PersonForm({ person }: Props) {
             ))}
           </select>
         </div>
+        {!form.ist_firma && (
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium text-gray-700">Titel</label>
+            <select
+              value={form.titel}
+              onChange={e => set('titel', e.target.value)}
+              className="rounded border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none"
+            >
+              {TITEL_WERTE.map(t => (
+                <option key={t} value={t}>{t === '' ? '– kein Titel –' : t}</option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* Firma-Toggle */}
@@ -221,34 +250,34 @@ export function PersonForm({ person }: Props) {
             />
           </div>
           {PAAR_ANREDEN.has(form.anrede) && (
-            <div className="grid grid-cols-2 gap-4">
-              <Input
-                label="Vorname 2"
-                value={form.vorname2}
-                onChange={e => set('vorname2', e.target.value)}
-                placeholder="Maria"
-              />
-              <Input
-                label="Nachname 2"
-                value={form.nachname2}
-                onChange={e => set('nachname2', e.target.value)}
-                placeholder="Müller"
-              />
-            </div>
-          )}
-          <Input
-            label="Briefanrede"
-            value={form.briefanrede}
-            onChange={e => set('briefanrede', e.target.value)}
-            placeholder='z.B. "Sehr geehrter Herr Müller"'
-          />
-          {PAAR_ANREDEN.has(form.anrede) && (
-            <Input
-              label="Briefanrede 2. Person"
-              value={form.briefanrede2}
-              onChange={e => set('briefanrede2', e.target.value)}
-              placeholder='z.B. "Sehr geehrte Frau Müller"'
-            />
+            <>
+              <div className="flex flex-col gap-1">
+                <label className="text-sm font-medium text-gray-700">Titel 2. Person</label>
+                <select
+                  value={form.titel2}
+                  onChange={e => set('titel2', e.target.value)}
+                  className="rounded border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none"
+                >
+                  {TITEL_WERTE.map(t => (
+                    <option key={t} value={t}>{t === '' ? '– kein Titel –' : t}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <Input
+                  label="Vorname 2"
+                  value={form.vorname2}
+                  onChange={e => set('vorname2', e.target.value)}
+                  placeholder="Maria"
+                />
+                <Input
+                  label="Nachname 2"
+                  value={form.nachname2}
+                  onChange={e => set('nachname2', e.target.value)}
+                  placeholder="Müller"
+                />
+              </div>
+            </>
           )}
         </div>
       )}
@@ -265,7 +294,7 @@ export function PersonForm({ person }: Props) {
               onClick={() => {
                 setBriefanredeManual(false)
                 const [ba1, ba2] = autoBriefanreden(
-                  form.anrede, form.nachname, form.nachname2, form.ist_firma
+                  form.anrede, form.nachname, form.nachname2, form.ist_firma, form.titel, form.titel2
                 )
                 setForm(prev => ({ ...prev, briefanrede: ba1, briefanrede2: ba2 }))
               }}
@@ -307,22 +336,52 @@ export function PersonForm({ person }: Props) {
         </p>
       </div>
 
-      {/* Kontakt */}
-      <div className="grid grid-cols-2 gap-4">
-        <Input
-          label="E-Mail"
-          type="email"
-          value={form.email}
-          onChange={e => set('email', e.target.value)}
-          placeholder="k.mueller@email.de"
-        />
-        <Input
-          label="Telefon"
-          type="tel"
-          value={form.telefon}
-          onChange={e => set('telefon', e.target.value)}
-          placeholder="+49 69 123456"
-        />
+      {/* E-Mail-Adressen */}
+      <div className="flex flex-col gap-2">
+        <label className="text-sm font-medium text-gray-700">E-Mail-Adressen</label>
+        {form.emails.map((mail, idx) => (
+          <div key={idx} className="flex gap-2 items-center">
+            <input
+              type="email"
+              value={mail}
+              onChange={e => set('emails', form.emails.map((v, i) => i === idx ? e.target.value : v))}
+              placeholder="k.mueller@email.de"
+              className="flex-1 rounded border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none"
+            />
+            {form.emails.length > 1 && (
+              <button type="button" onClick={() => set('emails', form.emails.filter((_, i) => i !== idx))}
+                className="text-red-400 hover:text-red-600 text-lg leading-none px-1">×</button>
+            )}
+          </div>
+        ))}
+        <button type="button" onClick={() => set('emails', [...form.emails, ''])}
+          className="self-start text-xs text-primary-600 hover:text-primary-700 underline">
+          + E-Mail hinzufügen
+        </button>
+      </div>
+
+      {/* Telefonnummern */}
+      <div className="flex flex-col gap-2">
+        <label className="text-sm font-medium text-gray-700">Telefonnummern</label>
+        {form.telefonnummern.map((tel, idx) => (
+          <div key={idx} className="flex gap-2 items-center">
+            <input
+              type="tel"
+              value={tel}
+              onChange={e => set('telefonnummern', form.telefonnummern.map((v, i) => i === idx ? e.target.value : v))}
+              placeholder="+49 69 123456"
+              className="flex-1 rounded border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none"
+            />
+            {form.telefonnummern.length > 1 && (
+              <button type="button" onClick={() => set('telefonnummern', form.telefonnummern.filter((_, i) => i !== idx))}
+                className="text-red-400 hover:text-red-600 text-lg leading-none px-1">×</button>
+            )}
+          </div>
+        ))}
+        <button type="button" onClick={() => set('telefonnummern', [...form.telefonnummern, ''])}
+          className="self-start text-xs text-primary-600 hover:text-primary-700 underline">
+          + Telefonnummer hinzufügen
+        </button>
       </div>
 
       {/* Adresse */}

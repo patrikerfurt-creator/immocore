@@ -60,6 +60,10 @@ class Person(models.Model):
     personennummer = models.CharField(max_length=20, unique=True, blank=True)
     person_typ = models.CharField(max_length=100, choices=PERSON_TYP_CHOICES)
     anrede = models.CharField(max_length=20, blank=True, default='', choices=ANREDE_CHOICES)
+    titel  = models.CharField(max_length=50, blank=True, default='', verbose_name='Titel',
+                              help_text='Akademischer Titel, z.B. Dr., Prof. Dr.')
+    titel2 = models.CharField(max_length=50, blank=True, default='', verbose_name='Titel 2. Person',
+                              help_text='Akademischer Titel der zweiten Person (bei Eheleuten)')
     ist_firma = models.BooleanField(default=False)
     vorname = models.CharField(max_length=100, blank=True)
     nachname = models.CharField(max_length=100, blank=True)
@@ -76,8 +80,10 @@ class Person(models.Model):
         help_text='Briefanrede der zweiten Person (bei Eheleuten)',
     )
     firmenname = models.CharField(max_length=255, blank=True)
-    email = models.EmailField(blank=True)
-    telefon = models.CharField(max_length=50, blank=True)
+    email = models.EmailField(blank=True)       # Legacy — bleibt für Kompatibilität
+    telefon = models.CharField(max_length=50, blank=True)  # Legacy
+    emails        = models.JSONField(default=list, verbose_name='E-Mail-Adressen')
+    telefonnummern = models.JSONField(default=list, verbose_name='Telefonnummern')
     adresse = models.TextField(blank=True)
     ibans = models.JSONField(default=list)
     briefanrede  = models.CharField(max_length=200, blank=True, default='')
@@ -95,10 +101,11 @@ class Person(models.Model):
     }
 
     @staticmethod
-    def _zeile(einzel_anrede: str, name: str, gross: bool) -> str:
+    def _zeile(einzel_anrede: str, titel: str, name: str, gross: bool) -> str:
         prefix = 'Sehr' if gross else 'sehr'
         endung = 'er' if einzel_anrede == 'Herr' else 'e'
-        return f'{prefix} geehrt{endung} {einzel_anrede} {name},'
+        titel_part = f'{titel} ' if titel else ''
+        return f'{prefix} geehrt{endung} {einzel_anrede} {titel_part}{name},'
 
     @classmethod
     def auto_briefanreden(
@@ -108,6 +115,8 @@ class Person(models.Model):
         nachname2: str = '',
         firmenname: str = '',
         ist_firma: bool = False,
+        titel: str = '',
+        titel2: str = '',
     ) -> tuple[str, str]:
         if ist_firma or anrede == 'Firma':
             return 'Sehr geehrte Damen und Herren,', ''
@@ -117,19 +126,20 @@ class Person(models.Model):
             a1, a2 = paar
             n1 = nachname.strip()
             n2 = (nachname2.strip() or nachname.strip())
-            return cls._zeile(a1, n1, gross=True), cls._zeile(a2, n2, gross=False)
+            return cls._zeile(a1, titel, n1, gross=True), cls._zeile(a2, titel2, n2, gross=False)
 
         if anrede == 'Herr':
-            return cls._zeile('Herr', nachname.strip(), gross=True), ''
+            return cls._zeile('Herr', titel, nachname.strip(), gross=True), ''
         if anrede == 'Frau':
-            return cls._zeile('Frau', nachname.strip(), gross=True), ''
+            return cls._zeile('Frau', titel, nachname.strip(), gross=True), ''
 
         return '', ''
 
     def save(self, *args, **kwargs):
         if not self.briefanrede:
             self.briefanrede, self.briefanrede2 = self.auto_briefanreden(
-                self.anrede, self.nachname, self.nachname2, self.firmenname, self.ist_firma
+                self.anrede, self.nachname, self.nachname2, self.firmenname, self.ist_firma,
+                titel=self.titel, titel2=self.titel2,
             )
         super().save(*args, **kwargs)
 
