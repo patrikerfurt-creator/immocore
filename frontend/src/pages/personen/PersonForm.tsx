@@ -245,6 +245,18 @@ export function PersonForm({ person }: Props) {
           </div>
           {PAAR_ANREDEN.has(form.anrede) && (
             <>
+              <div className="flex flex-col gap-1">
+                <label className="text-sm font-medium text-gray-700">Titel 2. Person</label>
+                <select
+                  value={form.titel2}
+                  onChange={e => set('titel2', e.target.value)}
+                  className="rounded border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none"
+                >
+                  {TITEL_WERTE.map(t => (
+                    <option key={t} value={t}>{t === '' ? '– kein Titel –' : t}</option>
+                  ))}
+                </select>
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <Input
                   label="Vorname 2"
@@ -258,18 +270,6 @@ export function PersonForm({ person }: Props) {
                   onChange={e => set('nachname2', e.target.value)}
                   placeholder="Müller"
                 />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-sm font-medium text-gray-700">Titel 2. Person</label>
-                <select
-                  value={form.titel2}
-                  onChange={e => set('titel2', e.target.value)}
-                  className="rounded border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none"
-                >
-                  {TITEL_WERTE.map(t => (
-                    <option key={t} value={t}>{t === '' ? '– kein Titel –' : t}</option>
-                  ))}
-                </select>
               </div>
             </>
           )}
