@@ -236,20 +236,6 @@ export function PersonForm({ person }: Props) {
               />
             </div>
           )}
-          <Input
-            label="Briefanrede"
-            value={form.briefanrede}
-            onChange={e => set('briefanrede', e.target.value)}
-            placeholder='z.B. "Sehr geehrter Herr Müller"'
-          />
-          {PAAR_ANREDEN.has(form.anrede) && (
-            <Input
-              label="Briefanrede 2. Person"
-              value={form.briefanrede2}
-              onChange={e => set('briefanrede2', e.target.value)}
-              placeholder='z.B. "Sehr geehrte Frau Müller"'
-            />
-          )}
         </div>
       )}
 
