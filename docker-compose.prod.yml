@@ -51,7 +51,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile.prod
     container_name: immocore_celery_beat
-    command: celery -A config beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    command: celery -A config beat --loglevel=info
     env_file: .env.prod
     volumes:
       - backend_media:/app/media
