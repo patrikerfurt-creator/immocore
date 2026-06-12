@@ -312,27 +312,6 @@ EINHEIT_TYP_MAP = {
 EINHEIT_TYP_CHOICES = list(EINHEIT_TYP_MAP.keys())
 
 
-def _lage_aus_flaechennummer(flaechennr: str) -> str:
-    """
-    Leitet das Geschoss aus der 6-stelligen Flächennummer ab.
-    Format: BBSSNN  (BB=Gebäude, SS=Stockwerk, NN=Einheit)
-    Stellen 2-3 kodieren das Geschoss (wie im Flächensoll-PDF unter "Info"):
-    00 → EG, 01 → 1. OG, 02 → 2. OG, ... 05 → 5. OG
-    """
-    if len(flaechennr) == 6 and flaechennr.isdigit():
-        etage = int(flaechennr[2:4])
-        if etage == 0:
-            return 'EG'
-        return f'{etage}. OG'
-    return ''
-
-
-def _lage_ist_ungueltig(lage: str) -> bool:
-    """Erkennt fehlerhafte Lage-Werte aus dem Quellexport (Flächenangaben statt Stockwerk)."""
-    l = lage.lower()
-    return 'größe' in l or 'm²' in l or 'wohnfläche' in l or 'nutzfläche' in l
-
-
 def _parse_einheiten_csv(raw: bytes) -> tuple[list, str | None]:
     """
     CSV parsen, Pflichtfelder + Objekt/Eingang gegen DB prüfen.
@@ -378,8 +357,7 @@ def _parse_einheiten_csv(raw: bytes) -> tuple[list, str | None]:
         flaechennr  = zeile.get('Flächennummer', '').strip()
         bez_einheit = zeile.get('Bez. Einheit', '').strip()
         typ_code    = (zeile.get('Einheit-Typ') or zeile.get('Einheit Typ') or '').strip() or '100'
-        lage_raw    = zeile.get('Lage', '').strip()
-        lage        = lage_raw if lage_raw and not _lage_ist_ungueltig(lage_raw) else _lage_aus_flaechennummer(flaechennr)
+        lage        = zeile.get('Lage', '').strip()
 
         if objekt_nr.startswith('#'):
             continue
