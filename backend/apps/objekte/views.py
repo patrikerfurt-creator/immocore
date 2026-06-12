@@ -316,13 +316,14 @@ def _lage_aus_flaechennummer(flaechennr: str) -> str:
     """
     Leitet das Geschoss aus der 6-stelligen Flächennummer ab.
     Format: BBSSNN  (BB=Gebäude, SS=Stockwerk, NN=Einheit)
-    00 → EG, 01 → 1.OG, 02 → 2.OG, ... 05 → 5.OG / DG
+    Stellen 2-3 kodieren das Geschoss (wie im Flächensoll-PDF unter "Info"):
+    00 → EG, 01 → 1. OG, 02 → 2. OG, ... 05 → 5. OG
     """
     if len(flaechennr) == 6 and flaechennr.isdigit():
         etage = int(flaechennr[2:4])
         if etage == 0:
             return 'EG'
-        return f'{etage}.OG'
+        return f'{etage}. OG'
     return ''
 
 
