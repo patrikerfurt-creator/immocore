@@ -31,8 +31,8 @@ class AbrechnungsartViewSet(viewsets.ModelViewSet):
             if reihenfolge >= 2:
                 from .services import ruecklagen_konten_anlegen
                 ruecklagen_konten_anlegen(
-                    str(instance.objekt_id),
                     [{'reihenfolge': reihenfolge}],
+                    objekt_id=str(instance.objekt_id),
                 )
 
 
