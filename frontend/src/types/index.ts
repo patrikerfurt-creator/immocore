@@ -48,10 +48,10 @@ export interface ObjektList {
 export interface Eingang {
   id: string
   objekt: string
+  bezeichnung: string
   strasse: string
   plz: string
   ort: string
-  ist_hauptadresse: boolean
 }
 
 export interface Bankkonto {

@@ -8,7 +8,7 @@ import { buchhaltungApi } from '../../api/buchhaltung'
 import { Badge } from '../../components/ui/Badge'
 import { IbanInput } from '../../components/ui/IbanInput'
 import { useObjektStore } from '../../stores/objekt'
-import type { Objekt, Bankkonto, AutoLaufStatus } from '../../types'
+import type { Objekt, Eingang, Bankkonto, AutoLaufStatus } from '../../types'
 import { ABTEILUNG_LABELS } from '../../types'
 
 const AUTO_LAUF_STATUS_COLOR: Record<AutoLaufStatus, string> = {
@@ -635,6 +635,8 @@ export function ObjektDetail() {
 
   const [isEditing, setIsEditing] = useState(false)
   const [formData, setFormData] = useState<Partial<Objekt>>({})
+  const [eingaengeEdits, setEingaengeEdits] = useState<Eingang[]>([])
+  const [eingaengeDeleted, setEingaengeDeleted] = useState<string[]>([])
   const [bankkontenEdits, setBankkontenEdits] = useState<Bankkonto[]>([])
   const [bankkontenDeleted, setBankkontenDeleted] = useState<string[]>([])
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -658,6 +660,8 @@ export function ObjektDetail() {
       auto_pipeline_aktiv: data.auto_pipeline_aktiv ?? true,
       bundesland: data.bundesland ?? 'HE',
     })
+    setEingaengeEdits(data.eingaenge ?? [])
+    setEingaengeDeleted([])
     setBankkontenEdits(data.bankkonten ?? [])
     setBankkontenDeleted([])
     setSaveError(null)
@@ -666,6 +670,27 @@ export function ObjektDetail() {
 
   const set = (field: keyof Objekt, value: unknown) =>
     setFormData(prev => ({ ...prev, [field]: value }))
+
+  const setEg = (idx: number, field: keyof Eingang, value: unknown) =>
+    setEingaengeEdits(prev => prev.map((e, i) => i === idx ? { ...e, [field]: value } : e))
+
+  const addEingang = () =>
+    setEingaengeEdits(prev => [...prev, {
+      id: `new-${Date.now()}`,
+      objekt: id!,
+      bezeichnung: '',
+      strasse: '',
+      plz: '',
+      ort: '',
+    }])
+
+  const removeEingang = (idx: number) => {
+    const eg = eingaengeEdits[idx]
+    if (!eg.id.startsWith('new-')) {
+      setEingaengeDeleted(prev => [...prev, eg.id])
+    }
+    setEingaengeEdits(prev => prev.filter((_, i) => i !== idx))
+  }
 
   const setBk = (idx: number, field: keyof Bankkonto, value: unknown) =>
     setBankkontenEdits(prev => prev.map((b, i) => i === idx ? { ...b, [field]: value } : b))
@@ -700,6 +725,18 @@ export function ObjektDetail() {
     setSaveError(null)
     try {
       await objekteApi.update(id!, formData)
+      for (const egId of eingaengeDeleted) {
+        await objekteApi.deleteEingang(egId)
+      }
+      for (const [idx, eg] of eingaengeEdits.entries()) {
+        const bezeichnung = `Eingang ${idx + 1}`
+        if (eg.id.startsWith('new-')) {
+          const { id: _id, ...rest } = eg
+          await objekteApi.createEingang({ ...rest, bezeichnung })
+        } else {
+          await objekteApi.updateEingang(eg.id, { ...eg, bezeichnung })
+        }
+      }
       for (const bkId of bankkontenDeleted) {
         await objekteApi.deleteBankkonto(bkId)
       }
@@ -714,6 +751,7 @@ export function ObjektDetail() {
       await queryClient.invalidateQueries({ queryKey: ['objekte', id] })
       queryClient.invalidateQueries({ queryKey: ['objekte'] })
       setIsEditing(false)
+      setEingaengeDeleted([])
       setBankkontenDeleted([])
     } catch {
       setSaveError('Speichern fehlgeschlagen. Bitte prüfen Sie die Eingaben.')
@@ -896,17 +934,80 @@ export function ObjektDetail() {
       </div>
 
       {/* ── Eingänge ──────────────────────────────────────────────── */}
-      {data.eingaenge?.length > 0 && (
-        <Section title={`Eingänge (${data.eingaenge.length})`}>
-          <div className="flex flex-col gap-2">
-            {data.eingaenge.map(e => (
-              <div key={e.id} className="text-sm text-gray-700">
-                {e.strasse}, {e.plz} {e.ort}
+      <Section title={`Eingänge (${isEditing ? eingaengeEdits.length : (data.eingaenge?.length ?? 0)})`}>
+        {isEditing ? (
+          <div className="space-y-3">
+            {eingaengeEdits.map((eg, idx) => (
+              <div key={eg.id} className={`rounded-lg border p-3 space-y-2 ${idx === 0 ? 'border-primary-200 bg-primary-50' : 'border-gray-200 bg-white'}`}>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-gray-600">
+                    Eingang {idx + 1}
+                    {idx === 0 && <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-primary-100 text-primary-700">Hauptadresse</span>}
+                  </span>
+                  {idx > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => removeEingang(idx)}
+                      className="text-gray-400 hover:text-red-500 transition-colors text-lg leading-none"
+                      aria-label="Eingang entfernen"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                  <EditField label="Straße">
+                    <input
+                      className={inputCls}
+                      value={eg.strasse}
+                      onChange={e => setEg(idx, 'strasse', e.target.value)}
+                      placeholder="Musterstraße 1"
+                    />
+                  </EditField>
+                  <EditField label="PLZ">
+                    <input
+                      className={inputCls}
+                      value={eg.plz}
+                      onChange={e => setEg(idx, 'plz', e.target.value)}
+                      placeholder="12345"
+                      maxLength={5}
+                    />
+                  </EditField>
+                  <EditField label="Ort">
+                    <input
+                      className={inputCls}
+                      value={eg.ort}
+                      onChange={e => setEg(idx, 'ort', e.target.value)}
+                      placeholder="Musterstadt"
+                    />
+                  </EditField>
+                </div>
               </div>
             ))}
+            <button
+              type="button"
+              onClick={addEingang}
+              className="flex items-center gap-2 text-sm text-primary-600 hover:text-primary-700 font-medium border border-dashed border-primary-300 rounded-lg px-4 py-2 w-full justify-center hover:bg-primary-50 transition-colors"
+            >
+              <span className="text-lg leading-none">+</span>
+              Weiteren Eingang hinzufügen
+            </button>
           </div>
-        </Section>
-      )}
+        ) : (
+          <div className="flex flex-col gap-2">
+            {(data.eingaenge?.length ?? 0) === 0 ? (
+              <p className="text-sm text-gray-400">Keine Eingänge erfasst.</p>
+            ) : (
+              data.eingaenge.map((e, idx) => (
+                <div key={e.id} className="text-sm text-gray-700">
+                  <span className="font-medium text-gray-500 mr-2">Eingang {idx + 1}</span>
+                  {e.strasse}, {e.plz} {e.ort}
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </Section>
 
       {/* ── Einheiten ─────────────────────────────────────────────── */}
       <Section title={`Einheiten (${data.einheiten.length})`}>
