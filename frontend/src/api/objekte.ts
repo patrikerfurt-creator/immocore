@@ -1,5 +1,5 @@
 import client from './client'
-import type { Objekt, ObjektList, Einheit, Bankkonto, Verteilerschluessel, VerteilerschluesselWert } from '../types'
+import type { Objekt, ObjektList, Einheit, Eingang, Bankkonto, Verteilerschluessel, VerteilerschluesselWert } from '../types'
 
 export const objekteApi = {
   list: () => client.get<ObjektList[]>('/objekte/').then(r => r.data),
@@ -39,6 +39,11 @@ export const objekteApi = {
     client.get<Array<{ id: string; jahr: number; status: string; beginn_monat: number }>>(
       '/wirtschaftsjahre/', { params: { objekt: objektId } }
     ).then(r => r.data),
+
+  // Eingänge
+  createEingang: (data: Partial<Eingang>) => client.post<Eingang>('/eingaenge/', data).then(r => r.data),
+  updateEingang: (id: string, data: Partial<Eingang>) => client.patch<Eingang>(`/eingaenge/${id}/`, data).then(r => r.data),
+  deleteEingang: (id: string) => client.delete(`/eingaenge/${id}/`),
 
   // Bankkonten
   createBankkonto: (data: Partial<Bankkonto>) => client.post<Bankkonto>('/bankkonten/', data).then(r => r.data),
