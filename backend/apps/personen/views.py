@@ -152,7 +152,7 @@ class PersonViewSet(viewsets.ModelViewSet):
 
                 iban = row.get('IBAN', '').replace(' ', '').upper()
                 email1 = row.get('Email1', '').strip()
-                vorname = f'{vorname1} und {vorname2}' if vorname2 else vorname1
+                vorname = vorname1
                 anschrift = row.get('Anschrift', '').strip()
                 plz = row.get('PLZ', '').strip()
                 ort = row.get('Ort', '').strip()
@@ -306,7 +306,7 @@ class PersonViewSet(viewsets.ModelViewSet):
                 vorname2 = row.get('Vorname2', '').strip()
                 nachname1 = row.get('Nachname1', '').strip()
                 nachname2 = row.get('Nachname2', '').strip()
-                vorname = f'{vorname1} und {vorname2}' if vorname2 else vorname1
+                vorname = vorname1
                 email1 = row.get('Email1', '').strip()
                 anschrift = row.get('Anschrift', '').strip()
                 plz = row.get('PLZ', '').strip()
