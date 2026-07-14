@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { rechnungenApi } from '../../api/rechnungen'
@@ -65,6 +65,8 @@ export default function RechnungErfassen() {
   const [gelbGeprueft, setGelbGeprueft] = useState(false)
   const [busy, setBusy] = useState(false)
   const [fehler, setFehler] = useState<string | null>(null)
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null)
+  const pdfUrlRef = useRef<string | null>(null)
 
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) =>
     setForm(f => ({ ...f, [k]: v }))
@@ -99,6 +101,22 @@ export default function RechnungErfassen() {
       }
     }).catch(() => setFehler('Rechnung konnte nicht geladen werden.'))
   }, [id])
+
+  // PDF-Vorschau laden (parallel neben dem Formular)
+  useEffect(() => {
+    if (!id || !rechnung?.pdf_upload) return
+    let cancelled = false
+    rechnungenApi.getPdfBlobUrl(id).then(url => {
+      if (cancelled) { URL.revokeObjectURL(url); return }
+      if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current)
+      pdfUrlRef.current = url
+      setPdfUrl(url)
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [id, rechnung?.pdf_upload])
+
+  // Blob-URL beim Verlassen freigeben
+  useEffect(() => () => { if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current) }, [])
 
   // Objektabhängige Listen (Einheiten für Kostenverursacher, Aufwandskonten)
   useEffect(() => {
@@ -195,14 +213,14 @@ export default function RechnungErfassen() {
   const inp = 'w-full border rounded px-2 py-1.5 text-sm'
 
   return (
-    <div className="p-6 max-w-3xl">
+    <div className={pdfUrl ? 'flex items-start min-h-screen' : ''}>
+    <div className={pdfUrl ? 'flex-1 min-w-0 p-6 overflow-y-auto' : 'p-6 max-w-3xl'}>
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-xl font-semibold text-gray-800">
           {id ? 'Rechnung bearbeiten' : 'Rechnung erfassen'}
         </h1>
         {id && rechnung?.pdf_upload && (
           <div className="flex gap-2">
-            <button onClick={() => rechnungenApi.openPdf(id)} className="text-sm text-blue-600 hover:underline">PDF öffnen</button>
             <button onClick={ocrAusfuehren} disabled={busy}
                     className="px-3 py-1.5 text-sm rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-50">
               OCR-Vorbefüllung
@@ -325,6 +343,21 @@ export default function RechnungErfassen() {
           Erfassen + Freigeben
         </button>
       </div>
+    </div>{/* Ende Formular-Bereich */}
+
+    {/* PDF-Vorschau parallel */}
+    {pdfUrl && (
+      <div className="w-[45%] shrink-0 sticky top-0 h-screen border-l border-gray-200 bg-gray-50">
+        <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 bg-white">
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">PDF-Vorschau</span>
+          {id && (
+            <button onClick={() => rechnungenApi.openPdf(id).catch(() => {})}
+                    className="text-xs text-blue-600 hover:underline">↗ In neuem Tab</button>
+          )}
+        </div>
+        <iframe src={pdfUrl} className="w-full border-0" style={{ height: 'calc(100vh - 41px)' }} title="Rechnungs-PDF" />
+      </div>
+    )}
     </div>
   )
 }
