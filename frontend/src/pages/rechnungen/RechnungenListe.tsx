@@ -22,11 +22,14 @@ const STATUS_STYLE: Record<string, string> = {
   pruefung_match: 'bg-yellow-100 text-yellow-800',
   nicht_erkannt:  'bg-red-100 text-red-700',
   erfasst:        'bg-gray-100 text-gray-600',
+  in_buchhaltung: 'bg-blue-100 text-blue-700',
+  zur_freigabe:   'bg-purple-100 text-purple-700',
   in_pruefung:    'bg-purple-100 text-purple-700',
-  freigegeben:    'bg-green-100 text-green-700',
-  gebucht:        'bg-green-200 text-green-800',
+  freigegeben:    'bg-green-200 text-green-800',
+  teilbezahlt:    'bg-teal-50 text-teal-700',
   bezahlt:        'bg-teal-100 text-teal-700',
   abgelehnt:      'bg-red-100 text-red-600',
+  storniert:      'bg-gray-200 text-gray-600',
   fehler:         'bg-red-200 text-red-800',
 }
 
@@ -37,12 +40,15 @@ const STATUS_LABEL: Record<string, string> = {
   erkannt:        'Erkannt (Stufe 1)',
   pruefung_match: 'Prüffall (Stufe 2)',
   nicht_erkannt:  'Nicht erkannt (Stufe 3)',
-  erfasst:        'Erfasst',
-  in_pruefung:    'In Prüfung',
-  freigegeben:    'Freigegeben',
-  gebucht:        'Gebucht',
+  erfasst:        'Erfasst (alt)',
+  in_buchhaltung: 'In Buchhaltung',
+  zur_freigabe:   'Zur Freigabe',
+  in_pruefung:    'In Prüfung (alt)',
+  freigegeben:    'Freigegeben (OP gebucht)',
+  teilbezahlt:    'Teilbezahlt',
   bezahlt:        'Bezahlt',
   abgelehnt:      'Abgelehnt',
+  storniert:      'Storniert',
   fehler:         'Fehler',
 }
 
@@ -640,7 +646,8 @@ function DetailModal({ rechnung, onClose }: { rechnung: RechnungList; onClose: (
 // ---------------------------------------------------------------------------
 
 const ALLE_STATUS: RechnungStatus[] = [
-  'importiert', 'duplikat', 'erfasst', 'in_pruefung', 'freigegeben', 'gebucht', 'bezahlt', 'abgelehnt', 'fehler',
+  'importiert', 'duplikat', 'in_buchhaltung', 'zur_freigabe', 'freigegeben',
+  'teilbezahlt', 'bezahlt', 'abgelehnt', 'storniert', 'fehler',
 ]
 
 export function RechnungenListe() {
@@ -683,7 +690,7 @@ export function RechnungenListe() {
       if (statusFilter === '__prueffall_alle__') {
         params.status = 'prueffall,pruefung_match,nicht_erkannt'
       } else if (statusFilter === '__freigabeprozess__') {
-        params.status = 'in_freigabe,freigegeben,gebucht,teilbezahlt,bezahlt,storniert,abgelehnt'
+        params.status = 'zur_freigabe,freigegeben,teilbezahlt,bezahlt,storniert,abgelehnt'
       } else if (statusFilter) {
         params.status = statusFilter
       }

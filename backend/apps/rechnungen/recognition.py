@@ -347,28 +347,11 @@ def _konfidenz_min(rechnung) -> float:
     )
 
 
-def _route_limit_workflow(rechnung) -> bool:
-    """
-    Limit-Workflow für Stufe-1-Rechnungen.
-    Gibt True zurück wenn auto-gebucht.
-    """
-    grenzen = _lade_grenzen(rechnung)
-    stufe   = _ermittle_freigabestufe(rechnung.betrag_brutto or 0, grenzen)
-
-    if stufe['rolle'] == 'auto' and _konfidenz_min(rechnung) >= AUTO_KONFIDENZ_SCHWELLE:
-        # Auto-Buchung: alle drei Dim. ≥ 95 % + Betrag unter Auto-Limit
-        rechnung.status        = 'gebucht'
-        rechnung.zugewiesen_an = None
-        return True
-
-    # Konfidenz unter 95 % ODER manueller Limit-Schritt erforderlich
-    # → ersten manuellen Schritt ermitteln wenn stufe['rolle'] == 'auto'
-    if stufe['rolle'] == 'auto':
-        stufe = _naechste_manuelle_stufe(_lade_grenzen(rechnung))
-
-    rechnung.status        = 'in_pruefung'
-    rechnung.zugewiesen_an = _ermittle_freigabeperson(rechnung, stufe)
-    return False
+# v1.1 Phase D: `_route_limit_workflow` (Auto-Buchung bei rolle=='auto' +
+# Konfidenz ≥ 95 %) wurde entfernt — es gibt keine Auto-Buchung mehr.
+# _konfidenz_min/AUTO_KONFIDENZ_SCHWELLE bleiben als Erkennungs-Kontext,
+# _ermittle_freigabestufe/-person und _naechste_manuelle_stufe werden vom
+# Stufe-2-Freigabe-Service (rechnung_freigabe_service) weiterverwendet.
 
 
 def _naechste_manuelle_stufe(grenzen: list) -> dict:

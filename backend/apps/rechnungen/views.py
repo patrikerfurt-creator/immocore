@@ -565,7 +565,7 @@ class RechnungViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='ablehnen')
     def ablehnen(self, request, pk=None):
         rechnung = self.get_object()
-        if rechnung.status in ('gebucht', 'bezahlt', 'abgelehnt'):
+        if rechnung.status in ('freigegeben', 'bezahlt', 'abgelehnt'):
             return Response(
                 {'error': f'Ablehnung im Status "{rechnung.status}" nicht möglich'},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -633,7 +633,7 @@ class RechnungViewSet(viewsets.ModelViewSet):
 
         rechnung.kostenstelle = sachkonto
         rechnung.objekt = objekt
-        if rechnung.status not in ('freigegeben', 'gebucht'):
+        if rechnung.status != 'freigegeben':
             rechnung.status = 'erfasst'
         rechnung.save(update_fields=['kostenstelle', 'objekt', 'status'])
 
@@ -894,17 +894,10 @@ class RechnungViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='erkennung-ausfuehren')
     def erkennung_ausfuehren(self, request, pk=None):
         from .recognition import fuehre_erkennung_aus
-        from .services.rechnung_op_service import rechnung_freigeben as op_freigeben
-        from django.core.exceptions import ValidationError as DjangoValidationError
         rechnung = self.get_object()
+        # v1.1 Phase D: toter Auto-Buchungs-Rest entfernt — route_rechnung
+        # liefert nie mehr 'gebucht'; die Erkennung endet in Stufe 1.
         rechnung = fuehre_erkennung_aus(rechnung)
-        if rechnung.status == 'gebucht' and not rechnung.op_buchung_id:
-            try:
-                op_freigeben(rechnung, rechnung.aufwandskonto, request.user)
-            except DjangoValidationError as exc:
-                rechnung.status = 'erkannt'
-                rechnung.save(update_fields=['status'])
-                return Response({'error': exc.message}, status=status.HTTP_400_BAD_REQUEST)
         Verarbeitungslog.objects.create(
             rechnung=rechnung, aktion='Erkennung ausgeführt', status=rechnung.status,
             details=f'Stufe {rechnung.erkennungs_stufe} | Konfidenz: {rechnung.erkennungs_konfidenz}',
@@ -1248,7 +1241,7 @@ class RechnungViewSet(viewsets.ModelViewSet):
         for r in rechnungen:
             if not (r.kreditor and r.kreditor.iban and r.betrag_brutto):
                 continue
-            if r.status != 'gebucht':
+            if r.status != 'freigegeben':
                 continue
             try:
                 op_bezahlen(rechnung=r, buchungsdatum=faelligkeitsdatum, gebucht_von=request.user)

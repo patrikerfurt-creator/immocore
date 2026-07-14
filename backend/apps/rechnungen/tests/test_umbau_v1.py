@@ -511,7 +511,7 @@ class ErfassenApiTest(TestCase):
         self.assertEqual(resp.status_code, 403)
 
     def test_freigeben_endpoint_gf_bucht_op(self):
-        # P2: Stufe-2-Freigabe durch GF → freigegeben/gebucht + OP-Buchung
+        # P2: Stufe-2-Freigabe durch GF → freigegeben + OP-Buchung
         u = _gf("erf9")
         self.client.force_authenticate(u)
         r = Rechnung.objects.create(

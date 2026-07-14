@@ -213,7 +213,7 @@ def rechnung_freigeben(rechnung, aufwandskonto: Konto, freigegeben_von=None, buc
         if erster_split:
             rechnung.aufwandskonto = erster_split.aufwandskonto
     rechnung.op_buchung = buchung
-    rechnung.status = "gebucht"
+    rechnung.status = "freigegeben"   # v1.1: Freigabe erteilt, OP gebucht
     rechnung.save(update_fields=["aufwandskonto", "op_buchung", "status"])
 
     return rechnung

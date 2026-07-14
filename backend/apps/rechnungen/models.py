@@ -63,21 +63,20 @@ class Rechnung(models.Model):
         ('nicht_erkannt', 'Nicht erkannt (Stufe 3)'),
         # ---------------------------------
         ('in_pruefung',   'In Prüfung'),
-        ('freigegeben',   'Freigegeben'),
-        ('gebucht',       'Gebucht'),
-        ('bezahlt',       'Bezahlt'),
-        ('abgelehnt',     'Abgelehnt'),
-        ('fehler',        'Fehler'),
-        # --- Zielenum Umbau v1.1 (zweistufig, additiv; Cleanup Phase D) ---
-        # Lifecycle: in_buchhaltung (Stufe 1) → zur_freigabe (Stufe 2)
-        # → freigegeben → teilbezahlt/bezahlt; quer: abgelehnt, storniert.
+        # --- Lifecycle Umbau v1.1 (zweistufig): in_buchhaltung (Stufe 1)
+        # → zur_freigabe (Stufe 2) → freigegeben (OP gebucht) →
+        # teilbezahlt/bezahlt; quer: abgelehnt, storniert.
         # erkannt/pruefung_match/nicht_erkannt bleiben als Erkennungs-Kontext
-        # (Feld erkennungs_stufe), nicht als Lifecycle-Status (Spec v1.1 Kap. 7.1).
+        # (Feld erkennungs_stufe). 'gebucht' wurde in Phase D nach
+        # 'freigegeben' migriert (Migration 0020), 'auto_freigabe' existierte nie.
         ('in_buchhaltung', 'In Buchhaltung (Stufe 1)'),
         ('zur_freigabe',  'Zur Freigabe (Stufe 2)'),
-        ('in_freigabe',   'In Freigabe (v1.0, migriert)'),
+        ('freigegeben',   'Freigegeben (OP gebucht)'),
         ('teilbezahlt',   'Teilbezahlt'),
+        ('bezahlt',       'Bezahlt'),
+        ('abgelehnt',     'Abgelehnt'),
         ('storniert',     'Storniert'),
+        ('fehler',        'Fehler'),
     ]
     ERKENNUNGS_STUFE_CHOICES = [
         ('1', 'Stufe 1 — Erkannt'),

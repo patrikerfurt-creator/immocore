@@ -67,10 +67,10 @@ def rechnung_bezahlen(rechnung, buchungsdatum: date, gebucht_von):
     """
     if rechnung.status == "bezahlt":
         raise ValidationError("Rechnung ist bereits bezahlt.")
-    if rechnung.status != "gebucht":
+    if rechnung.status != "freigegeben":
         raise ValidationError(
             f"Rechnung im Status '{rechnung.status}' kann nicht bezahlt werden – "
-            "bitte zuerst freigeben (Status 'gebucht' erforderlich)."
+            "bitte zuerst freigeben (Status 'freigegeben' erforderlich)."
         )
     if not rechnung.op_buchung_id:
         raise ValidationError("Keine OP-Buchung vorhanden – bitte zuerst freigeben.")
