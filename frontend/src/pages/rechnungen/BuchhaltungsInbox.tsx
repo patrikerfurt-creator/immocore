@@ -58,7 +58,7 @@ export default function BuchhaltungsInbox() {
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-4">
-        <h1 className="text-xl font-semibold text-gray-800">Rechnungsprüfung — Stufe 1 (Buchhaltung)</h1>
+        <h1 className="text-xl font-semibold text-gray-800">Rechnungseingang — Prüfung durch die Buchhaltung</h1>
         <button
           onClick={() => navigate('/rechnungen/erfassen')}
           className="px-3 py-1.5 text-sm rounded bg-blue-600 text-white hover:bg-blue-700"
