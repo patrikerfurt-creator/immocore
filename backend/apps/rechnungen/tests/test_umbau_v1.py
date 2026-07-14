@@ -10,8 +10,10 @@ from datetime import date, timedelta
 from types import SimpleNamespace
 
 from django.test import TestCase, SimpleTestCase
+from django.urls import reverse
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
+from rest_framework.test import APIClient
 
 from apps.objekte.models import Objekt, Wirtschaftsjahr, Einheit
 from apps.konten.models import Konto, Personenkonto
@@ -336,3 +338,79 @@ class SkontoIntegrationTest(TestCase):
         r.refresh_from_db()
         self.assertFalse(r.skonto_genutzt)
         self.assertEqual(bu_aufwand.betrag, Decimal("1000.00"))
+
+
+# ---------------------------------------------------------------------------
+# 10.2 — Integration: Erfassen/Inbox/Freigabe-Endpunkte
+# ---------------------------------------------------------------------------
+
+class ErfassenApiTest(TestCase):
+    def setUp(self):
+        self.objekt, self.aufwand, self.bank = _objekt_und_konten()
+        self.kreditor = Kreditor.objects.create(name="Test GmbH", kreditorennummer="70001")
+        self.client = APIClient()
+
+    def _payload(self, betrag, modus):
+        return {
+            "objekt_id": str(self.objekt.id),
+            "kreditor_id": str(self.kreditor.id),
+            "aufwandskonto_id": str(self.aufwand.id),
+            "rechnungsnummer": f"RE-{betrag}-{modus}",
+            "rechnungsdatum": date.today().isoformat(),
+            "betrag_netto": "100.00",
+            "betrag_brutto": str(betrag),
+            "mwst_satz": "19",
+            "modus": modus,
+        }
+
+    def test_erfassen_entwurf(self):
+        u = _user_mit_limit("erf1", Decimal("500"))
+        self.client.force_authenticate(u)
+        resp = self.client.post(reverse("rechnungen-erfassen"), self._payload("250.00", "entwurf"), format="json")
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data["status"], "erfasst")
+        self.assertIn(resp.data["erkennung_ampel"], ("gruen", "gelb", "rot"))
+
+    def test_erfassen_freigeben_im_limit_bucht_op(self):
+        u = _user_mit_limit("erf2", Decimal("500"))
+        self.client.force_authenticate(u)
+        resp = self.client.post(reverse("rechnungen-erfassen"), self._payload("250.00", "freigeben"), format="json")
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data["status"], "gebucht")     # OP gebucht (Enum-Rename → Phase D)
+        self.assertIsNotNone(resp.data["op_buchung"])
+
+    def test_erfassen_freigeben_ueber_limit_eskaliert(self):
+        u = _user_mit_limit("erf3", Decimal("500"))
+        self.client.force_authenticate(u)
+        resp = self.client.post(reverse("rechnungen-erfassen"), self._payload("5000.00", "freigeben"), format="json")
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data["status"], "in_freigabe")
+
+    def test_erfassen_haushaltsnah_ueber_brutto_400(self):
+        u = _user_mit_limit("erf4", Decimal("500"))
+        self.client.force_authenticate(u)
+        payload = self._payload("250.00", "entwurf")
+        payload["betrag_haushaltsnah"] = "300.00"
+        resp = self.client.post(reverse("rechnungen-erfassen"), payload, format="json")
+        self.assertEqual(resp.status_code, 400)
+
+    def test_inbox_listet_offene(self):
+        u = _user_mit_limit("erf5", Decimal("500"))
+        self.client.force_authenticate(u)
+        self.client.post(reverse("rechnungen-erfassen"), self._payload("250.00", "entwurf"), format="json")
+        self.client.post(reverse("rechnungen-erfassen"), self._payload("5000.00", "zur_freigabe"), format="json")
+        resp = self.client.get(reverse("rechnungen-inbox"))
+        self.assertEqual(resp.status_code, 200)
+        stati = {r["status"] for r in resp.data}
+        self.assertTrue(stati <= {"erfasst", "in_freigabe"})
+        self.assertEqual(len(resp.data), 2)
+
+    def test_freigeben_endpoint_ueber_limit_403(self):
+        u = _user_mit_limit("erf6", Decimal("100"))
+        self.client.force_authenticate(u)
+        r = Rechnung.objects.create(
+            objekt=self.objekt, kreditor=self.kreditor, aufwandskonto=self.aufwand,
+            betrag_brutto=Decimal("5000.00"), rechnungsnummer="RE-FG", status="in_freigabe",
+        )
+        resp = self.client.post(reverse("rechnungen-freigeben", args=[r.id]), {}, format="json")
+        self.assertEqual(resp.status_code, 403)

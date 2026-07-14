@@ -1,6 +1,9 @@
 """
-KI-OCR für Rechnungs-PDFs via Claude API.
-Extrahiert: Lieferant, IBAN, Betrag, Datum, MwSt.
+KI-OCR für Rechnungs-PDFs via Claude API (Vorbefüllung, keine Buchung).
+
+Extrahiert je Feld { wert, konfidenz } (Spec Kap. 5.1). Die LLM-Konfidenz ist
+nur der Basiswert der Verifikations-Ampel — verlässlich sind die
+deterministischen Prüfungen im erkennung_ampel_service (Kap. 5.2).
 """
 import base64
 import json
@@ -10,74 +13,90 @@ from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
+# Felder, die der OCR-Prompt je { wert, konfidenz } liefern soll.
+OCR_FELDER = [
+    "lieferant_name", "lieferant_iban", "rechnungsnummer", "rechnungsdatum",
+    "faelligkeitsdatum", "betrag_netto", "betrag_brutto", "mwst_satz",
+    "leistungsbeschreibung",
+    # --- Umbau v1.0 (Spec 5.1) ---
+    "betrag_haushaltsnah", "skonto_prozent", "skonto_betrag",
+    "skonto_frist_tage", "skonto_faellig_bis", "ist_schlussrechnung",
+    "kostenverursacher_vorschlag",
+]
+
+_PROMPT = """Extrahiere aus dieser Rechnung die folgenden Felder. Antworte NUR
+mit einem JSON-Objekt der Form {"felder": {"<feld>": {"wert": <wert|null>,
+"konfidenz": <0.0-1.0>}}}, kein Markdown.
+
+Felder:
+- lieferant_name, lieferant_iban, rechnungsnummer
+- rechnungsdatum, faelligkeitsdatum (YYYY-MM-DD)
+- betrag_netto, betrag_brutto (Zahl), mwst_satz (Prozent als Zahl)
+- leistungsbeschreibung
+- betrag_haushaltsnah: Lohn-/Arbeitskostenanteil gem. §35a EStG
+  ("Lohnanteil", "Arbeitskosten", "darin enthaltene Lohnkosten"). Wenn NICHT
+  ausgewiesen: wert=null (nicht schätzen).
+- skonto_prozent, skonto_betrag, skonto_frist_tage, skonto_faellig_bis:
+  aus Zahlungsbedingungen ("2% Skonto bei Zahlung innerhalb 14 Tagen").
+- ist_schlussrechnung: true bei "Schlussrechnung"/"Endabrechnung"/"Schlussrg.".
+- kostenverursacher_vorschlag: falls im Leistungstext eine Wohnungs-/
+  Einheitsbezeichnung genannt ist (z.B. "WE05", "Wohnung Müller, 1.OG links").
+
+konfidenz = deine Selbsteinschätzung 0.0-1.0 je Feld. Nicht gefunden → wert=null, konfidenz=0.0."""
+
+
+def _parse_json(text: str) -> dict:
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.split("```", 2)[1]
+        if text.startswith("json"):
+            text = text[4:]
+        text = text.strip()
+    return json.loads(text)
+
 
 def ki_ocr_rechnung(rechnung) -> dict:
-    """
-    Liest ein hochgeladenes Rechnungs-PDF via Claude API aus.
-
-    Gibt ein Dict zurück:
-    {
-        "lieferant_name": "...",
-        "lieferant_iban": "...",
-        "rechnungsnummer": "...",
-        "rechnungsdatum": "YYYY-MM-DD",
-        "faelligkeitsdatum": "YYYY-MM-DD",
-        "betrag_netto": 0.00,
-        "betrag_brutto": 0.00,
-        "mwst_satz": 19,
-        "leistungsbeschreibung": "..."
-    }
-    """
+    """Liest das hochgeladene Rechnungs-PDF aus.
+    Rückgabe: {"felder": {feld: {"wert":..., "konfidenz":0..1}}}."""
     try:
         import anthropic
     except ImportError:
         raise RuntimeError("anthropic-Paket nicht installiert")
 
-    api_key = getattr(settings, 'ANTHROPIC_API_KEY', None)
+    api_key = getattr(settings, "ANTHROPIC_API_KEY", None)
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY nicht konfiguriert")
 
-    with rechnung.pdf_upload.open('rb') as f:
-        pdf_data = base64.standard_b64encode(f.read()).decode('utf-8')
-
-    prompt = """Extrahiere aus dieser Rechnung folgende Felder als JSON:
-{
-  "lieferant_name": "...",
-  "lieferant_iban": "...",
-  "rechnungsnummer": "...",
-  "rechnungsdatum": "YYYY-MM-DD",
-  "faelligkeitsdatum": "YYYY-MM-DD",
-  "betrag_netto": 0.00,
-  "betrag_brutto": 0.00,
-  "mwst_satz": 19,
-  "leistungsbeschreibung": "..."
-}
-Antworte NUR mit dem JSON-Objekt, kein Markdown."""
+    with rechnung.pdf_upload.open("rb") as f:
+        pdf_data = base64.standard_b64encode(f.read()).decode("utf-8")
 
     client = anthropic.Anthropic(api_key=api_key)
-    model = getattr(settings, 'ANTHROPIC_MODEL', 'claude-sonnet-4-5')
+    model = getattr(settings, "ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
     message = client.messages.create(
         model=model,
-        max_tokens=1024,
+        max_tokens=1500,
         messages=[{
-            'role': 'user',
-            'content': [
-                {
-                    'type': 'document',
-                    'source': {
-                        'type': 'base64',
-                        'media_type': 'application/pdf',
-                        'data': pdf_data,
-                    },
-                },
-                {'type': 'text', 'text': prompt},
-            ]
-        }]
+            "role": "user",
+            "content": [
+                {"type": "document", "source": {
+                    "type": "base64", "media_type": "application/pdf", "data": pdf_data}},
+                {"type": "text", "text": _PROMPT},
+            ],
+        }],
     )
 
     try:
-        return json.loads(message.content[0].text.strip())
-    except json.JSONDecodeError:
+        parsed = _parse_json(message.content[0].text)
+    except (json.JSONDecodeError, IndexError):
         logger.error("Claude API lieferte kein gültiges JSON: %s", message.content[0].text)
         raise RuntimeError("Claude API lieferte kein gültiges JSON")
+
+    felder = parsed.get("felder", parsed)
+    # Normalisieren: fehlende Felder als leer ergänzen
+    return {f: felder.get(f, {"wert": None, "konfidenz": 0.0}) for f in OCR_FELDER}
+
+
+def flache_extraktion(felder: dict) -> dict:
+    """Reduziert {feld: {wert, konfidenz}} auf {feld: wert} (Vorbefüllung)."""
+    return {f: (v or {}).get("wert") for f, v in (felder or {}).items()}

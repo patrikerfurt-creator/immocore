@@ -285,6 +285,140 @@ class RechnungViewSet(viewsets.ModelViewSet):
             return RechnungListSerializer
         return RechnungSerializer
 
+    # ── Umbau v1.0: OCR-Vorbefüllung + Verifikations-Ampel ───────────────
+    @action(detail=True, methods=['post'], url_path='ocr')
+    def ocr(self, request, pk=None):
+        """OCR-Extraktion (Vorbefüllung) + Verifikations-Ampel (Spec 4.3/5)."""
+        from .services.ocr import ki_ocr_rechnung, flache_extraktion
+        from .services.erkennung_ampel_service import ampel_eingabe_aus_ocr, berechne_ampel
+
+        rechnung = self.get_object()
+        if not rechnung.pdf_upload:
+            return Response({'error': 'Kein PDF vorhanden'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            felder = ki_ocr_rechnung(rechnung)
+        except Exception as exc:
+            return Response({'error': f'OCR fehlgeschlagen: {exc}'}, status=status.HTTP_502_BAD_GATEWAY)
+
+        eingabe = ampel_eingabe_aus_ocr(felder, rechnung=rechnung)
+        ergebnis = berechne_ampel(
+            eingabe, objekt=rechnung.objekt if rechnung.objekt_id else None, rechnung=rechnung,
+        )
+        rechnung.erkennung_ampel = ergebnis['ampel']
+        rechnung.erkennung_gesamt_konfidenz = ergebnis['gesamt_konfidenz']
+        rechnung.erkennung_details = ergebnis['felder']
+        rechnung.save(update_fields=[
+            'erkennung_ampel', 'erkennung_gesamt_konfidenz', 'erkennung_details',
+        ])
+        return Response({
+            'extraktion': flache_extraktion(felder),
+            'felder': felder,
+            'ampel': ergebnis,
+        })
+
+    @action(detail=False, methods=['get'], url_path='inbox')
+    def inbox(self, request):
+        """Buchhaltungs-Inbox: offene Erfassungen/Freigaben (Spec 4.3/8.1)."""
+        qs = self.get_queryset().filter(status__in=['erfasst', 'in_freigabe'])
+        f = request.query_params.get('filter')     # 'mir' | 'offen' | 'alle'
+        if f == 'mir':
+            qs = qs.filter(zugewiesen_an=request.user)
+        elif f == 'offen':
+            qs = qs.filter(status='erfasst')
+        data = RechnungListSerializer(qs, many=True, context={'request': request}).data
+        return Response(data)
+
+    @action(detail=False, methods=['post'], url_path='erfassen')
+    def erfassen(self, request):
+        """Erfassen/Aktualisieren durch die Buchhaltung + Ampel + Modus
+        (entwurf | zur_freigabe | freigeben) — Spec 4.3."""
+        from datetime import datetime
+        from decimal import Decimal, InvalidOperation
+        from apps.objekte.models import Objekt, Einheit
+        from apps.konten.models import Konto
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from .services.erkennung_ampel_service import berechne_und_speichere_ampel
+        from .services.rechnung_freigabe_service import darf_freigeben
+        from .services.rechnung_op_service import rechnung_freigeben as op_freigeben
+
+        data = request.data
+        modus = data.get('modus', 'entwurf')
+        rechnung = Rechnung.objects.filter(pk=data.get('id')).first() if data.get('id') else Rechnung()
+
+        def _dec(v):
+            if v in (None, ''):
+                return None
+            try:
+                return Decimal(str(v))
+            except (InvalidOperation, ValueError):
+                return None
+
+        def _date(v):
+            if not v:
+                return None
+            try:
+                return datetime.strptime(v, '%Y-%m-%d').date()
+            except (ValueError, TypeError):
+                return None
+
+        for feld in ('rechnungsnummer', 'leistungsbeschreibung'):
+            if feld in data:
+                setattr(rechnung, feld, data.get(feld) or '')
+        for feld in ('betrag_netto', 'betrag_brutto', 'mwst_satz', 'betrag_haushaltsnah',
+                     'skonto_prozent', 'skonto_betrag'):
+            if feld in data:
+                setattr(rechnung, feld, _dec(data.get(feld)))
+        for feld in ('rechnungsdatum', 'faelligkeitsdatum', 'skonto_faellig_bis'):
+            if feld in data:
+                setattr(rechnung, feld, _date(data.get(feld)))
+        if 'ist_schlussrechnung' in data:
+            rechnung.ist_schlussrechnung = bool(data.get('ist_schlussrechnung'))
+        for feld, model in (('objekt', Objekt), ('kreditor', Kreditor),
+                            ('kostenverursacher', Einheit), ('aufwandskonto', Konto)):
+            key = f'{feld}_id'
+            if key in data or feld in data:
+                setattr(rechnung, key, data.get(key) or data.get(feld) or None)
+        if not rechnung.erfasst_von_id:
+            rechnung.erfasst_von = request.user
+        if rechnung.betrag_haushaltsnah is None:
+            rechnung.betrag_haushaltsnah = Decimal('0')
+
+        try:
+            rechnung.clean()                       # fachliche Validierungen (Spec 3.1)
+        except DjangoValidationError as exc:
+            return Response({'error': exc.message_dict}, status=status.HTTP_400_BAD_REQUEST)
+        rechnung.save()
+
+        berechne_und_speichere_ampel(rechnung)
+        rechnung.save(update_fields=[
+            'erkennung_ampel', 'erkennung_gesamt_konfidenz', 'erkennung_details',
+        ])
+
+        if modus == 'freigeben':
+            if not rechnung.aufwandskonto_id:
+                return Response({'error': 'Aufwandskonto für Freigabe erforderlich.'},
+                                status=status.HTTP_400_BAD_REQUEST)
+            if darf_freigeben(rechnung, request.user):
+                try:
+                    op_freigeben(rechnung, rechnung.aufwandskonto, request.user)
+                except DjangoValidationError as exc:
+                    return Response({'error': exc.message}, status=status.HTTP_400_BAD_REQUEST)
+                Verarbeitungslog.objects.create(
+                    rechnung=rechnung, aktion='Erfasst + freigegeben', status=rechnung.status,
+                    details=f'Direktfreigabe durch {request.user.get_full_name() or request.user.username}',
+                )
+            else:
+                rechnung.status = 'in_freigabe'
+                rechnung.save(update_fields=['status'])
+        elif modus == 'zur_freigabe':
+            rechnung.status = 'in_freigabe'
+            rechnung.save(update_fields=['status'])
+        else:
+            rechnung.status = 'erfasst'
+            rechnung.save(update_fields=['status'])
+
+        return Response(RechnungSerializer(rechnung, context={'request': request}).data)
+
     @action(detail=True, methods=['post'], url_path='freigeben')
     def freigeben(self, request, pk=None):
         from datetime import date, datetime
@@ -293,11 +427,19 @@ class RechnungViewSet(viewsets.ModelViewSet):
         from django.core.exceptions import ValidationError as DjangoValidationError
 
         rechnung = self.get_object()
-        if rechnung.status not in ('importiert', 'prueffall', 'in_pruefung', 'erfasst', 'erkannt',
-                                    'pruefung_match', 'nicht_erkannt'):
+        if rechnung.status not in ('importiert', 'prueffall', 'in_pruefung', 'in_freigabe',
+                                    'erfasst', 'erkannt', 'pruefung_match', 'nicht_erkannt'):
             return Response(
                 {'error': f'Freigabe im Status "{rechnung.status}" nicht möglich'},
                 status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Freigabe-Berechtigung: persönliches Limit entscheidet (Spec 4.2, Umbau v1.0)
+        from .services.rechnung_freigabe_service import darf_freigeben, braucht_freigabe
+        if braucht_freigabe(rechnung) and not darf_freigeben(rechnung, request.user):
+            return Response(
+                {'error': 'Betrag über Ihrem Freigabelimit — wird zur Freigabe weitergeleitet.'},
+                status=status.HTTP_403_FORBIDDEN,
             )
 
         buchungsdatum_str = request.data.get('buchungsdatum')

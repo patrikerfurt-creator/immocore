@@ -10,7 +10,7 @@ Für die Rechenprobe darf `betrag_brutto` zusätzlich `netto`/`ust_betrag` trage
 für den Kreditor eine `iban`.
 Ausgabe: {"ampel", "gesamt_konfidenz", "felder": {feld: {...}}}.
 """
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
@@ -79,6 +79,15 @@ def _dec(wert):
         return Decimal(str(wert))
     except (InvalidOperation, ValueError, TypeError):
         return None
+
+
+def _json_safe(wert):
+    """Decimal/date → str, damit erkennung_details als JSONField speicherbar ist."""
+    if isinstance(wert, Decimal):
+        return str(wert)
+    if isinstance(wert, (date, datetime)):
+        return wert.isoformat()
+    return wert
 
 
 def iban_gueltig(iban: str) -> bool:
@@ -237,6 +246,47 @@ _VALIDATOR_MAP = {
 }
 
 
+def ampel_eingabe_aus_ocr(felder: dict, rechnung=None) -> dict:
+    """Übersetzt die OCR-Feldstruktur {feld: {wert, konfidenz}} in die
+    Eingabe für berechne_ampel (kritische Feldnamen, USt aus netto·satz)."""
+    felder = felder or {}
+
+    def g(k):
+        return felder.get(k) or {}
+
+    netto = _dec(g("betrag_netto").get("wert"))
+    satz = _dec(g("mwst_satz").get("wert"))
+    ust = (netto * satz / Decimal("100")).quantize(Decimal("0.01")) \
+        if netto is not None and satz is not None else None
+
+    eingabe = {
+        "kreditor": {
+            "wert": g("lieferant_name").get("wert"),
+            "konfidenz": g("lieferant_name").get("konfidenz", 0.0),
+            "iban": g("lieferant_iban").get("wert"),
+        },
+        "betrag_brutto": {
+            "wert": g("betrag_brutto").get("wert"),
+            "konfidenz": g("betrag_brutto").get("konfidenz", 0.0),
+            "ust_betrag": str(ust) if ust is not None else None,
+        },
+        "betrag_netto": {"wert": g("betrag_netto").get("wert")},
+        "rechnungsnummer": {
+            "wert": g("rechnungsnummer").get("wert"),
+            "konfidenz": g("rechnungsnummer").get("konfidenz", 0.0),
+            "id": getattr(rechnung, "kreditor_id", None) if rechnung else None,
+        },
+        "rechnungsdatum": {
+            "wert": g("rechnungsdatum").get("wert"),
+            "konfidenz": g("rechnungsdatum").get("konfidenz", 0.0),
+        },
+    }
+    for k in ("skonto_prozent", "skonto_betrag", "skonto_faellig_bis", "betrag_haushaltsnah"):
+        if g(k).get("wert") not in (None, ""):
+            eingabe[k] = {"wert": g(k).get("wert"), "konfidenz": g(k).get("konfidenz", 0.0)}
+    return eingabe
+
+
 def berechne_ampel(ocr_ergebnis: dict, objekt=None, rechnung=None) -> dict:
     """Berechnet je Feld Validierung + Konfidenz + Ampel und die Gesamtampel.
     Wird beim OCR-Aufruf und nach jeder Feldänderung erneut aufgerufen."""
@@ -259,7 +309,7 @@ def berechne_ampel(ocr_ergebnis: dict, objekt=None, rechnung=None) -> dict:
         llm = float(ocr_ergebnis.get(quelle_key, {}).get("konfidenz", 0.0) or 0.0)
         konf = feld_konfidenz(llm, validierung)
         felder[feld] = {
-            "wert": ocr_ergebnis.get(quelle_key, {}).get("wert"),
+            "wert": _json_safe(ocr_ergebnis.get(quelle_key, {}).get("wert")),
             "llm_konfidenz": llm,
             "validierung": validierung,
             "hinweis": hinweis,
@@ -269,3 +319,38 @@ def berechne_ampel(ocr_ergebnis: dict, objekt=None, rechnung=None) -> dict:
 
     ampel, gesamt = gesamt_ampel(felder)
     return {"ampel": ampel, "gesamt_konfidenz": gesamt, "felder": felder}
+
+
+def _rechnung_zu_felder(rechnung) -> dict:
+    """Baut aus den (manuell erfassten) Rechnungsfeldern die OCR-Feldstruktur.
+    Manuelle Eingabe → LLM-Konfidenz 1.0; die deterministischen Prüfungen
+    (IBAN, Rechenprobe, Duplikat) gaten trotzdem."""
+    kred = rechnung.kreditor if rechnung.kreditor_id else None
+    rd = rechnung.rechnungsdatum
+    sfb = rechnung.skonto_faellig_bis
+    return {
+        "lieferant_name": {"wert": kred.name if kred else rechnung.lieferant_name, "konfidenz": 1.0},
+        "lieferant_iban": {"wert": (kred.iban if kred else rechnung.lieferant_iban) or ""},
+        "betrag_netto": {"wert": rechnung.betrag_netto},
+        "betrag_brutto": {"wert": rechnung.betrag_brutto, "konfidenz": 1.0},
+        "mwst_satz": {"wert": rechnung.mwst_satz},
+        "rechnungsnummer": {"wert": rechnung.rechnungsnummer, "konfidenz": 1.0},
+        "rechnungsdatum": {"wert": rd.isoformat() if rd else None, "konfidenz": 1.0},
+        "skonto_prozent": {"wert": rechnung.skonto_prozent, "konfidenz": 1.0},
+        "skonto_betrag": {"wert": rechnung.skonto_betrag, "konfidenz": 1.0},
+        "skonto_faellig_bis": {"wert": sfb.isoformat() if sfb else None, "konfidenz": 1.0},
+        "betrag_haushaltsnah": {"wert": rechnung.betrag_haushaltsnah, "konfidenz": 1.0},
+    }
+
+
+def berechne_und_speichere_ampel(rechnung) -> dict:
+    """Berechnet die Ampel aus den aktuellen Rechnungsfeldern und schreibt
+    erkennung_ampel / _gesamt_konfidenz / _details auf die Instanz (ohne save).
+    Wird nach jeder Feldänderung/Erfassung aufgerufen (Spec 5.2.5)."""
+    eingabe = ampel_eingabe_aus_ocr(_rechnung_zu_felder(rechnung), rechnung=rechnung)
+    ergebnis = berechne_ampel(eingabe, objekt=rechnung.objekt if rechnung.objekt_id else None,
+                              rechnung=rechnung)
+    rechnung.erkennung_ampel = ergebnis["ampel"]
+    rechnung.erkennung_gesamt_konfidenz = ergebnis["gesamt_konfidenz"]
+    rechnung.erkennung_details = ergebnis["felder"]
+    return ergebnis

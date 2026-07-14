@@ -75,6 +75,8 @@ class RechnungSerializer(serializers.ModelSerializer):
     aufwandskonto_id       = serializers.UUIDField(source='aufwandskonto.id', read_only=True)
     aufwandskonto_label    = serializers.SerializerMethodField()
     darf_direkt_freigeben  = serializers.SerializerMethodField()
+    darf_freigeben         = serializers.SerializerMethodField()
+    kostenverursacher_label = serializers.SerializerMethodField()
     op_nummer              = serializers.SerializerMethodField()
     splits                 = RechnungSplitPositionSerializer(many=True, read_only=True)
 
@@ -82,6 +84,18 @@ class RechnungSerializer(serializers.ModelSerializer):
         model = Rechnung
         fields = '__all__'
         read_only_fields = ['id', 'erstellt_am', 'sha256_hash']
+
+    def get_darf_freigeben(self, obj):
+        """Limit-basierte Freigabeberechtigung des aktuellen Users (Spec 4.2)."""
+        request = self.context.get('request')
+        if not request:
+            return False
+        from .services.rechnung_freigabe_service import darf_freigeben
+        return darf_freigeben(obj, request.user)
+
+    def get_kostenverursacher_label(self, obj):
+        e = obj.kostenverursacher
+        return f"{e.einheit_nr} — {e.lage}" if e else None
 
     def get_aufwandskonto_label(self, obj):
         if obj.aufwandskonto:
@@ -117,6 +131,8 @@ class RechnungListSerializer(serializers.ModelSerializer):
     zugewiesen_an_name = serializers.CharField(source='zugewiesen_an.get_full_name', read_only=True)
     lock_user = serializers.SerializerMethodField()
     op_nummer = serializers.SerializerMethodField()
+    erfasst_von_name = serializers.CharField(source='erfasst_von.get_full_name', read_only=True)
+    kostenverursacher_id = serializers.UUIDField(source='kostenverursacher.id', read_only=True)
 
     class Meta:
         model = Rechnung
@@ -134,6 +150,11 @@ class RechnungListSerializer(serializers.ModelSerializer):
             'routing_ziel', 'leistungstext',
             'lock_user', 'op_nummer',
             'sepa_lastschrift', 'ist_gutschrift',
+            # --- Umbau v1.0 (Inbox-Badges) ---
+            'erkennung_ampel', 'erkennung_gesamt_konfidenz',
+            'betrag_haushaltsnah', 'ist_schlussrechnung',
+            'skonto_faellig_bis', 'skonto_genutzt',
+            'kostenverursacher_id', 'erfasst_von_name',
         ]
 
     def get_kreditor_name(self, obj):
