@@ -68,9 +68,14 @@ class Rechnung(models.Model):
         ('bezahlt',       'Bezahlt'),
         ('abgelehnt',     'Abgelehnt'),
         ('fehler',        'Fehler'),
-        # --- Zielenum-Ergänzungen (Umbau v1.0, additiv; alte Werte werden
-        #     in Phase D migriert/entfernt — Spec Kap. 3.3) ---
-        ('in_freigabe',   'In Freigabe'),
+        # --- Zielenum Umbau v1.1 (zweistufig, additiv; Cleanup Phase D) ---
+        # Lifecycle: in_buchhaltung (Stufe 1) → zur_freigabe (Stufe 2)
+        # → freigegeben → teilbezahlt/bezahlt; quer: abgelehnt, storniert.
+        # erkannt/pruefung_match/nicht_erkannt bleiben als Erkennungs-Kontext
+        # (Feld erkennungs_stufe), nicht als Lifecycle-Status (Spec v1.1 Kap. 7.1).
+        ('in_buchhaltung', 'In Buchhaltung (Stufe 1)'),
+        ('zur_freigabe',  'Zur Freigabe (Stufe 2)'),
+        ('in_freigabe',   'In Freigabe (v1.0, migriert)'),
         ('teilbezahlt',   'Teilbezahlt'),
         ('storniert',     'Storniert'),
     ]
