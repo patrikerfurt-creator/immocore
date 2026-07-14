@@ -27,7 +27,7 @@ export const rechnungenApi = {
     client.post<Rechnung>('/rechnungen/', data).then(r => r.data),
   update: (id: string, data: Partial<Rechnung>) =>
     client.patch<Rechnung>(`/rechnungen/${id}/`, data).then(r => r.data),
-  freigeben: (id: string, data?: { begruendung?: string; aufwandskonto_id?: string; buchungsdatum?: string }) =>
+  freigeben: (id: string, data?: { begruendung?: string; aufwandskonto_id?: string; buchungsdatum?: string; lernen?: boolean }) =>
     client.post(`/rechnungen/${id}/freigeben/`, data ?? {}).then(r => r.data),
   ablehnen: (id: string, begruendung: string) =>
     client.post(`/rechnungen/${id}/ablehnen/`, { begruendung }).then(r => r.data),
@@ -71,10 +71,13 @@ export const rechnungenApi = {
     client.post<{ extraktion: Record<string, unknown>; felder: Record<string, { wert: unknown; konfidenz: number }>; ampel: AmpelErgebnis }>(
       `/rechnungen/${id}/ocr/`,
     ).then(r => r.data),
-  inbox: (filter?: 'mir' | 'offen' | 'alle') =>
+  inbox: (filter?: 'erkannt' | 'prueffall' | 'alle') =>
     client.get<RechnungList[]>('/rechnungen/inbox/', { params: filter ? { filter } : undefined }).then(r => r.data),
-  erfassen: (data: Record<string, unknown> & { modus: 'entwurf' | 'zur_freigabe' | 'freigeben' }) =>
+  erfassen: (data: Record<string, unknown> & { modus: 'entwurf' | 'zur_freigabe' }) =>
     client.post<Rechnung>('/rechnungen/erfassen/', data).then(r => r.data),
+  // Stufe 2 — Rechnungsfreigabe (v1.1)
+  freigabeListe: () =>
+    client.get<RechnungList[]>('/rechnungen/freigabe-liste/').then(r => r.data),
 
   // Splits
   splitsSpeichern: (id: string, positionen: { aufwandskonto: string; betrag: string }[]) =>

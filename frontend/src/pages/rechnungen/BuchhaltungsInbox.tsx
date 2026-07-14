@@ -4,7 +4,7 @@ import { rechnungenApi } from '../../api/rechnungen'
 import type { RechnungList } from '../../types'
 import { Ampelpunkt } from './Ampel'
 
-type Filter = 'offen' | 'mir' | 'alle'
+type Filter = 'alle' | 'erkannt' | 'prueffall'
 
 const STATUS_LABEL: Record<string, string> = {
   importiert: 'Eingegangen',
@@ -12,8 +12,14 @@ const STATUS_LABEL: Record<string, string> = {
   pruefung_match: 'Eingegangen (Prüfung)',
   nicht_erkannt: 'Eingegangen (unklar)',
   duplikat: 'Duplikat-Verdacht',
-  erfasst: 'Erfasst',
-  in_freigabe: 'In Freigabe',
+  erfasst: 'Erfasst (alt)',
+  in_buchhaltung: 'In Prüfung (Stufe 1)',
+}
+
+const ERKENNUNG_LABEL: Record<string, string> = {
+  '1': 'Erkannt',
+  '2': 'Prüffall (Match)',
+  '3': 'Prüffall (unbekannt)',
 }
 
 function skontoBadge(r: RechnungList): string | null {
@@ -26,7 +32,7 @@ function skontoBadge(r: RechnungList): string | null {
 }
 
 export default function BuchhaltungsInbox() {
-  const [filter, setFilter] = useState<Filter>('offen')
+  const [filter, setFilter] = useState<Filter>('alle')
   const [rows, setRows] = useState<RechnungList[]>([])
   const [loading, setLoading] = useState(true)
   const [fehler, setFehler] = useState<string | null>(null)
@@ -42,16 +48,6 @@ export default function BuchhaltungsInbox() {
 
   useEffect(() => { laden() }, [laden])
 
-  const freigeben = async (r: RechnungList) => {
-    try {
-      await rechnungenApi.freigeben(r.id)
-      laden()
-    } catch (e) {
-      const msg = (e as { response?: { data?: { error?: string } } }).response?.data?.error
-      alert(msg ?? 'Freigabe nicht möglich.')
-    }
-  }
-
   const ablehnen = async (r: RechnungList) => {
     const grund = window.prompt('Begründung der Ablehnung:')
     if (grund == null) return
@@ -62,7 +58,7 @@ export default function BuchhaltungsInbox() {
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-4">
-        <h1 className="text-xl font-semibold text-gray-800">Rechnungseingang — Inbox</h1>
+        <h1 className="text-xl font-semibold text-gray-800">Rechnungsprüfung — Stufe 1 (Buchhaltung)</h1>
         <button
           onClick={() => navigate('/rechnungen/erfassen')}
           className="px-3 py-1.5 text-sm rounded bg-blue-600 text-white hover:bg-blue-700"
@@ -72,13 +68,13 @@ export default function BuchhaltungsInbox() {
       </div>
 
       <div className="flex gap-2 mb-4">
-        {(['offen', 'mir', 'alle'] as Filter[]).map(f => (
+        {(['alle', 'erkannt', 'prueffall'] as Filter[]).map(f => (
           <button
             key={f}
             onClick={() => setFilter(f)}
             className={`px-3 py-1 text-sm rounded ${filter === f ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-700'}`}
           >
-            {f === 'offen' ? 'Offen' : f === 'mir' ? 'Mir zugewiesen' : 'Alle'}
+            {f === 'alle' ? 'Alle' : f === 'erkannt' ? 'Erkannt' : 'Prüffälle'}
           </button>
         ))}
       </div>
@@ -99,6 +95,7 @@ export default function BuchhaltungsInbox() {
                 <th className="px-3 py-2 text-left">Objekt</th>
                 <th className="px-3 py-2 text-right">Betrag</th>
                 <th className="px-3 py-2 text-left">Status</th>
+                <th className="px-3 py-2 text-left">Erkennung</th>
                 <th className="px-3 py-2 text-left">Erfasst von</th>
                 <th className="px-3 py-2 text-left">Skonto</th>
                 <th className="px-3 py-2 text-right">Aktionen</th>
@@ -125,6 +122,9 @@ export default function BuchhaltungsInbox() {
                         {STATUS_LABEL[r.status] ?? r.status}
                       </span>
                     </td>
+                    <td className="px-3 py-2 text-gray-600">
+                      {r.erkennungs_stufe ? (ERKENNUNG_LABEL[r.erkennungs_stufe] ?? r.erkennungs_stufe) : '—'}
+                    </td>
                     <td className="px-3 py-2 text-gray-600">{r.erfasst_von_name ?? '—'}</td>
                     <td className="px-3 py-2">
                       {badge && (
@@ -134,9 +134,6 @@ export default function BuchhaltungsInbox() {
                     <td className="px-3 py-2 text-right whitespace-nowrap">
                       <button onClick={() => navigate(`/rechnungen/erfassen/${r.id}`)}
                               className="text-blue-600 hover:underline mr-3">Öffnen</button>
-                      {r.status === 'in_freigabe' && (
-                        <button onClick={() => freigeben(r)} className="text-green-700 hover:underline mr-3">Freigeben</button>
-                      )}
                       <button onClick={() => ablehnen(r)} className="text-red-600 hover:underline">Ablehnen</button>
                     </td>
                   </tr>

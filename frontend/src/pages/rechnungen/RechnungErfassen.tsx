@@ -188,7 +188,7 @@ export default function RechnungErfassen() {
     } finally { setBusy(false) }
   }
 
-  const speichern = async (modus: 'entwurf' | 'zur_freigabe' | 'freigeben') => {
+  const speichern = async (modus: 'entwurf' | 'zur_freigabe') => {
     setBusy(true); setFehler(null)
     try {
       const payload: Record<string, unknown> = { ...form, modus }
@@ -425,20 +425,19 @@ export default function RechnungErfassen() {
         <textarea className={inp} rows={2} value={form.leistungsbeschreibung} onChange={e => set('leistungsbeschreibung', e.target.value)} />
       </label>
 
-      {/* Aktionen */}
+      {/* Aktionen — Stufe 1 prüft nur, gebucht wird erst in Stufe 2 (v1.1) */}
       <div className="flex items-center gap-3 mt-6">
         <button onClick={() => speichern('entwurf')} disabled={busy}
                 className="px-3 py-2 text-sm rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-50">
           Entwurf speichern
         </button>
-        <button onClick={() => speichern('zur_freigabe')} disabled={busy}
+        <button onClick={() => speichern('zur_freigabe')} disabled={busy || freigebenGesperrt}
+                title={kritischRot ? 'Rotes kritisches Feld — bitte korrigieren'
+                  : hatGelb && !gelbGeprueft ? 'Gelbe Felder bitte bestätigen'
+                  : aufteilen && !splitPasst ? 'Split-Summe muss dem Bruttobetrag entsprechen'
+                  : 'Prüfung abschließen und an die Rechnungsfreigabe (Stufe 2) übergeben'}
                 className="px-4 py-2 text-sm rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">
-          Erfassen + zur Freigabe
-        </button>
-        <button onClick={() => speichern('freigeben')} disabled={busy || freigebenGesperrt}
-                title={kritischRot ? 'Rotes kritisches Feld — bitte korrigieren' : hatGelb && !gelbGeprueft ? 'Gelbe Felder bitte bestätigen' : 'Betrag muss innerhalb Ihres Freigabelimits liegen'}
-                className="px-4 py-2 text-sm rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-50">
-          Erfassen + Freigeben
+          Geprüft → zur Freigabe
         </button>
       </div>
     </div>{/* Ende Formular-Bereich */}

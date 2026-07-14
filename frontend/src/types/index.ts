@@ -711,6 +711,7 @@ export type RechnungStatus =
   | 'importiert' | 'duplikat' | 'prueffall'
   | 'erfasst'
   | 'erkannt' | 'pruefung_match' | 'nicht_erkannt'
+  | 'in_buchhaltung' | 'zur_freigabe'                      // v1.1 zweistufig
   | 'in_pruefung' | 'in_freigabe' | 'freigegeben'
   | 'gebucht' | 'teilbezahlt' | 'bezahlt' | 'abgelehnt' | 'storniert' | 'fehler'
 
