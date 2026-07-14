@@ -293,7 +293,7 @@ class RechnungViewSet(viewsets.ModelViewSet):
         from .services.erkennung_ampel_service import ampel_eingabe_aus_ocr, berechne_ampel
 
         rechnung = self.get_object()
-        if not rechnung.pdf_upload:
+        if not rechnung.pdf_upload and not rechnung.pfad:
             return Response({'error': 'Kein PDF vorhanden'}, status=status.HTTP_400_BAD_REQUEST)
         try:
             felder = ki_ocr_rechnung(rechnung)
@@ -320,12 +320,44 @@ class RechnungViewSet(viewsets.ModelViewSet):
     INBOX_EINGANG_STATUS = ('importiert', 'erkannt', 'pruefung_match', 'nicht_erkannt')
     INBOX_STATUS = INBOX_EINGANG_STATUS + ('erfasst', 'in_freigabe')
 
+    def _inbox_sichtbar(self, user, qs):
+        """Sichtbarkeits-Filter der Buchhaltungs-Inbox (Umbau v1.0):
+        - Superuser / Geschäftsführer → alle Rechnungen
+        - Buchhaltung → nur Rechnungen der zugewiesenen Objekte (Objekt-Aufgabe
+          'buchhaltung') + noch objektlose Eingänge (Triage)
+        - Freigabe-Berechtigte (freigabe_limit gesetzt) → zusätzlich die im
+          Rahmen ihres Limits freizugebenden 'in_freigabe'-Rechnungen (Spec 8.3)
+        - alle anderen → nichts
+        """
+        from django.db.models import Q
+        if user.is_superuser:
+            return qs
+        prof = getattr(user, 'mitarbeiter_profil', None)
+        abteilungen = getattr(prof, 'abteilungen', []) or []
+        if 'geschaeftsfuehrer' in abteilungen:
+            return qs
+
+        bedingung = Q(pk__in=[])   # Default: nichts sichtbar
+        if 'buchhaltung' in abteilungen and prof is not None:
+            from apps.mitarbeiter.models import MitarbeiterObjektZuordnung
+            obj_ids = list(
+                MitarbeiterObjektZuordnung.objects
+                .filter(mitarbeiter=prof, aufgabe='buchhaltung')
+                .values_list('objekt_id', flat=True)
+            )
+            bedingung |= Q(objekt_id__in=obj_ids) | Q(objekt__isnull=True)
+        limit = getattr(prof, 'freigabe_limit', None)
+        if limit is not None:
+            bedingung |= Q(status='in_freigabe', betrag_brutto__lte=limit)
+        return qs.filter(bedingung)
+
     @action(detail=False, methods=['get'], url_path='inbox')
     def inbox(self, request):
         """Buchhaltungs-Inbox: frisch eingegangene + erfasste + in Freigabe
         befindliche Rechnungen (Spec 4.1/4.3/8.1). Ordner-Import (Status
-        'importiert' u.a.) erscheint hier als offener Entwurf."""
-        qs = self.get_queryset().filter(status__in=self.INBOX_STATUS)
+        'importiert' u.a.) erscheint hier als offener Entwurf. Sichtbarkeit
+        nach Rolle/Zuständigkeit (siehe _inbox_sichtbar)."""
+        qs = self._inbox_sichtbar(request.user, self.get_queryset().filter(status__in=self.INBOX_STATUS))
         f = request.query_params.get('filter')     # 'mir' | 'offen' | 'alle'
         if f == 'mir':
             qs = qs.filter(zugewiesen_an=request.user)

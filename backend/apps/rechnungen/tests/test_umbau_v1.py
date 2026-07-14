@@ -18,7 +18,7 @@ from rest_framework.test import APIClient
 from apps.objekte.models import Objekt, Wirtschaftsjahr, Einheit
 from apps.konten.models import Konto, Personenkonto
 from apps.personen.models import Person, EigentumsVerhaeltnis
-from apps.mitarbeiter.models import Mitarbeiter
+from apps.mitarbeiter.models import Mitarbeiter, MitarbeiterObjektZuordnung
 from apps.rechnungen.models import Rechnung, Kreditor
 from apps.rechnungen.services import (
     rechnung_freigabe_service as frs,
@@ -395,7 +395,9 @@ class ErfassenApiTest(TestCase):
         self.assertEqual(resp.status_code, 400)
 
     def test_inbox_listet_offene(self):
-        u = _user_mit_limit("erf5", Decimal("500"))
+        # GF sieht alle offenen Rechnungen (Sichtbarkeitsregel Umbau v1.0)
+        u = User.objects.create_user(username="erf5", password="x")
+        Mitarbeiter.objects.create(user=u, abteilungen=["geschaeftsfuehrer"])
         self.client.force_authenticate(u)
         self.client.post(reverse("rechnungen-erfassen"), self._payload("250.00", "entwurf"), format="json")
         self.client.post(reverse("rechnungen-erfassen"), self._payload("5000.00", "zur_freigabe"), format="json")
@@ -451,3 +453,66 @@ class ErfassenApiTest(TestCase):
         )
         resp = self.client.post(reverse("rechnungen-freigeben", args=[r.id]), {}, format="json")
         self.assertEqual(resp.status_code, 403)
+
+
+# ---------------------------------------------------------------------------
+# Inbox-Sichtbarkeit nach Rolle/Zuständigkeit
+# ---------------------------------------------------------------------------
+
+class InboxSichtbarkeitTest(TestCase):
+    def setUp(self):
+        self.objektA, self.aufwand, _ = _objekt_und_konten()
+        self.objektB = Objekt.objects.create(
+            bezeichnung="Objekt B", objektnummer="T950", objekt_typ="weg",
+            ort="X", verwaltung_seit=date(2020, 1, 1),
+        )
+        self.kreditor = Kreditor.objects.create(name="K", kreditorennummer="70001")
+        self.client = APIClient()
+
+        # Rechnungen: A / B / objektlos (je erfasst), + in_freigabe auf B
+        self.rA = self._re(self.objektA, "erfasst", "100")
+        self.rB = self._re(self.objektB, "erfasst", "100")
+        self.rNull = self._re(None, "erfasst", "100")
+        self.rFrei = self._re(self.objektB, "in_freigabe", "500")
+        self.rFreiHoch = self._re(self.objektB, "in_freigabe", "5000")
+
+    def _re(self, objekt, status_, betrag):
+        return Rechnung.objects.create(
+            objekt=objekt, kreditor=self.kreditor, betrag_brutto=Decimal(betrag),
+            rechnungsnummer=f"RE-{status_}-{betrag}-{objekt.objektnummer if objekt else 'x'}",
+            status=status_,
+        )
+
+    def _mitarbeiter(self, username, abteilungen, limit=None, objekt_buchhaltung=None):
+        u = User.objects.create_user(username=username, password="x")
+        m = Mitarbeiter.objects.create(user=u, abteilungen=abteilungen, freigabe_limit=limit)
+        if objekt_buchhaltung:
+            MitarbeiterObjektZuordnung.objects.create(
+                mitarbeiter=m, objekt=objekt_buchhaltung, aufgabe="buchhaltung")
+        return u
+
+    def _inbox_ids(self, user):
+        self.client.force_authenticate(user)
+        resp = self.client.get(reverse("rechnungen-inbox"))
+        self.assertEqual(resp.status_code, 200)
+        return {r["id"] for r in resp.data}
+
+    def test_gf_sieht_alle(self):
+        gf = self._mitarbeiter("gf", ["geschaeftsfuehrer"])
+        ids = self._inbox_ids(gf)
+        self.assertEqual(ids, {str(self.rA.id), str(self.rB.id), str(self.rNull.id),
+                               str(self.rFrei.id), str(self.rFreiHoch.id)})
+
+    def test_buchhaltung_nur_eigene_objekte_plus_objektlos(self):
+        bh = self._mitarbeiter("bh", ["buchhaltung"], objekt_buchhaltung=self.objektA)
+        ids = self._inbox_ids(bh)
+        self.assertEqual(ids, {str(self.rA.id), str(self.rNull.id)})   # nicht Objekt B
+
+    def test_objektmanager_sieht_nichts(self):
+        om = self._mitarbeiter("om", ["objektmanagement", "prokurist"])
+        self.assertEqual(self._inbox_ids(om), set())
+
+    def test_freigeber_sieht_in_freigabe_im_limit(self):
+        fg = self._mitarbeiter("fg", ["objektmanagement"], limit=Decimal("1000"))
+        ids = self._inbox_ids(fg)
+        self.assertEqual(ids, {str(self.rFrei.id)})   # 500 ≤ 1000, aber nicht 5000
