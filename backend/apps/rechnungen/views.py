@@ -285,6 +285,200 @@ class RechnungViewSet(viewsets.ModelViewSet):
             return RechnungListSerializer
         return RechnungSerializer
 
+    # ── Umbau v1.0: OCR-Vorbefüllung + Verifikations-Ampel ───────────────
+    @action(detail=True, methods=['post'], url_path='ocr')
+    def ocr(self, request, pk=None):
+        """OCR-Extraktion (Vorbefüllung) + Verifikations-Ampel (Spec 4.3/5)."""
+        from .services.ocr import ki_ocr_rechnung, flache_extraktion
+        from .services.erkennung_ampel_service import ampel_eingabe_aus_ocr, berechne_ampel
+
+        rechnung = self.get_object()
+        if not rechnung.pdf_upload and not rechnung.pfad:
+            return Response({'error': 'Kein PDF vorhanden'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            felder = ki_ocr_rechnung(rechnung)
+        except Exception as exc:
+            return Response({'error': f'OCR fehlgeschlagen: {exc}'}, status=status.HTTP_502_BAD_GATEWAY)
+
+        eingabe = ampel_eingabe_aus_ocr(felder, rechnung=rechnung)
+        ergebnis = berechne_ampel(
+            eingabe, objekt=rechnung.objekt if rechnung.objekt_id else None, rechnung=rechnung,
+        )
+        rechnung.erkennung_ampel = ergebnis['ampel']
+        rechnung.erkennung_gesamt_konfidenz = ergebnis['gesamt_konfidenz']
+        rechnung.erkennung_details = ergebnis['felder']
+        rechnung.save(update_fields=[
+            'erkennung_ampel', 'erkennung_gesamt_konfidenz', 'erkennung_details',
+        ])
+        return Response({
+            'extraktion': flache_extraktion(felder),
+            'felder': felder,
+            'ampel': ergebnis,
+        })
+
+    # Stufe 1 („Rechnungsprüfung", Spec v1.1 Kap. 5.1): frisch eingegangene
+    # (inkl. Duplikat-Verdacht) + in Buchhaltungsprüfung befindliche Rechnungen.
+    # 'erfasst' bleibt als Übergangs-/Legacy-Status sichtbar (Cleanup Phase D).
+    INBOX_EINGANG_STATUS = ('importiert', 'erkannt', 'pruefung_match', 'nicht_erkannt', 'duplikat')
+    INBOX_STATUS = INBOX_EINGANG_STATUS + ('in_buchhaltung', 'erfasst')
+
+    def _inbox_sichtbar(self, user, qs):
+        """Sichtbarkeit Stufe-1-Inbox (Umbau v1.1, E1):
+        - Superuser / Geschäftsführer → alle Rechnungen
+        - Buchhaltung → Rechnungen der zugeordneten Objekte
+          (MitarbeiterObjektZuordnung aufgabe='buchhaltung') + objektlose
+          Eingänge (Triage)
+        - alle anderen → nichts (Stufe 2 hat eine eigene Liste)
+        """
+        from django.db.models import Q
+        if user.is_superuser:
+            return qs
+        prof = getattr(user, 'mitarbeiter_profil', None)
+        abteilungen = getattr(prof, 'abteilungen', []) or []
+        if 'geschaeftsfuehrer' in abteilungen:
+            return qs
+        if 'buchhaltung' in abteilungen and prof is not None:
+            from apps.mitarbeiter.models import MitarbeiterObjektZuordnung
+            obj_ids = list(
+                MitarbeiterObjektZuordnung.objects
+                .filter(mitarbeiter=prof, aufgabe='buchhaltung')
+                .values_list('objekt_id', flat=True)
+            )
+            return qs.filter(Q(objekt_id__in=obj_ids) | Q(objekt__isnull=True))
+        return qs.none()
+
+    @action(detail=False, methods=['get'], url_path='inbox')
+    def inbox(self, request):
+        """Stufe-1-Inbox „Rechnungsprüfung" (Spec v1.1 Kap. 5.1): die
+        Buchhaltung prüft die automatische KI-Erfassung. Sichtbarkeit nach
+        Objekt-Zuordnung (E1, siehe _inbox_sichtbar)."""
+        qs = self._inbox_sichtbar(request.user, self.get_queryset().filter(status__in=self.INBOX_STATUS))
+        f = request.query_params.get('filter')     # 'erkannt' | 'prueffall' | 'alle'
+        if f == 'erkannt':
+            qs = qs.filter(erkennungs_stufe='1')
+        elif f == 'prueffall':
+            qs = qs.filter(erkennungs_stufe__in=['2', '3'])
+        data = RechnungListSerializer(qs, many=True, context={'request': request}).data
+        return Response(data)
+
+    @action(detail=False, methods=['get'], url_path='freigabe-liste')
+    def freigabe_liste(self, request):
+        """Stufe-2-Liste „Rechnungsfreigabe" (Spec v1.1 Kap. 5.2): alle
+        Rechnungen zur_freigabe, für die der User laut objektbasierten
+        zahlungsfreigabe_grenzen zuständig ist. GF sieht alle."""
+        from .services.rechnung_freigabe_service import darf_freigeben
+        qs = self.get_queryset().filter(status='zur_freigabe')
+        rechnungen = [r for r in qs if darf_freigeben(r, request.user)]
+        data = RechnungListSerializer(rechnungen, many=True, context={'request': request}).data
+        return Response(data)
+
+    @action(detail=False, methods=['post'], url_path='erfassen')
+    def erfassen(self, request):
+        """Erfassen/Aktualisieren durch die Buchhaltung + Ampel + Modus
+        (entwurf | zur_freigabe | freigeben) — Spec 4.3."""
+        from datetime import datetime
+        from decimal import Decimal, InvalidOperation
+        from apps.objekte.models import Objekt, Einheit
+        from apps.konten.models import Konto
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from .services.erkennung_ampel_service import berechne_und_speichere_ampel
+        from .services.rechnung_freigabe_service import route_zur_freigabe
+
+        data = request.data
+        modus = data.get('modus', 'entwurf')
+        rechnung = Rechnung.objects.filter(pk=data.get('id')).first() if data.get('id') else Rechnung()
+
+        def _dec(v):
+            if v in (None, ''):
+                return None
+            try:
+                return Decimal(str(v))
+            except (InvalidOperation, ValueError):
+                return None
+
+        def _date(v):
+            if not v:
+                return None
+            try:
+                return datetime.strptime(v, '%Y-%m-%d').date()
+            except (ValueError, TypeError):
+                return None
+
+        for feld in ('rechnungsnummer', 'leistungsbeschreibung'):
+            if feld in data:
+                setattr(rechnung, feld, data.get(feld) or '')
+        for feld in ('betrag_netto', 'betrag_brutto', 'mwst_satz', 'betrag_haushaltsnah',
+                     'skonto_prozent', 'skonto_betrag'):
+            if feld in data:
+                setattr(rechnung, feld, _dec(data.get(feld)))
+        for feld in ('rechnungsdatum', 'faelligkeitsdatum', 'skonto_faellig_bis'):
+            if feld in data:
+                setattr(rechnung, feld, _date(data.get(feld)))
+        for bfeld in ('ist_schlussrechnung', 'ist_gutschrift', 'sepa_lastschrift'):
+            if bfeld in data:
+                setattr(rechnung, bfeld, bool(data.get(bfeld)))
+        for feld, model in (('objekt', Objekt), ('kreditor', Kreditor),
+                            ('kostenverursacher', Einheit), ('aufwandskonto', Konto)):
+            key = f'{feld}_id'
+            if key in data or feld in data:
+                setattr(rechnung, key, data.get(key) or data.get(feld) or None)
+        if not rechnung.erfasst_von_id:
+            rechnung.erfasst_von = request.user
+        if rechnung.betrag_haushaltsnah is None:
+            rechnung.betrag_haushaltsnah = Decimal('0')
+
+        try:
+            rechnung.clean()                       # fachliche Validierungen (Spec 3.1)
+        except DjangoValidationError as exc:
+            return Response({'error': exc.message_dict}, status=status.HTTP_400_BAD_REQUEST)
+        rechnung.save()
+
+        berechne_und_speichere_ampel(rechnung)
+        rechnung.save(update_fields=[
+            'erkennung_ampel', 'erkennung_gesamt_konfidenz', 'erkennung_details',
+        ])
+
+        # Split-Positionen (Aufteilung auf mehrere Aufwandskonten) — ein Schritt
+        if 'splits' in data:
+            from .models import RechnungSplitPosition
+            splits = data.get('splits') or []
+            gueltig = [s for s in splits if s.get('aufwandskonto') and _dec(s.get('betrag'))]
+            if gueltig and len(gueltig) < 2:
+                return Response({'error': 'Mindestens 2 Split-Positionen erforderlich.'},
+                                status=status.HTTP_400_BAD_REQUEST)
+            if gueltig:
+                summe = sum((_dec(s['betrag']) for s in gueltig), Decimal('0'))
+                if rechnung.betrag_brutto and abs(summe - rechnung.betrag_brutto) > Decimal('0.005'):
+                    return Response(
+                        {'error': f'Split-Summe {summe} ≠ Rechnungsbetrag {rechnung.betrag_brutto}.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+            rechnung.splits.all().delete()
+            for i, s in enumerate(gueltig):
+                RechnungSplitPosition.objects.create(
+                    rechnung=rechnung, aufwandskonto_id=s['aufwandskonto'],
+                    betrag=_dec(s['betrag']), position=i,
+                )
+
+        # v1.1 zweistufig: Stufe 1 bucht NIE. 'zur_freigabe' (und der
+        # v1.0-Legacy-Modus 'freigeben') übergeben an Stufe 2; 'entwurf'
+        # bleibt in Stufe 1 (in_buchhaltung). Beim Übergang lernt die
+        # Match-Regel aus der geprüften Kontierung (route_zur_freigabe).
+        if modus in ('zur_freigabe', 'freigeben'):
+            if not rechnung.aufwandskonto_id and not rechnung.splits.exists():
+                return Response({'error': 'Aufwandskonto oder Split-Positionen für die Freigabe erforderlich.'},
+                                status=status.HTTP_400_BAD_REQUEST)
+            route_zur_freigabe(rechnung, geprueft_von=request.user)
+            Verarbeitungslog.objects.create(
+                rechnung=rechnung, aktion='Geprüft → zur Freigabe', status=rechnung.status,
+                details=f'Stufe 1 abgeschlossen durch {request.user.get_full_name() or request.user.username}',
+            )
+        else:
+            rechnung.status = 'in_buchhaltung'
+            rechnung.save(update_fields=['status'])
+
+        return Response(RechnungSerializer(rechnung, context={'request': request}).data)
+
     @action(detail=True, methods=['post'], url_path='freigeben')
     def freigeben(self, request, pk=None):
         from datetime import date, datetime
@@ -293,11 +487,23 @@ class RechnungViewSet(viewsets.ModelViewSet):
         from django.core.exceptions import ValidationError as DjangoValidationError
 
         rechnung = self.get_object()
-        if rechnung.status not in ('importiert', 'prueffall', 'in_pruefung', 'erfasst', 'erkannt',
-                                    'pruefung_match', 'nicht_erkannt'):
+        # v1.1: Stufe-2-Freigabe primär aus 'zur_freigabe'; Legacy-Status
+        # bleiben bis Phase D freigabefähig (Übergang).
+        if rechnung.status not in ('zur_freigabe', 'importiert', 'prueffall', 'in_pruefung',
+                                    'erfasst', 'erkannt', 'pruefung_match', 'nicht_erkannt',
+                                    'in_buchhaltung'):
             return Response(
                 {'error': f'Freigabe im Status "{rechnung.status}" nicht möglich'},
                 status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Stufe-2-Berechtigung: objektbasierte zahlungsfreigabe_grenzen
+        # (Rolle + Betragsschwelle) — Spec v1.1 Kap. 5.2, kein persönliches Limit.
+        from .services.rechnung_freigabe_service import darf_freigeben
+        if not darf_freigeben(rechnung, request.user):
+            return Response(
+                {'error': 'Keine Freigabeberechtigung für diese Betragsstufe/dieses Objekt.'},
+                status=status.HTTP_403_FORBIDDEN,
             )
 
         buchungsdatum_str = request.data.get('buchungsdatum')
@@ -306,7 +512,9 @@ class RechnungViewSet(viewsets.ModelViewSet):
         except ValueError:
             buchungsdatum = None
 
-        lernen = request.data.get('lernen', True)
+        # Match-Regel-Update NUR mit ausdrücklicher Zustimmung im
+        # Frontend-Dialog (Spec v1.1 Kap. 5.3) — Default: nicht lernen.
+        lernen = request.data.get('lernen', False)
         neues_konto_id = request.data.get('aufwandskonto_id')
 
         if neues_konto_id:
@@ -358,7 +566,7 @@ class RechnungViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='ablehnen')
     def ablehnen(self, request, pk=None):
         rechnung = self.get_object()
-        if rechnung.status in ('gebucht', 'bezahlt', 'abgelehnt'):
+        if rechnung.status in ('freigegeben', 'bezahlt', 'abgelehnt'):
             return Response(
                 {'error': f'Ablehnung im Status "{rechnung.status}" nicht möglich'},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -426,7 +634,7 @@ class RechnungViewSet(viewsets.ModelViewSet):
 
         rechnung.kostenstelle = sachkonto
         rechnung.objekt = objekt
-        if rechnung.status not in ('freigegeben', 'gebucht'):
+        if rechnung.status != 'freigegeben':
             rechnung.status = 'erfasst'
         rechnung.save(update_fields=['kostenstelle', 'objekt', 'status'])
 
@@ -687,17 +895,10 @@ class RechnungViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='erkennung-ausfuehren')
     def erkennung_ausfuehren(self, request, pk=None):
         from .recognition import fuehre_erkennung_aus
-        from .services.rechnung_op_service import rechnung_freigeben as op_freigeben
-        from django.core.exceptions import ValidationError as DjangoValidationError
         rechnung = self.get_object()
+        # v1.1 Phase D: toter Auto-Buchungs-Rest entfernt — route_rechnung
+        # liefert nie mehr 'gebucht'; die Erkennung endet in Stufe 1.
         rechnung = fuehre_erkennung_aus(rechnung)
-        if rechnung.status == 'gebucht' and not rechnung.op_buchung_id:
-            try:
-                op_freigeben(rechnung, rechnung.aufwandskonto, request.user)
-            except DjangoValidationError as exc:
-                rechnung.status = 'erkannt'
-                rechnung.save(update_fields=['status'])
-                return Response({'error': exc.message}, status=status.HTTP_400_BAD_REQUEST)
         Verarbeitungslog.objects.create(
             rechnung=rechnung, aktion='Erkennung ausgeführt', status=rechnung.status,
             details=f'Stufe {rechnung.erkennungs_stufe} | Konfidenz: {rechnung.erkennungs_konfidenz}',
@@ -742,18 +943,16 @@ class RechnungViewSet(viewsets.ModelViewSet):
     def identifizieren(self, request, pk=None):
         """
         Body: { kreditor_id, objekt_id, aufwandskonto_id,
-                modus: 'speichern'|'freigeben', lernen: true }
-        Erzeugt Match-Regel und routet neu.
+                modus: 'speichern'|'freigeben' }
+        v1.1: Stufe-1-Identifikation — erzeugt KEINE Match-Regel (Spec 5.3),
+        bucht nie direkt; 'freigeben' übergibt an Stufe 2.
         """
         from apps.objekte.models import Objekt
         from apps.konten.models import Konto
-        from .recognition import (
-            lege_match_regel_an, route_rechnung, darf_betreuer_direkt_freigeben,
-            leistungstext_hash,
-        )
+        from .recognition import route_rechnung, leistungstext_hash
 
         rechnung = self.get_object()
-        if rechnung.status not in ('pruefung_match', 'nicht_erkannt', 'erkannt'):
+        if rechnung.status not in ('pruefung_match', 'nicht_erkannt', 'erkannt', 'in_buchhaltung'):
             return Response(
                 {'error': f'Identifizieren im Status "{rechnung.status}" nicht möglich'},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -771,7 +970,6 @@ class RechnungViewSet(viewsets.ModelViewSet):
         objekt_id   = data.get('objekt_id')
         konto_id    = data.get('aufwandskonto_id')
         modus       = data.get('modus', 'speichern')
-        lernen      = data.get('lernen', True)
 
         if not kreditor_id:
             return Response({'error': 'kreditor_id fehlt'}, status=status.HTTP_400_BAD_REQUEST)
@@ -815,62 +1013,27 @@ class RechnungViewSet(viewsets.ModelViewSet):
             rechnung.leistungstext or rechnung.leistungsbeschreibung or ''
         )
         rechnung.status        = 'erkannt'
-        # Manuelle Identifikation = 100 % Konfidenz für alle drei Dimensionen,
-        # damit route_rechnung() bei Beträgen unter dem Auto-Limit direkt bucht.
+        # Manuelle Identifikation = 100 % Konfidenz (Prüf-Kontext für die Ampel).
         rechnung.erkennungs_konfidenz = {'kreditor': 1.0, 'objekt': 1.0, 'aufwandskonto': 1.0}
 
-        # Lernlogik (Trigger A oder C)
-        erstellt_aus = 'manuell' if rechnung.erkennungs_stufe == '3' else 'pruefung'
-        regel = lege_match_regel_an(rechnung, request.user, erstellt_aus, lernen=lernen)
-        if regel:
-            rechnung.match_regel = regel
-
+        # v1.1: kein Direktbuchen aus der Identifikation — der Modus
+        # 'freigeben' übergibt an Stufe 2 (route_zur_freigabe) und lernt
+        # dabei die Match-Regel aus der geprüften Kontierung (Entscheidung
+        # Patrik 2026-07-14). 'speichern' bleibt in Stufe 1 ohne Regel —
+        # gelernt wird erst beim Übergang zur Freigabe.
+        from .services.rechnung_freigabe_service import route_zur_freigabe
         if modus == 'freigeben':
-            if not darf_betreuer_direkt_freigeben(rechnung, request.user):
-                return Response(
-                    {'error': 'Direktfreigabe nicht erlaubt — Betrag über Ihrem Freigabelimit'},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
-            from .services.rechnung_op_service import rechnung_freigeben as op_freigeben
-            from django.core.exceptions import ValidationError as DjangoValidationError
-            if rechnung.aufwandskonto_id:
-                rechnung.status = 'erkannt'
-                try:
-                    op_freigeben(rechnung, rechnung.aufwandskonto, request.user)
-                except DjangoValidationError as exc:
-                    rechnung.status = 'in_pruefung'
-                    rechnung.save(update_fields=['status'])
-                    return Response({'error': exc.message}, status=status.HTTP_400_BAD_REQUEST)
-            else:
-                rechnung.status = 'freigegeben'
-                rechnung.save(update_fields=['status'])
-            Freigabe.objects.create(
-                rechnung=rechnung,
-                bearbeiter=request.user,
-                rolle=_bestimme_rolle(request.user),
-                entscheidung='freigegeben',
-                begruendung='Identifizieren + Freigeben durch Objektbetreuer',
-            )
+            rechnung.save()
+            route_zur_freigabe(rechnung, geprueft_von=request.user)
         else:
-            auto_gebucht = route_rechnung(rechnung)
-            if auto_gebucht and rechnung.aufwandskonto_id:
-                from .services.rechnung_op_service import rechnung_freigeben as op_freigeben
-                from django.core.exceptions import ValidationError as DjangoValidationError
-                rechnung.status = 'erkannt'  # zurücksetzen damit op_freigeben die Validierung passiert
-                try:
-                    op_freigeben(rechnung, rechnung.aufwandskonto, request.user)
-                    # op_freigeben setzt status='gebucht' und speichert selbst
-                except DjangoValidationError as exc:
-                    rechnung.status = 'in_pruefung'
-                    rechnung.save()
-                    return Response({'error': exc.message}, status=status.HTTP_400_BAD_REQUEST)
-            else:
-                rechnung.save()
+            route_rechnung(rechnung)   # → in_buchhaltung (Stufe 1)
+            rechnung.save()
         Verarbeitungslog.objects.create(
             rechnung=rechnung, aktion='Identifiziert', status=rechnung.status,
             details=(
                 f'Modus: {modus} | Kreditor: {kreditor.name} | '
-                f'Aufwandskonto: {aufwandskonto.kontonummer if aufwandskonto else "—"} | Lernen: {lernen}'
+                f'Aufwandskonto: {aufwandskonto.kontonummer if aufwandskonto else "—"} | '
+                'Lernen: nein (Stufe 1, v1.1)'
             ),
         )
         return Response(RechnungSerializer(rechnung, context={'request': request}).data)
@@ -886,7 +1049,7 @@ class RechnungViewSet(viewsets.ModelViewSet):
         """
         from apps.objekte.models import Objekt
         from apps.konten.models import Konto
-        from .recognition import lege_match_regel_an, leistungstext_hash
+        from .recognition import leistungstext_hash
 
         rechnung = self.get_object()
         if rechnung.status != 'nicht_erkannt':
@@ -965,16 +1128,13 @@ class RechnungViewSet(viewsets.ModelViewSet):
         rechnung.kreditor      = kreditor
         rechnung.objekt        = objekt
         rechnung.aufwandskonto = aufwandskonto
-        rechnung.status        = 'erkannt'
+        # v1.1: manuelle Erfassung ist Stufe-1-Arbeit → in_buchhaltung.
+        # Trigger C erzeugt KEINE Match-Regel mehr (Spec 5.3, B6-Default: nein).
+        rechnung.status        = 'in_buchhaltung'
         rechnung.erfasst_von   = request.user
         rechnung.leistungstext_hash = leistungstext_hash(
             rechnung.leistungstext or rechnung.leistungsbeschreibung or ''
         )
-
-        lernen = data.get('lernen', True)
-        regel = lege_match_regel_an(rechnung, request.user, 'manuell', lernen=lernen)
-        if regel:
-            rechnung.match_regel = regel
 
         rechnung.save()
         Verarbeitungslog.objects.create(
@@ -1035,15 +1195,24 @@ class RechnungViewSet(viewsets.ModelViewSet):
             for r in rg:
                 if not r.betrag_brutto or not r.kreditor or not r.kreditor.iban:
                     continue
+                # Skonto (Spec v1.1 Kap. 8): innerhalb der Frist fließt nur der
+                # geminderte Betrag ab — konsistent zur Phase-2-Buchung
+                # (rechnung_bezahlen nutzt dieselbe Prüfung mit dem Zahldatum).
+                from .services.rechnung_zahlung_service import skonto_anwendbar
+                skonto = r.skonto_betrag if skonto_anwendbar(r, faelligkeitsdatum) else Decimal('0')
+                zahlbetrag = Decimal(str(r.betrag_brutto)) - Decimal(str(skonto or 0))
+                zweck = (
+                    f"{r.rechnungsnummer or r.dateiname or str(r.id)[:8]} / "
+                    f"{r.kreditor.name}"
+                )
+                if skonto:
+                    zweck += f" abzgl. {skonto} Skonto"
                 zahlungen.append({
-                    'betrag': Decimal(str(r.betrag_brutto)),
+                    'betrag': zahlbetrag,
                     'empfaenger_name': r.kreditor.name,
                     'empfaenger_iban': r.kreditor.iban,
                     'empfaenger_bic': r.kreditor.bic or 'NOTPROVIDED',
-                    'verwendungszweck': (
-                        f"{r.rechnungsnummer or r.dateiname or str(r.id)[:8]} / "
-                        f"{r.kreditor.name}"
-                    )[:140],
+                    'verwendungszweck': zweck[:140],
                     'faelligkeitsdatum': faelligkeitsdatum,
                     'end_to_end_id': f"RG-{str(r.id)[:12].upper()}",
                 })
@@ -1073,7 +1242,7 @@ class RechnungViewSet(viewsets.ModelViewSet):
         for r in rechnungen:
             if not (r.kreditor and r.kreditor.iban and r.betrag_brutto):
                 continue
-            if r.status != 'gebucht':
+            if r.status != 'freigegeben':
                 continue
             try:
                 op_bezahlen(rechnung=r, buchungsdatum=faelligkeitsdatum, gebucht_von=request.user)
@@ -1082,23 +1251,30 @@ class RechnungViewSet(viewsets.ModelViewSet):
 
         dateiname = f"zahlungen_{faelligkeitsdatum.strftime('%Y%m%d')}.xml"
 
-        # Protokolleintrag speichern
+        # Protokolleintrag speichern — Beträge = tatsächlicher Zahlbetrag
+        # (inkl. gezogenem Skonto, konsistent zur pain.001-Datei)
         from apps.buchhaltung.models import SepaZahlungslauf
         from decimal import Decimal as D
+        from .services.rechnung_zahlung_service import skonto_anwendbar as _sk
         exportierte = [
             r for r in rechnungen
             if r.kreditor and r.kreditor.iban and r.betrag_brutto
         ]
+
+        def _zahlbetrag(r):
+            skonto = r.skonto_betrag if _sk(r, faelligkeitsdatum) else 0
+            return D(str(r.betrag_brutto)) - D(str(skonto or 0))
+
         SepaZahlungslauf.objects.create(
             faelligkeitsdatum=faelligkeitsdatum,
             anzahl_rechnungen=len(exportierte),
-            summe=sum(D(str(r.betrag_brutto)) for r in exportierte),
+            summe=sum(_zahlbetrag(r) for r in exportierte),
             dateiname=dateiname,
             positionen=[{
                 'id': str(r.id),
                 'rechnungsnummer': r.rechnungsnummer or '',
                 'kreditor': r.kreditor.name if r.kreditor else '',
-                'betrag': str(r.betrag_brutto),
+                'betrag': str(_zahlbetrag(r)),
                 'objekt': r.objekt.bezeichnung if r.objekt else '',
             } for r in exportierte],
             buchungs_fehler=buchungs_fehler,

@@ -124,7 +124,7 @@ def buche_camt_dbit_kreditor(umsatz, user) -> dict:
         return {'matched': True, 'gebucht': False, 'grund': 'kein_bank_sachkonto'}
 
     if rechnung and kreditor_op.status in ('offen', 'teilbezahlt'):
-        if rechnung.status == 'gebucht':
+        if rechnung.status == 'freigegeben':   # v1.1: ehem. 'gebucht'
             buchung_aufwand, buchung_kreditor = rechnung_bezahlen(
                 rechnung=rechnung,
                 buchungsdatum=umsatz.buchungsdatum,

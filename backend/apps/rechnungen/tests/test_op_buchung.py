@@ -76,7 +76,7 @@ class FreigebenTest(TestCase):
         r = _rechnung(self.objekt, self.kreditor)
         rechnung_freigeben(r, self.aufwand, self.user)
         r.refresh_from_db()
-        self.assertEqual(r.status, "gebucht")
+        self.assertEqual(r.status, "freigegeben")   # v1.1: ehem. 'gebucht'
         self.assertIsNotNone(r.op_buchung_id)
         # Soll: 15900 / Haben: Kreditorenkonto
         self.assertEqual(r.op_buchung.soll_konto_id, self.konto_15900.id)

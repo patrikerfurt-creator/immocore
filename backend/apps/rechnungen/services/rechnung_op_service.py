@@ -22,6 +22,7 @@ from apps.rechnungen.konstanten import (
     KONTO_BEREICH_AUFWAND_BIS,
     KONTO_SCHWEBENDE_ER,
 )
+from apps.rechnungen.services.rechnung_buchungstext_service import einzelkosten_suffix
 
 
 def _naechste_belegnr(buchungsdatum: date) -> str:
@@ -113,6 +114,9 @@ def rechnung_freigeben(rechnung, aufwandskonto: Konto, freigegeben_von=None, buc
     if rechnung.status not in (
         "importiert", "erfasst", "erkannt",
         "pruefung_match", "nicht_erkannt", "in_pruefung",
+        # v1.1 zweistufig: Stufe-2-Freigabe bucht aus 'zur_freigabe';
+        # 'in_buchhaltung' bleibt für Übergangsfälle zulässig.
+        "zur_freigabe", "in_buchhaltung",
     ):
         raise ValidationError(
             f"Rechnung im Status '{rechnung.status}' kann nicht freigegeben werden."
@@ -177,6 +181,7 @@ def rechnung_freigeben(rechnung, aufwandskonto: Konto, freigegeben_von=None, buc
         buchungstext=(
             f"{buchungstext_prefix} {rechnung.rechnungsnummer or rechnung.dateiname or str(rechnung.id)[:8]}"
             f" / {kreditor_str}"
+            f"{einzelkosten_suffix(rechnung)}"
         ),
         belegnr=_naechste_belegnr(heute),
         beleg_referenz=rechnung.rechnungsnummer or str(rechnung.id),
@@ -208,7 +213,7 @@ def rechnung_freigeben(rechnung, aufwandskonto: Konto, freigegeben_von=None, buc
         if erster_split:
             rechnung.aufwandskonto = erster_split.aufwandskonto
     rechnung.op_buchung = buchung
-    rechnung.status = "gebucht"
+    rechnung.status = "freigegeben"   # v1.1: Freigabe erteilt, OP gebucht
     rechnung.save(update_fields=["aufwandskonto", "op_buchung", "status"])
 
     return rechnung

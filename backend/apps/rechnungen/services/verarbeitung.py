@@ -339,15 +339,14 @@ def verarbeite_datei(datei_pfad: str, archiv_root: Path) -> dict:
             details=notiz,
         )
 
-    # Nach dem Commit: 3-stufige Erkennungspipeline für neue (nicht-Duplikat) Rechnungen
+    # Nach dem Commit: 3-stufige Erkennungspipeline für neue (nicht-Duplikat)
+    # Rechnungen. v1.1 Phase D: der Auto-Buchungs-Zweig (op_freigeben ohne
+    # Nutzer bei status 'gebucht') wurde entfernt — route_rechnung endet
+    # immer in Stufe 1 (in_buchhaltung), gebucht wird erst in Stufe 2.
     if rechnung.status == 'importiert':
         try:
             from apps.rechnungen.recognition import fuehre_erkennung_aus
-            from apps.rechnungen.services.rechnung_op_service import rechnung_freigeben as op_freigeben
             fuehre_erkennung_aus(rechnung)
-            if rechnung.status == 'gebucht' and not rechnung.op_buchung_id and rechnung.aufwandskonto_id:
-                rechnung.status = 'erkannt'
-                op_freigeben(rechnung, rechnung.aufwandskonto, freigegeben_von=None)
             status = rechnung.status
             notiz = rechnung.verarbeitungsnotiz or notiz
         except Exception as exc:

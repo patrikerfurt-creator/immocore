@@ -126,14 +126,15 @@ export function Zahlungen() {
   )
   const [error, setError] = useState<string | null>(null)
 
-  // Alle gebucht-Rechnungen laden — objektübergreifend wenn kein Objekt gewählt
+  // Alle freigegebenen Rechnungen laden (v1.1: ehem. Status 'gebucht') —
+  // objektübergreifend wenn kein Objekt gewählt
   const { data: rechnungen, isLoading } = useQuery({
     queryKey: ['rechnungen-zahlung', objektId],
     queryFn: () =>
       rechnungenApi.list(
         objektId
-          ? { objekt: objektId, status: 'gebucht' }
-          : { status: 'gebucht' }
+          ? { objekt: objektId, status: 'freigegeben' }
+          : { status: 'freigegeben' }
       ),
     enabled: true,
   })
@@ -171,7 +172,7 @@ export function Zahlungen() {
   }
 
   function kannBezahlen(r: RechnungList) {
-    return r.status === 'gebucht' && !!r.aufwandskonto_id && !!r.betrag_brutto && !!r.kreditor_name
+    return r.status === 'freigegeben' && !!r.aufwandskonto_id && !!r.betrag_brutto && !!r.kreditor_name
   }
 
   const zahlbareRechnungen = (rechnungen ?? []).filter(kannBezahlen)

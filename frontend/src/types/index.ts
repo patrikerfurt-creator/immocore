@@ -711,8 +711,26 @@ export type RechnungStatus =
   | 'importiert' | 'duplikat' | 'prueffall'
   | 'erfasst'
   | 'erkannt' | 'pruefung_match' | 'nicht_erkannt'
+  | 'in_buchhaltung' | 'zur_freigabe'                      // v1.1 zweistufig
   | 'in_pruefung' | 'freigegeben'
-  | 'gebucht' | 'bezahlt' | 'abgelehnt' | 'fehler'
+  | 'teilbezahlt' | 'bezahlt' | 'abgelehnt' | 'storniert' | 'fehler'
+
+export type Ampel = 'gruen' | 'gelb' | 'rot'
+
+export interface AmpelFeld {
+  wert: unknown
+  llm_konfidenz: number
+  validierung: 'ok' | 'warnung' | 'fehler' | 'keine'
+  hinweis: string
+  konfidenz: number
+  ampel: Ampel
+}
+
+export interface AmpelErgebnis {
+  ampel: Ampel
+  gesamt_konfidenz: number
+  felder: Record<string, AmpelFeld>
+}
 
 export interface RechnungList {
   id: string
@@ -748,6 +766,15 @@ export interface RechnungList {
   op_nummer: number | null
   sepa_lastschrift: boolean
   ist_gutschrift: boolean
+  // Umbau Rechnungseingang v1.0
+  erkennung_ampel: Ampel | null
+  erkennung_gesamt_konfidenz: string | null
+  betrag_haushaltsnah: string | null
+  ist_schlussrechnung: boolean
+  skonto_faellig_bis: string | null
+  skonto_genutzt: boolean
+  kostenverursacher_id: string | null
+  erfasst_von_name: string | null
 }
 
 export interface Freigabe {
@@ -777,12 +804,25 @@ export interface Rechnung extends RechnungList {
   freigaben: Freigabe[]
   erstellt_am: string
   darf_direkt_freigeben: boolean
+  darf_freigeben: boolean
   match_regel: string | null
   // OP-Buchung
   aufwandskonto: string | null
   op_buchung: string | null
   aufwand_buchung: string | null
   splits: RechnungSplitPosition[]
+  // Umbau Rechnungseingang v1.0
+  kostenverursacher: string | null
+  kostenverursacher_label: string | null
+  betrag_haushaltsnah: string | null
+  ist_schlussrechnung: boolean
+  skonto_prozent: string | null
+  skonto_betrag: string | null
+  skonto_faellig_bis: string | null
+  skonto_genutzt: boolean
+  erkennung_ampel: Ampel | null
+  erkennung_gesamt_konfidenz: string | null
+  erkennung_details: Record<string, AmpelFeld>
 }
 
 export interface RechnungSplitPosition {
