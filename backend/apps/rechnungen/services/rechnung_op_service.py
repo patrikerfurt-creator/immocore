@@ -22,6 +22,7 @@ from apps.rechnungen.konstanten import (
     KONTO_BEREICH_AUFWAND_BIS,
     KONTO_SCHWEBENDE_ER,
 )
+from apps.rechnungen.services.rechnung_buchungstext_service import einzelkosten_suffix
 
 
 def _naechste_belegnr(buchungsdatum: date) -> str:
@@ -177,6 +178,7 @@ def rechnung_freigeben(rechnung, aufwandskonto: Konto, freigegeben_von=None, buc
         buchungstext=(
             f"{buchungstext_prefix} {rechnung.rechnungsnummer or rechnung.dateiname or str(rechnung.id)[:8]}"
             f" / {kreditor_str}"
+            f"{einzelkosten_suffix(rechnung)}"
         ),
         belegnr=_naechste_belegnr(heute),
         beleg_referenz=rechnung.rechnungsnummer or str(rechnung.id),

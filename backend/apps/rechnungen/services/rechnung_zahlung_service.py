@@ -39,6 +39,23 @@ def _naechste_belegnr(buchungsdatum: date) -> str:
     return f"{prefix}{lfd:05d}"
 
 
+def skonto_anwendbar(rechnung, zahlungsdatum: date) -> bool:
+    """Skonto greift nur, wenn ein Skontobetrag + Frist gesetzt sind und
+    innerhalb der Frist gezahlt wird (Spec 7.2)."""
+    return (
+        rechnung.skonto_betrag is not None
+        and rechnung.skonto_faellig_bis is not None
+        and zahlungsdatum <= rechnung.skonto_faellig_bis
+    )
+
+
+def effektiver_zahlbetrag(rechnung) -> Decimal:
+    """Tatsächlich abfließender Betrag: Brutto minus genutztes Skonto."""
+    if rechnung.skonto_genutzt and rechnung.skonto_betrag:
+        return rechnung.betrag_brutto - rechnung.skonto_betrag
+    return rechnung.betrag_brutto
+
+
 @transaction.atomic
 def rechnung_bezahlen(rechnung, buchungsdatum: date, gebucht_von):
     """
@@ -207,13 +224,18 @@ def rechnung_bezahlen(rechnung, buchungsdatum: date, gebucht_von):
             erstellt_von=gebucht_von,
         )
     else:
-        # Normale Rechnung Phase 2:
-        # Buchung 1: Soll Aufwandskonto / Haben 15900
+        # Normale Rechnung Phase 2 — mit optionalem Skonto (Spec 7.3).
+        # Skonto mindert Aufwand + Schwebekonto, ist KEINE Einnahme.
+        skonto_aktiv = skonto_anwendbar(rechnung, buchungsdatum)
+        skonto = rechnung.skonto_betrag if skonto_aktiv else Decimal("0.00")
+        zahlbetrag = betrag - skonto
+
+        # Buchung 1 (Aufwand): Soll Aufwandskonto / Haben 15900  (nur Zahlbetrag)
         buchung_aufwand = Buchung.objects.create(
             objekt=rechnung.objekt,
             soll_konto=rechnung.aufwandskonto,
             haben_konto=konto_15900,
-            betrag=betrag,
+            betrag=zahlbetrag,
             buchungsdatum=buchungsdatum,
             buchungstext=text,
             belegnr=belegnr,
@@ -223,12 +245,12 @@ def rechnung_bezahlen(rechnung, buchungsdatum: date, gebucht_von):
             status="festgeschrieben",
             erstellt_von=gebucht_von,
         )
-        # Buchung 2: Soll Kreditorenkonto / Haben 13600
+        # Buchung 2 (Kreditor-Ausgleich, Zahlungsteil): Soll 70xxx / Haben 13600
         buchung_kreditor = Buchung.objects.create(
             objekt=rechnung.objekt,
             soll_konto=kreditor_konto,
             haben_konto=konto_13600,
-            betrag=betrag,
+            betrag=zahlbetrag,
             buchungsdatum=buchungsdatum,
             buchungstext=text,
             belegnr=belegnr,
@@ -238,6 +260,24 @@ def rechnung_bezahlen(rechnung, buchungsdatum: date, gebucht_von):
             status="festgeschrieben",
             erstellt_von=gebucht_von,
         )
+        # Buchung 2b (Skonto): Soll 70xxx / Haben 15900 — gleicht 70xxx voll aus,
+        # mindert das Schwebekonto. Kein Ertragskonto berührt.
+        if skonto_aktiv and skonto > 0:
+            Buchung.objects.create(
+                objekt=rechnung.objekt,
+                soll_konto=kreditor_konto,
+                haben_konto=konto_15900,
+                betrag=skonto,
+                buchungsdatum=buchungsdatum,
+                buchungstext=f"{text} (Skonto {skonto})",
+                belegnr=belegnr,
+                beleg_referenz=ref,
+                wirtschaftsjahr=wj,
+                wirtschaftsjahr_nr=wj.jahr if wj else buchungsdatum.year,
+                status="festgeschrieben",
+                erstellt_von=gebucht_von,
+            )
+            rechnung.skonto_genutzt = True
 
     # KreditorOP schließen
     try:
@@ -252,7 +292,7 @@ def rechnung_bezahlen(rechnung, buchungsdatum: date, gebucht_von):
     rechnung.aufwand_buchung = buchung_aufwand
     rechnung.buchung = buchung_aufwand
     rechnung.status = "bezahlt"
-    rechnung.save(update_fields=["aufwand_buchung", "buchung", "status"])
+    rechnung.save(update_fields=["aufwand_buchung", "buchung", "status", "skonto_genutzt"])
 
     return buchung_aufwand, buchung_kreditor
 
@@ -309,7 +349,7 @@ def bank_abgang_buchen(rechnung, bankkonto: Konto, buchungsdatum: date, gebucht_
         )
     else:
         # Normale Rechnung Phase 3: Bankabgang
-        # Soll 13600 / Haben Bank (18xxx)
+        # Soll 13600 / Haben Bank (18xxx) — bei Skonto nur der Zahlbetrag
         text = (
             f"Bankabgang {rechnung.rechnungsnummer or rechnung.dateiname} / "
             f"{rechnung.kreditor.name if rechnung.kreditor else 'Lieferant'}"
@@ -318,7 +358,7 @@ def bank_abgang_buchen(rechnung, bankkonto: Konto, buchungsdatum: date, gebucht_
             objekt=rechnung.objekt,
             soll_konto=konto_13600,
             haben_konto=bankkonto,
-            betrag=rechnung.betrag_brutto,
+            betrag=effektiver_zahlbetrag(rechnung),
             buchungsdatum=buchungsdatum,
             buchungstext=text,
             belegnr=_naechste_belegnr(buchungsdatum),
