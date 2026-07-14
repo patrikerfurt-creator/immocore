@@ -316,15 +316,22 @@ class RechnungViewSet(viewsets.ModelViewSet):
             'ampel': ergebnis,
         })
 
+    # Frisch aus Ordner/OCR eingegangen (noch nicht durch die Buchhaltung erfasst).
+    INBOX_EINGANG_STATUS = ('importiert', 'erkannt', 'pruefung_match', 'nicht_erkannt')
+    INBOX_STATUS = INBOX_EINGANG_STATUS + ('erfasst', 'in_freigabe')
+
     @action(detail=False, methods=['get'], url_path='inbox')
     def inbox(self, request):
-        """Buchhaltungs-Inbox: offene Erfassungen/Freigaben (Spec 4.3/8.1)."""
-        qs = self.get_queryset().filter(status__in=['erfasst', 'in_freigabe'])
+        """Buchhaltungs-Inbox: frisch eingegangene + erfasste + in Freigabe
+        befindliche Rechnungen (Spec 4.1/4.3/8.1). Ordner-Import (Status
+        'importiert' u.a.) erscheint hier als offener Entwurf."""
+        qs = self.get_queryset().filter(status__in=self.INBOX_STATUS)
         f = request.query_params.get('filter')     # 'mir' | 'offen' | 'alle'
         if f == 'mir':
             qs = qs.filter(zugewiesen_an=request.user)
         elif f == 'offen':
-            qs = qs.filter(status='erfasst')
+            # alles außer bereits eskalierten Freigaben
+            qs = qs.exclude(status='in_freigabe')
         data = RechnungListSerializer(qs, many=True, context={'request': request}).data
         return Response(data)
 

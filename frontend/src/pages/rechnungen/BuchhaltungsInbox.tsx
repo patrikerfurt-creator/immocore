@@ -7,6 +7,10 @@ import { Ampelpunkt } from './Ampel'
 type Filter = 'offen' | 'mir' | 'alle'
 
 const STATUS_LABEL: Record<string, string> = {
+  importiert: 'Eingegangen',
+  erkannt: 'Eingegangen (erkannt)',
+  pruefung_match: 'Eingegangen (Prüfung)',
+  nicht_erkannt: 'Eingegangen (unklar)',
   erfasst: 'Erfasst',
   in_freigabe: 'In Freigabe',
 }
