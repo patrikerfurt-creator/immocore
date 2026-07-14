@@ -462,12 +462,13 @@ class RechnungViewSet(viewsets.ModelViewSet):
 
         # v1.1 zweistufig: Stufe 1 bucht NIE. 'zur_freigabe' (und der
         # v1.0-Legacy-Modus 'freigeben') übergeben an Stufe 2; 'entwurf'
-        # bleibt in Stufe 1 (in_buchhaltung).
+        # bleibt in Stufe 1 (in_buchhaltung). Beim Übergang lernt die
+        # Match-Regel aus der geprüften Kontierung (route_zur_freigabe).
         if modus in ('zur_freigabe', 'freigeben'):
             if not rechnung.aufwandskonto_id and not rechnung.splits.exists():
                 return Response({'error': 'Aufwandskonto oder Split-Positionen für die Freigabe erforderlich.'},
                                 status=status.HTTP_400_BAD_REQUEST)
-            route_zur_freigabe(rechnung)
+            route_zur_freigabe(rechnung, geprueft_von=request.user)
             Verarbeitungslog.objects.create(
                 rechnung=rechnung, aktion='Geprüft → zur Freigabe', status=rechnung.status,
                 details=f'Stufe 1 abgeschlossen durch {request.user.get_full_name() or request.user.username}',
@@ -1015,15 +1016,15 @@ class RechnungViewSet(viewsets.ModelViewSet):
         # Manuelle Identifikation = 100 % Konfidenz (Prüf-Kontext für die Ampel).
         rechnung.erkennungs_konfidenz = {'kreditor': 1.0, 'objekt': 1.0, 'aufwandskonto': 1.0}
 
-        # v1.1 (Spec 5.3): Identifikation passiert in Stufe 1 — Trigger A/C
-        # erzeugen KEINE Match-Regeln mehr; gelernt wird nur in Stufe 2
-        # (Freigabe-Korrektur mit Rückfrage). B6-Default: nein.
-        # v1.1 (Kap. 4): kein Direktbuchen aus der Identifikation — der
-        # Modus 'freigeben' übergibt an Stufe 2 (route_zur_freigabe).
+        # v1.1: kein Direktbuchen aus der Identifikation — der Modus
+        # 'freigeben' übergibt an Stufe 2 (route_zur_freigabe) und lernt
+        # dabei die Match-Regel aus der geprüften Kontierung (Entscheidung
+        # Patrik 2026-07-14). 'speichern' bleibt in Stufe 1 ohne Regel —
+        # gelernt wird erst beim Übergang zur Freigabe.
         from .services.rechnung_freigabe_service import route_zur_freigabe
         if modus == 'freigeben':
             rechnung.save()
-            route_zur_freigabe(rechnung)
+            route_zur_freigabe(rechnung, geprueft_von=request.user)
         else:
             route_rechnung(rechnung)   # → in_buchhaltung (Stufe 1)
             rechnung.save()

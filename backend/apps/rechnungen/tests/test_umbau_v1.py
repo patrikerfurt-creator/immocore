@@ -575,7 +575,9 @@ class MatchRegelStufenTest(TestCase):
         r.refresh_from_db()
         self.assertIsNotNone(r.op_buchung_id)   # Freigabe trotzdem abgeschlossen
 
-    def test_stufe1_identifizieren_erzeugt_nie_regel(self):
+    def test_stufe1_identifizieren_speichern_erzeugt_keine_regel(self):
+        """'speichern' bleibt in Stufe 1 — gelernt wird erst beim Übergang
+        zur Freigabe (Entscheidung Patrik 2026-07-14)."""
         from apps.rechnungen.models import RechnungsMatchRegel
         r = self._rechnung(status_="pruefung_match")
         buchhalter = _buchhalter("mr_bh", objekt=self.objekt)
@@ -590,6 +592,54 @@ class MatchRegelStufenTest(TestCase):
         self.assertEqual(RechnungsMatchRegel.objects.count(), 0)
         r.refresh_from_db()
         self.assertEqual(r.status, "in_buchhaltung")
+
+    def test_zur_freigabe_erzeugt_regel(self):
+        """Stufe-1-Abschluss „Geprüft → zur Freigabe" erstellt die Match-Regel
+        aus der geprüften Kontierung (Entscheidung Patrik 2026-07-14)."""
+        from apps.rechnungen.models import RechnungsMatchRegel
+        buchhalter = _buchhalter("mr_bh2", objekt=self.objekt)
+        self.client.force_authenticate(buchhalter)
+        resp = self.client.post(reverse("rechnungen-erfassen"), {
+            "objekt_id": str(self.objekt.id),
+            "kreditor_id": str(self.kreditor.id),
+            "aufwandskonto_id": str(self.aufwand.id),
+            "rechnungsnummer": "RE-ZF-1",
+            "rechnungsdatum": date.today().isoformat(),
+            "betrag_brutto": "300.00",
+            "leistungsbeschreibung": "Treppenhausreinigung Mai",
+            "modus": "zur_freigabe",
+        }, format="json")
+        self.assertEqual(resp.status_code, 200, resp.data)
+        regel = RechnungsMatchRegel.objects.get(kreditor=self.kreditor, objekt=self.objekt)
+        self.assertEqual(regel.erstellt_aus, "pruefung")
+        self.assertEqual(regel.aufwandskonto_id, self.aufwand.id)
+        self.assertEqual(regel.status, "aktiv")
+
+    def test_stufe2_korrektur_veraltet_stufe1_regel(self):
+        """Voller Lern-Loop: Stufe 1 erstellt Regel (Konto A) → Stufe-2-
+        Korrektur mit „Ja" veraltet sie und erstellt neue (Konto B)."""
+        from apps.rechnungen.models import RechnungsMatchRegel
+        from apps.rechnungen.services.rechnung_freigabe_service import route_zur_freigabe
+        buchhalter = _buchhalter("mr_bh3", objekt=self.objekt)
+        r = self._rechnung()          # status zur_freigabe, aufwandskonto A
+        r.status = "in_buchhaltung"
+        r.save(update_fields=["status"])
+        route_zur_freigabe(r, geprueft_von=buchhalter)
+        regel_a = RechnungsMatchRegel.objects.get(status="aktiv")
+        self.assertEqual(regel_a.aufwandskonto_id, self.aufwand.id)
+
+        self.client.force_authenticate(self.gf)
+        resp = self.client.post(
+            reverse("rechnungen-freigeben", args=[r.id]),
+            {"aufwandskonto_id": str(self.aufwand2.id), "lernen": True},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        regel_a.refresh_from_db()
+        self.assertEqual(regel_a.status, "veraltet")
+        neue = RechnungsMatchRegel.objects.get(status="aktiv")
+        self.assertEqual(neue.aufwandskonto_id, self.aufwand2.id)
+        self.assertEqual(neue.erstellt_aus, "freigabe_korrektur")
 
 
 # ---------------------------------------------------------------------------

@@ -72,12 +72,23 @@ def darf_freigeben(rechnung, user) -> bool:
     return False   # 'geschaeftsfuehrer'-Stufe: oben bereits behandelt
 
 
-def route_zur_freigabe(rechnung):
+def route_zur_freigabe(rechnung, geprueft_von=None):
     """Stufe-1-Abschluss „Geprüft → zur Freigabe" (Spec 5.1):
     Status → zur_freigabe, Freigabestufe/-person über die bestehenden
-    v1.2-Funktionen ermitteln und zuweisen."""
+    v1.2-Funktionen ermitteln und zuweisen.
+
+    Lernlogik (Entscheidung Patrik 2026-07-14, ersetzt B6-Default „nein"):
+    Beim Übergang zur Freigabe wird die Match-Regel aus der von der
+    Buchhaltung geprüften/bestätigten Kontierung erstellt bzw. bestätigt
+    (gleiches Konto → trefferzahl++). Der Stufe-2-Freigeber ändert die
+    Regel nur bei bewusster Konto-Korrektur mit Rückfrage (Spec 5.3)."""
+    if geprueft_von is not None:
+        from ..recognition import lege_match_regel_an
+        regel = lege_match_regel_an(rechnung, geprueft_von, 'pruefung', lernen=True)
+        if regel:
+            rechnung.match_regel = regel
     stufe = freigabestufe_fuer(rechnung)
     rechnung.status = 'zur_freigabe'
     rechnung.zugewiesen_an = _ermittle_freigabeperson(rechnung, stufe)
-    rechnung.save(update_fields=['status', 'zugewiesen_an'])
+    rechnung.save(update_fields=['status', 'zugewiesen_an', 'match_regel'])
     return rechnung
