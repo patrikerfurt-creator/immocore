@@ -405,6 +405,43 @@ class ErfassenApiTest(TestCase):
         self.assertTrue(stati <= {"erfasst", "in_freigabe"})
         self.assertEqual(len(resp.data), 2)
 
+    def test_erfassen_gutschrift_zahlweg_splits(self):
+        u = _user_mit_limit("erf7", Decimal("500"))
+        self.client.force_authenticate(u)
+        aufwand2 = Konto.objects.create(
+            wirtschaftsjahr=self.aufwand.wirtschaftsjahr, kontonummer="50200",
+            kontoname="Reinigung", kontoart="standard", direktes_buchen=False,
+        )
+        payload = self._payload("250.00", "entwurf")
+        payload.update({
+            "ist_gutschrift": True,
+            "sepa_lastschrift": True,
+            "splits": [
+                {"aufwandskonto": str(self.aufwand.id), "betrag": "100.00"},
+                {"aufwandskonto": str(aufwand2.id), "betrag": "150.00"},
+            ],
+        })
+        resp = self.client.post(reverse("rechnungen-erfassen"), payload, format="json")
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertTrue(resp.data["ist_gutschrift"])
+        self.assertTrue(resp.data["sepa_lastschrift"])
+        self.assertEqual(len(resp.data["splits"]), 2)
+
+    def test_erfassen_split_summe_falsch_400(self):
+        u = _user_mit_limit("erf8", Decimal("500"))
+        self.client.force_authenticate(u)
+        aufwand2 = Konto.objects.create(
+            wirtschaftsjahr=self.aufwand.wirtschaftsjahr, kontonummer="50200",
+            kontoname="Reinigung", kontoart="standard", direktes_buchen=False,
+        )
+        payload = self._payload("250.00", "entwurf")
+        payload["splits"] = [
+            {"aufwandskonto": str(self.aufwand.id), "betrag": "100.00"},
+            {"aufwandskonto": str(aufwand2.id), "betrag": "100.00"},  # Summe 200 ≠ 250
+        ]
+        resp = self.client.post(reverse("rechnungen-erfassen"), payload, format="json")
+        self.assertEqual(resp.status_code, 400)
+
     def test_freigeben_endpoint_ueber_limit_403(self):
         u = _user_mit_limit("erf6", Decimal("100"))
         self.client.force_authenticate(u)

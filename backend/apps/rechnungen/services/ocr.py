@@ -21,7 +21,7 @@ OCR_FELDER = [
     # --- Umbau v1.0 (Spec 5.1) ---
     "betrag_haushaltsnah", "skonto_prozent", "skonto_betrag",
     "skonto_frist_tage", "skonto_faellig_bis", "ist_schlussrechnung",
-    "kostenverursacher_vorschlag",
+    "ist_gutschrift", "kostenverursacher_vorschlag",
 ]
 
 _PROMPT = """Extrahiere aus dieser Rechnung die folgenden Felder. Antworte NUR
@@ -39,6 +39,8 @@ Felder:
 - skonto_prozent, skonto_betrag, skonto_frist_tage, skonto_faellig_bis:
   aus Zahlungsbedingungen ("2% Skonto bei Zahlung innerhalb 14 Tagen").
 - ist_schlussrechnung: true bei "Schlussrechnung"/"Endabrechnung"/"Schlussrg.".
+- ist_gutschrift: true bei Gutschrift/Guthaben ("Gutschrift", "Storno",
+  negativer Rechnungsbetrag, "wir schreiben Ihnen gut"). Sonst false.
 - kostenverursacher_vorschlag: falls im Leistungstext eine Wohnungs-/
   Einheitsbezeichnung genannt ist (z.B. "WE05", "Wohnung Müller, 1.OG links").
 
@@ -67,8 +69,16 @@ def ki_ocr_rechnung(rechnung) -> dict:
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY nicht konfiguriert")
 
-    with rechnung.pdf_upload.open("rb") as f:
-        pdf_data = base64.standard_b64encode(f.read()).decode("utf-8")
+    # PDF-Quelle: hochgeladenes FileField oder Ordner-Import-Pfad (rechnung.pfad)
+    if rechnung.pdf_upload:
+        with rechnung.pdf_upload.open("rb") as f:
+            roh = f.read()
+    elif rechnung.pfad:
+        with open(rechnung.pfad, "rb") as f:
+            roh = f.read()
+    else:
+        raise RuntimeError("Kein PDF (weder pdf_upload noch pfad) vorhanden")
+    pdf_data = base64.standard_b64encode(roh).decode("utf-8")
 
     client = anthropic.Anthropic(api_key=api_key)
     model = getattr(settings, "ANTHROPIC_MODEL", "claude-sonnet-4-6")

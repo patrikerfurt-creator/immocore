@@ -19,6 +19,8 @@ interface FormState {
   mwst_satz: string
   betrag_haushaltsnah: string
   ist_schlussrechnung: boolean
+  ist_gutschrift: boolean
+  sepa_lastschrift: boolean
   skonto_prozent: string
   skonto_betrag: string
   skonto_faellig_bis: string
@@ -30,9 +32,12 @@ const LEER: FormState = {
   kreditor_id: '', objekt_id: '', aufwandskonto_id: '', rechnungsnummer: '',
   rechnungsdatum: '', faelligkeitsdatum: '', betrag_netto: '', betrag_brutto: '',
   mwst_satz: '', betrag_haushaltsnah: '', ist_schlussrechnung: false,
+  ist_gutschrift: false, sepa_lastschrift: false,
   skonto_prozent: '', skonto_betrag: '', skonto_faellig_bis: '',
   kostenverursacher_id: '', leistungsbeschreibung: '',
 }
+
+interface SplitRow { aufwandskonto: string; betrag: string }
 
 // Formularfeld → Schlüssel im Ampel-Detail (erkennung_details)
 const FELD_AMPEL: Record<string, string> = {
@@ -67,6 +72,10 @@ export default function RechnungErfassen() {
   const [fehler, setFehler] = useState<string | null>(null)
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const pdfUrlRef = useRef<string | null>(null)
+  const [aufteilen, setAufteilen] = useState(false)
+  const [splits, setSplits] = useState<SplitRow[]>([
+    { aufwandskonto: '', betrag: '' }, { aufwandskonto: '', betrag: '' },
+  ])
 
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) =>
     setForm(f => ({ ...f, [k]: v }))
@@ -88,10 +97,15 @@ export default function RechnungErfassen() {
         rechnungsdatum: r.rechnungsdatum ?? '', faelligkeitsdatum: r.faelligkeitsdatum ?? '',
         betrag_netto: r.betrag_netto ?? '', betrag_brutto: r.betrag_brutto ?? '',
         mwst_satz: r.mwst_satz ?? '', betrag_haushaltsnah: r.betrag_haushaltsnah ?? '',
-        ist_schlussrechnung: r.ist_schlussrechnung, skonto_prozent: r.skonto_prozent ?? '',
+        ist_schlussrechnung: r.ist_schlussrechnung, ist_gutschrift: r.ist_gutschrift,
+        sepa_lastschrift: r.sepa_lastschrift, skonto_prozent: r.skonto_prozent ?? '',
         skonto_betrag: r.skonto_betrag ?? '', skonto_faellig_bis: r.skonto_faellig_bis ?? '',
         kostenverursacher_id: r.kostenverursacher ?? '', leistungsbeschreibung: r.leistungsbeschreibung ?? '',
       })
+      if (r.splits && r.splits.length >= 2) {
+        setAufteilen(true)
+        setSplits(r.splits.map(s => ({ aufwandskonto: s.aufwandskonto, betrag: s.betrag })))
+      }
       if (r.erkennung_ampel) {
         setAmpel({
           ampel: r.erkennung_ampel,
@@ -104,7 +118,7 @@ export default function RechnungErfassen() {
 
   // PDF-Vorschau laden (parallel neben dem Formular)
   useEffect(() => {
-    if (!id || !rechnung?.pdf_upload) return
+    if (!id || !(rechnung?.pdf_upload || rechnung?.pfad)) return
     let cancelled = false
     rechnungenApi.getPdfBlobUrl(id).then(url => {
       if (cancelled) { URL.revokeObjectURL(url); return }
@@ -163,6 +177,7 @@ export default function RechnungErfassen() {
         skonto_betrag: e.skonto_betrag != null ? String(e.skonto_betrag) : f.skonto_betrag,
         skonto_faellig_bis: (e.skonto_faellig_bis as string) ?? f.skonto_faellig_bis,
         ist_schlussrechnung: Boolean(e.ist_schlussrechnung) || f.ist_schlussrechnung,
+        ist_gutschrift: Boolean(e.ist_gutschrift) || f.ist_gutschrift,
         leistungsbeschreibung: (e.leistungsbeschreibung as string) ?? f.leistungsbeschreibung,
       }))
       setAmpel(res.ampel)
@@ -176,6 +191,13 @@ export default function RechnungErfassen() {
     try {
       const payload: Record<string, unknown> = { ...form, modus }
       if (id) payload.id = id
+      if (aufteilen) {
+        payload.splits = splits
+          .filter(s => s.aufwandskonto && s.betrag)
+          .map(s => ({ aufwandskonto: s.aufwandskonto, betrag: s.betrag.replace(',', '.') }))
+      } else {
+        payload.splits = []   // ohne Aufteilung: evtl. vorhandene Splits entfernen
+      }
       const r = await rechnungenApi.erfassen(payload as Record<string, unknown> & { modus: typeof modus })
       setRechnung(r)
       if (r.erkennung_ampel) {
@@ -192,7 +214,10 @@ export default function RechnungErfassen() {
     } finally { setBusy(false) }
   }
 
-  const freigebenGesperrt = kritischRot || (hatGelb && !gelbGeprueft)
+  const splitSumme = splits.reduce((a, r) => a + (parseFloat(r.betrag.replace(',', '.')) || 0), 0)
+  const brutto = parseFloat((form.betrag_brutto || '').replace(',', '.')) || 0
+  const splitPasst = Math.abs(splitSumme - brutto) < 0.005
+  const freigebenGesperrt = kritischRot || (hatGelb && !gelbGeprueft) || (aufteilen && !splitPasst)
 
   const feldWrap = (feld: keyof FormState, label: string, node: ReactNode) => {
     const fa = feldAmpel(feld)
@@ -212,6 +237,12 @@ export default function RechnungErfassen() {
 
   const inp = 'w-full border rounded px-2 py-1.5 text-sm'
 
+  // Split-Helfer
+  const setSplitRow = (i: number, feld: keyof SplitRow, v: string) =>
+    setSplits(prev => prev.map((r, idx) => idx === i ? { ...r, [feld]: v } : r))
+  const addSplit = () => setSplits(prev => [...prev, { aufwandskonto: '', betrag: '' }])
+  const removeSplit = (i: number) => setSplits(prev => prev.length <= 2 ? prev : prev.filter((_, idx) => idx !== i))
+
   return (
     <div className={pdfUrl ? 'flex items-start min-h-screen' : ''}>
     <div className={pdfUrl ? 'flex-1 min-w-0 p-6 overflow-y-auto' : 'p-6 max-w-3xl'}>
@@ -219,7 +250,7 @@ export default function RechnungErfassen() {
         <h1 className="text-xl font-semibold text-gray-800">
           {id ? 'Rechnung bearbeiten' : 'Rechnung erfassen'}
         </h1>
-        {id && rechnung?.pdf_upload && (
+        {id && (rechnung?.pdf_upload || rechnung?.pfad) && (
           <div className="flex gap-2">
             <button onClick={ocrAusfuehren} disabled={busy}
                     className="px-3 py-1.5 text-sm rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-50">
@@ -317,10 +348,57 @@ export default function RechnungErfassen() {
         </div>
       </div>
 
-      <label className="flex items-center gap-2 text-sm text-gray-700 mt-4">
-        <input type="checkbox" checked={form.ist_schlussrechnung} onChange={e => set('ist_schlussrechnung', e.target.checked)} />
-        Schlussrechnung
-      </label>
+      {/* Kennzeichen + Zahlweg */}
+      <div className="flex flex-wrap items-center gap-6 mt-4">
+        <label className="flex items-center gap-2 text-sm text-gray-700">
+          <input type="checkbox" checked={form.ist_schlussrechnung} onChange={e => set('ist_schlussrechnung', e.target.checked)} />
+          Schlussrechnung
+        </label>
+        <label className="flex items-center gap-2 text-sm text-gray-700">
+          <input type="checkbox" checked={form.ist_gutschrift} onChange={e => set('ist_gutschrift', e.target.checked)} />
+          Gutschrift
+        </label>
+        <label className="flex items-center gap-2 text-sm text-gray-700">
+          Zahlweg:
+          <select className="border rounded px-2 py-1 text-sm"
+                  value={form.sepa_lastschrift ? 'lastschrift' : 'ueberweisung'}
+                  onChange={e => set('sepa_lastschrift', e.target.value === 'lastschrift')}>
+            <option value="ueberweisung">Überweisung</option>
+            <option value="lastschrift">Lastschrift</option>
+          </select>
+        </label>
+      </div>
+
+      {/* Rechnung aufteilen (Splits) */}
+      <div className="mt-4 p-3 border rounded">
+        <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
+          <input type="checkbox" checked={aufteilen} onChange={e => setAufteilen(e.target.checked)} disabled={!form.objekt_id} />
+          Rechnung auf mehrere Aufwandskonten aufteilen
+        </label>
+        {aufteilen && (
+          <div className="mt-3 space-y-2">
+            {splits.map((row, i) => (
+              <div key={i} className="grid grid-cols-[1fr_130px_28px] gap-2 items-center">
+                <select className="border rounded px-2 py-1.5 text-sm" value={row.aufwandskonto}
+                        onChange={e => setSplitRow(i, 'aufwandskonto', e.target.value)}>
+                  <option value="">— Konto —</option>
+                  {konten.map(k => <option key={k.id} value={k.id}>{k.kontonummer} — {k.kontoname}</option>)}
+                </select>
+                <input className="border rounded px-2 py-1.5 text-sm text-right" inputMode="decimal"
+                       placeholder="0.00" value={row.betrag} onChange={e => setSplitRow(i, 'betrag', e.target.value)} />
+                <button type="button" onClick={() => removeSplit(i)} disabled={splits.length <= 2}
+                        className="text-gray-300 hover:text-red-400 disabled:opacity-30 text-lg">×</button>
+              </div>
+            ))}
+            <div className="flex items-center justify-between text-xs pt-1">
+              <button type="button" onClick={addSplit} className="text-blue-600 hover:underline">+ Zeile</button>
+              <span className={splitPasst ? 'text-green-700' : 'text-orange-600'}>
+                Summe {splitSumme.toFixed(2)} € von {brutto.toFixed(2)} € {splitPasst ? '✓' : ''}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
 
       <label className="block mt-4">
         <span className="text-xs text-gray-500 mb-1 block">Leistungsbeschreibung</span>

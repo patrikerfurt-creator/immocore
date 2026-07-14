@@ -378,8 +378,9 @@ class RechnungViewSet(viewsets.ModelViewSet):
         for feld in ('rechnungsdatum', 'faelligkeitsdatum', 'skonto_faellig_bis'):
             if feld in data:
                 setattr(rechnung, feld, _date(data.get(feld)))
-        if 'ist_schlussrechnung' in data:
-            rechnung.ist_schlussrechnung = bool(data.get('ist_schlussrechnung'))
+        for bfeld in ('ist_schlussrechnung', 'ist_gutschrift', 'sepa_lastschrift'):
+            if bfeld in data:
+                setattr(rechnung, bfeld, bool(data.get(bfeld)))
         for feld, model in (('objekt', Objekt), ('kreditor', Kreditor),
                             ('kostenverursacher', Einheit), ('aufwandskonto', Konto)):
             key = f'{feld}_id'
@@ -401,9 +402,31 @@ class RechnungViewSet(viewsets.ModelViewSet):
             'erkennung_ampel', 'erkennung_gesamt_konfidenz', 'erkennung_details',
         ])
 
+        # Split-Positionen (Aufteilung auf mehrere Aufwandskonten) — ein Schritt
+        if 'splits' in data:
+            from .models import RechnungSplitPosition
+            splits = data.get('splits') or []
+            gueltig = [s for s in splits if s.get('aufwandskonto') and _dec(s.get('betrag'))]
+            if gueltig and len(gueltig) < 2:
+                return Response({'error': 'Mindestens 2 Split-Positionen erforderlich.'},
+                                status=status.HTTP_400_BAD_REQUEST)
+            if gueltig:
+                summe = sum((_dec(s['betrag']) for s in gueltig), Decimal('0'))
+                if rechnung.betrag_brutto and abs(summe - rechnung.betrag_brutto) > Decimal('0.005'):
+                    return Response(
+                        {'error': f'Split-Summe {summe} ≠ Rechnungsbetrag {rechnung.betrag_brutto}.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+            rechnung.splits.all().delete()
+            for i, s in enumerate(gueltig):
+                RechnungSplitPosition.objects.create(
+                    rechnung=rechnung, aufwandskonto_id=s['aufwandskonto'],
+                    betrag=_dec(s['betrag']), position=i,
+                )
+
         if modus == 'freigeben':
-            if not rechnung.aufwandskonto_id:
-                return Response({'error': 'Aufwandskonto für Freigabe erforderlich.'},
+            if not rechnung.aufwandskonto_id and not rechnung.splits.exists():
+                return Response({'error': 'Aufwandskonto oder Split-Positionen für Freigabe erforderlich.'},
                                 status=status.HTTP_400_BAD_REQUEST)
             if darf_freigeben(rechnung, request.user):
                 try:
