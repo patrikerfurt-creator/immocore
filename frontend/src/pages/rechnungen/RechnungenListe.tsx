@@ -647,7 +647,9 @@ export function RechnungenListe() {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const objektId = useObjektStore(s => s.selectedId)
-  const [statusFilter, setStatusFilter] = useState('')
+  // Standardmäßig nur Rechnungen im/nach Freigabeprozess — die Erfassung/Triage
+  // läuft über den Menüpunkt „Rechnungseingang".
+  const [statusFilter, setStatusFilter] = useState('__freigabeprozess__')
   const [suche, setSuche] = useState('')
   const [selected, setSelected] = useState<RechnungList | null>(null)
 
@@ -680,6 +682,8 @@ export function RechnungenListe() {
       if (objektId) params.objekt = objektId
       if (statusFilter === '__prueffall_alle__') {
         params.status = 'prueffall,pruefung_match,nicht_erkannt'
+      } else if (statusFilter === '__freigabeprozess__') {
+        params.status = 'in_freigabe,freigegeben,gebucht,teilbezahlt,bezahlt,storniert,abgelehnt'
       } else if (statusFilter) {
         params.status = statusFilter
       }
@@ -744,6 +748,7 @@ export function RechnungenListe() {
           onChange={e => setStatusFilter(e.target.value)}
           className="border rounded px-3 py-2 text-sm"
         >
+          <option value="__freigabeprozess__">— Im Freigabeprozess —</option>
           <option value="">Alle Status</option>
           <option value="__prueffall_alle__">— Alle Prüffälle —</option>
           {ALLE_STATUS.map(s => (

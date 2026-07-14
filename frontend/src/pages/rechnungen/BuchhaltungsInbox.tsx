@@ -11,6 +11,7 @@ const STATUS_LABEL: Record<string, string> = {
   erkannt: 'Eingegangen (erkannt)',
   pruefung_match: 'Eingegangen (Prüfung)',
   nicht_erkannt: 'Eingegangen (unklar)',
+  duplikat: 'Duplikat-Verdacht',
   erfasst: 'Erfasst',
   in_freigabe: 'In Freigabe',
 }
@@ -117,7 +118,13 @@ export default function BuchhaltungsInbox() {
                     <td className="px-3 py-2 text-right font-mono">
                       {r.betrag_brutto ? `${Number(r.betrag_brutto).toLocaleString('de-DE', { minimumFractionDigits: 2 })} €` : '—'}
                     </td>
-                    <td className="px-3 py-2">{STATUS_LABEL[r.status] ?? r.status}</td>
+                    <td className="px-3 py-2">
+                      <span className={r.status === 'duplikat'
+                        ? 'text-xs px-2 py-0.5 rounded bg-orange-100 text-orange-800'
+                        : ''}>
+                        {STATUS_LABEL[r.status] ?? r.status}
+                      </span>
+                    </td>
                     <td className="px-3 py-2 text-gray-600">{r.erfasst_von_name ?? '—'}</td>
                     <td className="px-3 py-2">
                       {badge && (

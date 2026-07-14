@@ -316,8 +316,9 @@ class RechnungViewSet(viewsets.ModelViewSet):
             'ampel': ergebnis,
         })
 
-    # Frisch aus Ordner/OCR eingegangen (noch nicht durch die Buchhaltung erfasst).
-    INBOX_EINGANG_STATUS = ('importiert', 'erkannt', 'pruefung_match', 'nicht_erkannt')
+    # Frisch aus Ordner/OCR eingegangen (noch nicht durch die Buchhaltung erfasst),
+    # inkl. Duplikat-Verdacht (soll in der Inbox geprüft werden können).
+    INBOX_EINGANG_STATUS = ('importiert', 'erkannt', 'pruefung_match', 'nicht_erkannt', 'duplikat')
     INBOX_STATUS = INBOX_EINGANG_STATUS + ('erfasst', 'in_freigabe')
 
     def _inbox_sichtbar(self, user, qs):

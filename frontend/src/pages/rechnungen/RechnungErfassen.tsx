@@ -93,7 +93,9 @@ export default function RechnungErfassen() {
       setRechnung(r)
       setForm({
         kreditor_id: r.kreditor ?? '', objekt_id: r.objekt ?? '',
-        aufwandskonto_id: r.aufwandskonto ?? '', rechnungsnummer: r.rechnungsnummer ?? '',
+        // Vorkontierung: gesetztes Aufwandskonto, sonst KI-/Regel-Kontovorschlag
+        aufwandskonto_id: r.aufwandskonto ?? r.vorgeschlagenes_konto_id ?? '',
+        rechnungsnummer: r.rechnungsnummer ?? '',
         rechnungsdatum: r.rechnungsdatum ?? '', faelligkeitsdatum: r.faelligkeitsdatum ?? '',
         betrag_netto: r.betrag_netto ?? '', betrag_brutto: r.betrag_brutto ?? '',
         mwst_satz: r.mwst_satz ?? '', betrag_haushaltsnah: r.betrag_haushaltsnah ?? '',
@@ -270,6 +272,24 @@ export default function RechnungErfassen() {
           </label>
         )}
       </div>
+
+      {/* KI-/Import-Hinweis */}
+      {rechnung && (rechnung.leistungstext || rechnung.vorgeschlagenes_konto_id) && (
+        <div className="mb-3 p-2.5 rounded bg-indigo-50 border border-indigo-100 text-sm text-indigo-800">
+          🤖 Per KI/Import vorbefüllt (Kreditor, Betrag, Leistungstext
+          {rechnung.vorgeschlagenes_konto_label ? `, Kontovorschlag: ${rechnung.vorgeschlagenes_konto_label}` : ''}).
+          Bitte prüfen und ergänzen.
+        </div>
+      )}
+
+      {/* Duplikat-Verdacht */}
+      {(rechnung?.status === 'duplikat' || rechnung?.duplikat_typ) && (
+        <div className="mb-3 p-2.5 rounded bg-orange-50 border border-orange-200 text-sm text-orange-800">
+          ⚠ Möglicher Duplikat-Verdacht{rechnung?.duplikat_typ ? ` (${rechnung.duplikat_typ})` : ''}
+          {rechnung?.duplikat_von_dateiname ? ` — Original: ${rechnung.duplikat_von_dateiname}` : ''}.
+          Vor dem Erfassen prüfen.
+        </div>
+      )}
 
       {fehler && <div className="mb-3 text-sm text-red-600">{fehler}</div>}
 
