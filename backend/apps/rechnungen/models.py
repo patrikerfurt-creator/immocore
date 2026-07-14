@@ -1,7 +1,9 @@
+from decimal import Decimal
 from uuid import uuid4
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
-from apps.objekte.models import Objekt
+from apps.objekte.models import Objekt, Einheit
 from apps.personen.models import Person
 from apps.konten.models import Konto
 from apps.buchhaltung.models import Buchung
@@ -66,6 +68,11 @@ class Rechnung(models.Model):
         ('bezahlt',       'Bezahlt'),
         ('abgelehnt',     'Abgelehnt'),
         ('fehler',        'Fehler'),
+        # --- Zielenum-Ergänzungen (Umbau v1.0, additiv; alte Werte werden
+        #     in Phase D migriert/entfernt — Spec Kap. 3.3) ---
+        ('in_freigabe',   'In Freigabe'),
+        ('teilbezahlt',   'Teilbezahlt'),
+        ('storniert',     'Storniert'),
     ]
     ERKENNUNGS_STUFE_CHOICES = [
         ('1', 'Stufe 1 — Erkannt'),
@@ -204,10 +211,101 @@ class Rechnung(models.Model):
         ),
     )
 
+    # --- Umbau Rechnungseingang v1.0 (Spec Kap. 3.1) ---------------------
+    AMPEL_CHOICES = [
+        ('gruen', 'Grün'),
+        ('gelb',  'Gelb'),
+        ('rot',   'Rot'),
+    ]
+    kostenverursacher = models.ForeignKey(
+        Einheit, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='verursachte_rechnungen',
+        help_text='Genau eine Einheit der Liegenschaft der Rechnung (optional). '
+                  'Debitornummer des Eigentümers fließt in den Buchungstext.',
+    )
+    betrag_haushaltsnah = models.DecimalField(
+        max_digits=12, decimal_places=2, default=Decimal('0'),
+        help_text='§35a EStG Lohn-/Arbeitskostenanteil. Muss <= betrag_brutto sein.',
+    )
+    ist_schlussrechnung = models.BooleanField(
+        default=False, help_text='Kennzeichen Schlussrechnung (informativ, Spec B4).',
+    )
+    skonto_prozent = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True,
+        help_text='z.B. 2.00 — aus Rechnung.',
+    )
+    skonto_betrag = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+        help_text='Absoluter Skontobetrag; falls nur Prozent genannt aus brutto berechnet.',
+    )
+    skonto_faellig_bis = models.DateField(
+        null=True, blank=True, help_text='Letzter Tag der Skontofrist.',
+    )
+    skonto_genutzt = models.BooleanField(
+        default=False, help_text='Wird beim Zahlungslauf gesetzt, wenn Skonto gezogen wurde.',
+    )
+    erkennung_gesamt_konfidenz = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True,
+        help_text='0–100. Gesamtwert der Verifikations-Ampel (Spec Kap. 5.2).',
+    )
+    erkennung_ampel = models.CharField(
+        max_length=5, choices=AMPEL_CHOICES, null=True, blank=True,
+        help_text='Gecachtes Ampel-Ergebnis (gruen/gelb/rot) für Liste/Inbox.',
+    )
+    erkennung_details = models.JSONField(
+        default=dict, blank=True,
+        help_text='Anzeige-Snapshot je Feld: {feld: {wert, llm_konfidenz, '
+                  'validierung, hinweis, ampel}}. Reine Darstellungsdaten.',
+    )
+
     class Meta:
         verbose_name = 'Rechnung'
         verbose_name_plural = 'Rechnungen'
         ordering = ['-erstellt_am']
+
+    def clean(self):
+        """Fachliche Validierungen (Spec Kap. 3.1). betrag_brutto kann NULL sein
+        (OCR-Vorbefüllung noch unvollständig) → betragsbezogene Prüfungen dann
+        überspringen; sie greifen spätestens bei gesetztem Bruttobetrag."""
+        super().clean()
+        brutto = self.betrag_brutto
+
+        # §35a: 0 <= betrag_haushaltsnah <= betrag_brutto
+        if self.betrag_haushaltsnah is not None:
+            if self.betrag_haushaltsnah < 0:
+                raise ValidationError({'betrag_haushaltsnah': 'Darf nicht negativ sein.'})
+            if brutto is not None and self.betrag_haushaltsnah > brutto:
+                raise ValidationError({
+                    'betrag_haushaltsnah':
+                    'Haushaltsnaher Betrag darf den Bruttobetrag nicht übersteigen.',
+                })
+
+        # Skonto: Prozent gesetzt, Betrag leer → berechnen
+        if self.skonto_prozent is not None and self.skonto_betrag is None and brutto is not None:
+            self.skonto_betrag = (brutto * self.skonto_prozent / Decimal('100')).quantize(Decimal('0.01'))
+
+        # Skonto-Betrag muss echt zwischen 0 und Brutto liegen
+        if self.skonto_betrag is not None:
+            if self.skonto_betrag <= 0:
+                raise ValidationError({'skonto_betrag': 'Skontobetrag muss größer 0 sein.'})
+            if brutto is not None and self.skonto_betrag >= brutto:
+                raise ValidationError({'skonto_betrag': 'Skontobetrag muss kleiner als der Bruttobetrag sein.'})
+
+        # Ist irgendein Skonto-Feld gesetzt, ist die Frist Pflicht
+        if (self.skonto_prozent is not None or self.skonto_betrag is not None) \
+                and self.skonto_faellig_bis is None:
+            raise ValidationError({
+                'skonto_faellig_bis':
+                'Bei gesetztem Skonto muss das Fälligkeitsdatum (skonto_faellig_bis) angegeben sein.',
+            })
+
+        # Kostenverursacher-Einheit muss zum Objekt der Rechnung gehören
+        if self.kostenverursacher_id and self.objekt_id \
+                and self.kostenverursacher.objekt_id != self.objekt_id:
+            raise ValidationError({
+                'kostenverursacher':
+                'Die gewählte Einheit gehört nicht zum Objekt der Rechnung.',
+            })
 
     def __str__(self):
         name = (
