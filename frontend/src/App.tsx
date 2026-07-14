@@ -27,6 +27,8 @@ import { KreditorenListe } from './pages/rechnungen/KreditorenListe'
 import PrueffallDetail from './pages/rechnungen/PrueffallDetail'
 import MatchRegeln from './pages/rechnungen/MatchRegeln'
 import FrontofficeInbox from './pages/rechnungen/FrontofficeInbox'
+import BuchhaltungsInbox from './pages/rechnungen/BuchhaltungsInbox'
+import RechnungErfassen from './pages/rechnungen/RechnungErfassen'
 import { ProzessWizard } from './pages/prozesse/ProzessWizard'
 import { DokumenteListe } from './pages/dokumente/DokumenteListe'
 import { TicketsListe } from './pages/tickets/TicketsListe'
@@ -92,6 +94,9 @@ export default function App() {
             <Route path="buchhaltung/ebanking/regeln" element={<BankMatchRulesPage />} />
             <Route path="buchhaltung/dialog" element={<Dialogbuchhaltung />} />
             <Route path="rechnungen" element={<RechnungenListe />} />
+            <Route path="rechnungen/inbox" element={<BuchhaltungsInbox />} />
+            <Route path="rechnungen/erfassen" element={<RechnungErfassen />} />
+            <Route path="rechnungen/erfassen/:id" element={<RechnungErfassen />} />
             <Route path="rechnungen/:id/prueffall" element={<PrueffallDetail />} />
             <Route path="rechnungen/frontoffice" element={<FrontofficeInbox />} />
             <Route path="kreditoren" element={<KreditorenListe />} />

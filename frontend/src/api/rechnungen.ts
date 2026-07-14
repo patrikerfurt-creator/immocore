@@ -1,5 +1,5 @@
 import client from './client'
-import type { Kreditor, DublettKandidat, Rechnung, RechnungList, RechnungsMatchRegel, RechnungSplitPosition } from '../types'
+import type { Kreditor, DublettKandidat, Rechnung, RechnungList, RechnungsMatchRegel, RechnungSplitPosition, AmpelErgebnis } from '../types'
 
 export const rechnungenApi = {
   // Kreditoren
@@ -65,6 +65,16 @@ export const rechnungenApi = {
     client.post<Rechnung>(`/rechnungen/${id}/identifizieren/`, data).then(r => r.data),
   manuellErfassen: (id: string, data: Record<string, unknown>) =>
     client.post<Rechnung>(`/rechnungen/${id}/manuell-erfassen/`, data).then(r => r.data),
+
+  // Umbau Rechnungseingang v1.0
+  ocr: (id: string) =>
+    client.post<{ extraktion: Record<string, unknown>; felder: Record<string, { wert: unknown; konfidenz: number }>; ampel: AmpelErgebnis }>(
+      `/rechnungen/${id}/ocr/`,
+    ).then(r => r.data),
+  inbox: (filter?: 'mir' | 'offen' | 'alle') =>
+    client.get<RechnungList[]>('/rechnungen/inbox/', { params: filter ? { filter } : undefined }).then(r => r.data),
+  erfassen: (data: Record<string, unknown> & { modus: 'entwurf' | 'zur_freigabe' | 'freigeben' }) =>
+    client.post<Rechnung>('/rechnungen/erfassen/', data).then(r => r.data),
 
   // Splits
   splitsSpeichern: (id: string, positionen: { aufwandskonto: string; betrag: string }[]) =>
