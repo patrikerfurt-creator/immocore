@@ -1201,15 +1201,24 @@ class RechnungViewSet(viewsets.ModelViewSet):
             for r in rg:
                 if not r.betrag_brutto or not r.kreditor or not r.kreditor.iban:
                     continue
+                # Skonto (Spec v1.1 Kap. 8): innerhalb der Frist fließt nur der
+                # geminderte Betrag ab — konsistent zur Phase-2-Buchung
+                # (rechnung_bezahlen nutzt dieselbe Prüfung mit dem Zahldatum).
+                from .services.rechnung_zahlung_service import skonto_anwendbar
+                skonto = r.skonto_betrag if skonto_anwendbar(r, faelligkeitsdatum) else Decimal('0')
+                zahlbetrag = Decimal(str(r.betrag_brutto)) - Decimal(str(skonto or 0))
+                zweck = (
+                    f"{r.rechnungsnummer or r.dateiname or str(r.id)[:8]} / "
+                    f"{r.kreditor.name}"
+                )
+                if skonto:
+                    zweck += f" abzgl. {skonto} Skonto"
                 zahlungen.append({
-                    'betrag': Decimal(str(r.betrag_brutto)),
+                    'betrag': zahlbetrag,
                     'empfaenger_name': r.kreditor.name,
                     'empfaenger_iban': r.kreditor.iban,
                     'empfaenger_bic': r.kreditor.bic or 'NOTPROVIDED',
-                    'verwendungszweck': (
-                        f"{r.rechnungsnummer or r.dateiname or str(r.id)[:8]} / "
-                        f"{r.kreditor.name}"
-                    )[:140],
+                    'verwendungszweck': zweck[:140],
                     'faelligkeitsdatum': faelligkeitsdatum,
                     'end_to_end_id': f"RG-{str(r.id)[:12].upper()}",
                 })
@@ -1248,23 +1257,30 @@ class RechnungViewSet(viewsets.ModelViewSet):
 
         dateiname = f"zahlungen_{faelligkeitsdatum.strftime('%Y%m%d')}.xml"
 
-        # Protokolleintrag speichern
+        # Protokolleintrag speichern — Beträge = tatsächlicher Zahlbetrag
+        # (inkl. gezogenem Skonto, konsistent zur pain.001-Datei)
         from apps.buchhaltung.models import SepaZahlungslauf
         from decimal import Decimal as D
+        from .services.rechnung_zahlung_service import skonto_anwendbar as _sk
         exportierte = [
             r for r in rechnungen
             if r.kreditor and r.kreditor.iban and r.betrag_brutto
         ]
+
+        def _zahlbetrag(r):
+            skonto = r.skonto_betrag if _sk(r, faelligkeitsdatum) else 0
+            return D(str(r.betrag_brutto)) - D(str(skonto or 0))
+
         SepaZahlungslauf.objects.create(
             faelligkeitsdatum=faelligkeitsdatum,
             anzahl_rechnungen=len(exportierte),
-            summe=sum(D(str(r.betrag_brutto)) for r in exportierte),
+            summe=sum(_zahlbetrag(r) for r in exportierte),
             dateiname=dateiname,
             positionen=[{
                 'id': str(r.id),
                 'rechnungsnummer': r.rechnungsnummer or '',
                 'kreditor': r.kreditor.name if r.kreditor else '',
-                'betrag': str(r.betrag_brutto),
+                'betrag': str(_zahlbetrag(r)),
                 'objekt': r.objekt.bezeichnung if r.objekt else '',
             } for r in exportierte],
             buchungs_fehler=buchungs_fehler,
