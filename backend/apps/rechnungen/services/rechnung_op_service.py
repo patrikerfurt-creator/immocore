@@ -114,6 +114,9 @@ def rechnung_freigeben(rechnung, aufwandskonto: Konto, freigegeben_von=None, buc
     if rechnung.status not in (
         "importiert", "erfasst", "erkannt",
         "pruefung_match", "nicht_erkannt", "in_pruefung",
+        # v1.1 zweistufig: Stufe-2-Freigabe bucht aus 'zur_freigabe';
+        # 'in_buchhaltung' bleibt für Übergangsfälle zulässig.
+        "zur_freigabe", "in_buchhaltung",
     ):
         raise ValidationError(
             f"Rechnung im Status '{rechnung.status}' kann nicht freigegeben werden."

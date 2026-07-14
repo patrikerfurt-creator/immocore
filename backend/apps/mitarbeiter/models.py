@@ -29,13 +29,6 @@ class Mitarbeiter(models.Model):
         verbose_name='Abteilungen',
     )
     telefon        = models.CharField(max_length=30, blank=True)
-    freigabe_limit = models.DecimalField(
-        max_digits=12, decimal_places=2, null=True, blank=True,
-        verbose_name='Freigabelimit (EUR)',
-        help_text='Persönliches Freigabelimit. NULL = keine Freigabeberechtigung. '
-                  'Rechnung darf freigegeben werden, wenn betrag_brutto <= freigabe_limit '
-                  '(Umbau Rechnungseingang v1.0, Spec Kap. 3.2 / V9).',
-    )
     aktiv          = models.BooleanField(default=True)
     abwesend       = models.BooleanField(default=False, verbose_name='Abwesend (Vertretung aktiv)')
     eingetreten_am = models.DateField(null=True, blank=True)

@@ -313,21 +313,28 @@ def fuehre_erkennung_aus(rechnung) -> object:
 
 def route_rechnung(rechnung) -> bool:
     """
-    Phase B: Routing anhand Stufe und Konfidenz.
-    Setzt rechnung.routing_ziel + rechnung.zugewiesen_an — kein save().
-    Gibt True zurück wenn auto-gebucht.
+    Umbau v1.1 (zweistufig, Spec Kap. 4): KEINE Auto-Buchung mehr.
+    Jede Rechnung geht in Stufe 1 (Buchhaltung, Status 'in_buchhaltung').
+
+    Die Erkennung (erkennungs_stufe 1/2/3, erkennungs_konfidenz) bleibt als
+    Prüf-Kontext erhalten und steuert die UI-Hinweise in Stufe 1.
+    routing_ziel wird weiterhin als Kontext gesetzt (Log/Auswertung), löst
+    aber kein Routing mehr aus. Zuständigkeit Stufe 1 = Buchhaltung der
+    Objekt-Zuordnung (E1: MitarbeiterObjektZuordnung aufgabe='buchhaltung'),
+    daher zugewiesen_an=None. zugewiesen_an wird erst beim Übergang zu
+    Stufe 2 gesetzt (route_zur_freigabe).
+
+    Rückgabe immer False (nie auto-gebucht) — Signatur bleibt kompatibel.
+    Der alte Auto-Zweig (_route_limit_workflow) bleibt bis Phase D stehen.
     """
     if rechnung.status == 'erkannt':
         rechnung.routing_ziel = 'limit_workflow'
-        return _route_limit_workflow(rechnung)
-
-    # Stufe 2 (Objekt erkannt) → Objektbetreuer; Stufe 3 → Frontoffice
-    if rechnung.objekt_id is not None:
-        rechnung.routing_ziel  = 'objektbetreuer'
-        rechnung.zugewiesen_an = _ermittle_betreuer(rechnung)
+    elif rechnung.objekt_id is not None:
+        rechnung.routing_ziel = 'objektbetreuer'
     else:
-        rechnung.routing_ziel  = 'frontoffice'
-        rechnung.zugewiesen_an = None
+        rechnung.routing_ziel = 'frontoffice'
+    rechnung.status = 'in_buchhaltung'
+    rechnung.zugewiesen_an = None
     return False
 
 

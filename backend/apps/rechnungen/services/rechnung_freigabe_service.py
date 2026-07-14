@@ -1,60 +1,83 @@
 """
-Freigabe-Berechtigung Rechnungseingang (Spec Kap. 4.2, Umbau v1.0).
+Stufe-2-Freigabe Rechnungseingang — Umbau v1.1 (Spec Kap. 5.2).
 
-WER freigeben darf, ergibt sich ausschließlich aus dem persönlichen
-Euro-Limit (Mitarbeiter.freigabe_limit) — NICHT mehr aus der Rolle.
-Die Betragsschwellen (Bagatellgrenze) bleiben am Objekt.
+Die Freigabe-Berechtigung ergibt sich AUSSCHLIESSLICH aus dem
+objektbasierten `Objekt.zahlungsfreigabe_grenzen` (Rolle + Betragsschwelle)
+über die bestehenden v1.2-Funktionen `_ermittle_freigabestufe` /
+`_ermittle_freigabeperson`. Das persönliche `freigabe_limit` aus v1.0
+wurde ersatzlos entfernt (Spec v1.1 Kap. 0 #2).
 
-V9-Auflösung: AUTH_USER_MODEL ist Standard-`auth.User`; das Limit liegt auf
-dem Profil-Model `Mitarbeiter` (OneToOne, related_name='mitarbeiter_profil').
+Rollen-Auflösung (dokumentierte Annahme, an reale Strukturen angepasst):
+- Reale Grenzen-Struktur ist die flache Liste
+  [{bis, rolle, frist_tage, beschreibung}] (V8-Abweichung zur Spec).
+- 'auto'-Stufe: B1-Default — auch Bagatellen laufen durch Stufe 2;
+  zuständig ist die nächste manuelle Stufe.
+- 'sachbearbeiter'/'objektmanager': Objektbetreuer (+ Vertretung),
+  per MitarbeiterObjektZuordnung (aufgabe='objektmanagement') dem Objekt
+  zugeordnete Mitarbeiter, oder Gruppe 'Objektmanager'/'Sachbearbeiter'.
+- 'geschaeftsfuehrer': Abteilung 'geschaeftsfuehrer', Gruppe
+  'Geschaeftsfuehrer' oder Superuser. GF darf jede Stufe freigeben
+  (Eskalationsziel laut Grenzen-Konfig).
 """
-from decimal import Decimal
+from ..recognition import (
+    _ermittle_freigabestufe,
+    _ermittle_freigabeperson,
+    _lade_grenzen,
+    _naechste_manuelle_stufe,
+)
 
 
-def freigabe_limit(user) -> Decimal | None:
-    """Persönliches Freigabelimit des Users oder None (keine Berechtigung).
-    Zugriff über das Mitarbeiter-Profil (V9)."""
-    profil = getattr(user, "mitarbeiter_profil", None)
-    if profil is None:
-        return None
-    return profil.freigabe_limit
+def _ist_geschaeftsfuehrer(user) -> bool:
+    if user.is_superuser:
+        return True
+    if user.groups.filter(name='Geschaeftsfuehrer').exists():
+        return True
+    profil = getattr(user, 'mitarbeiter_profil', None)
+    return bool(profil and 'geschaeftsfuehrer' in (profil.abteilungen or []))
+
+
+def _ist_objekt_freigeber(user, objekt) -> bool:
+    """Sachbearbeiter-/Objektmanager-Stufe: dem Objekt zugeordnete Bearbeiter."""
+    if objekt is None:
+        return False
+    if objekt.betreuer_id == user.id or objekt.betreuer_vertretung_id == user.id:
+        return True
+    profil = getattr(user, 'mitarbeiter_profil', None)
+    if profil and profil.objekt_zuordnungen.filter(
+        objekt=objekt, aufgabe='objektmanagement',
+    ).exists():
+        return True
+    return user.groups.filter(name__in=['Objektmanager', 'Sachbearbeiter']).exists()
+
+
+def freigabestufe_fuer(rechnung) -> dict:
+    """Zuständige (manuelle) Freigabestufe laut zahlungsfreigabe_grenzen.
+    'auto'-Stufe → nächste manuelle Stufe (B1: alles durch Stufe 2)."""
+    grenzen = _lade_grenzen(rechnung)
+    stufe = _ermittle_freigabestufe(rechnung.betrag_brutto or 0, grenzen)
+    if stufe.get('rolle') == 'auto':
+        stufe = _naechste_manuelle_stufe(grenzen)
+    return stufe
 
 
 def darf_freigeben(rechnung, user) -> bool:
-    """Persönliches Limit entscheidet — nicht die Rolle (Spec 4.2).
-    NULL-Limit → keine Berechtigung. Betrag == Limit → erlaubt."""
-    limit = freigabe_limit(user)
-    if limit is None or rechnung.betrag_brutto is None:
+    """Objektbasierte Stufe-2-Berechtigung (Spec 5.2). Kein persönliches Limit."""
+    if rechnung.betrag_brutto is None:
         return False
-    return rechnung.betrag_brutto <= limit
+    if _ist_geschaeftsfuehrer(user):
+        return True
+    rolle = freigabestufe_fuer(rechnung).get('rolle', '')
+    if rolle in ('sachbearbeiter', 'objektmanager'):
+        return _ist_objekt_freigeber(user, rechnung.objekt if rechnung.objekt_id else None)
+    return False   # 'geschaeftsfuehrer'-Stufe: oben bereits behandelt
 
 
-def _lade_grenzen(rechnung) -> list:
-    """Freigabe-Stufen aus dem Objekt oder globalem Default (als Liste)."""
-    from ..models import FreigabelimitDefault
-    if rechnung.objekt_id and rechnung.objekt.zahlungsfreigabe_grenzen:
-        grenzen = rechnung.objekt.zahlungsfreigabe_grenzen
-        if isinstance(grenzen, list) and grenzen:
-            return grenzen
-    return FreigabelimitDefault.lade().grenzen
-
-
-def _bagatellgrenze(grenzen: list) -> Decimal:
-    """Obergrenze der untersten 'auto'-Stufe. Ohne auto-Stufe → 0
-    (dann braucht jede Rechnung eine Freigabe)."""
-    auto_grenzen = [
-        s.get("bis") for s in (grenzen or [])
-        if s.get("rolle") == "auto" and s.get("bis") is not None
-    ]
-    if not auto_grenzen:
-        return Decimal("0")
-    return Decimal(str(max(auto_grenzen)))
-
-
-def braucht_freigabe(rechnung) -> bool:
-    """Bagatellgrenze aus Objekt-Konfig (unterste 'auto'-Stufe).
-    Unterhalb: der Erfasser bucht direkt, sofern er ein freigabe_limit > 0
-    besitzt (Vier-Augen-Detail: Bestätigungspunkt B1 — eine Freigabe genügt)."""
-    bagatell = _bagatellgrenze(_lade_grenzen(rechnung))
-    betrag = rechnung.betrag_brutto or Decimal("0")
-    return betrag > bagatell
+def route_zur_freigabe(rechnung):
+    """Stufe-1-Abschluss „Geprüft → zur Freigabe" (Spec 5.1):
+    Status → zur_freigabe, Freigabestufe/-person über die bestehenden
+    v1.2-Funktionen ermitteln und zuweisen."""
+    stufe = freigabestufe_fuer(rechnung)
+    rechnung.status = 'zur_freigabe'
+    rechnung.zugewiesen_an = _ermittle_freigabeperson(rechnung, stufe)
+    rechnung.save(update_fields=['status', 'zugewiesen_an'])
+    return rechnung

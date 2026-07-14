@@ -40,7 +40,9 @@ def scan_rechnungen_einstellung(einst) -> dict:
         try:
             result = verarbeite_datei(str(datei), archiv)
             status = result['status']
-            if status in ('importiert', 'erkannt'):
+            # v1.1: nach der Erkennung landet jede Rechnung in Stufe 1
+            # ('in_buchhaltung'); erkennungs_stufe bleibt Kontext.
+            if status in ('importiert', 'erkannt', 'in_buchhaltung'):
                 importiert += 1
             elif status == 'duplikat':
                 duplikate += 1

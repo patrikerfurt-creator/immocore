@@ -218,31 +218,34 @@ class StufenAbleitungTest(TestCase):
 
         return mock_rechnung
 
+    # v1.1: Die Erkennungs-Stufe (1/2/3) bleibt als Kontext erhalten;
+    # der Lifecycle-Status ist nach der Pipeline IMMER 'in_buchhaltung'
+    # (Stufe 1 Buchhaltung, keine Auto-Buchung — Spec Kap. 4).
+
     def test_stufe_1_alle_eindeutig(self):
         r = self._mock_erkennung(True, True, True)
         self.assertEqual(r.erkennungs_stufe, '1')
-        # After full pipeline: Stufe-1 with 100% confidence + betrag 100€ → auto-gebucht
-        self.assertIn(r.status, ('erkannt', 'gebucht', 'in_pruefung'))
+        self.assertEqual(r.status, 'in_buchhaltung')
 
     def test_stufe_2_nur_objekt(self):
         r = self._mock_erkennung(False, True, False)
         self.assertEqual(r.erkennungs_stufe, '2')
-        self.assertEqual(r.status, 'pruefung_match')
+        self.assertEqual(r.status, 'in_buchhaltung')
 
     def test_stufe_2_objekt_und_kreditor(self):
         r = self._mock_erkennung(True, True, False)
         self.assertEqual(r.erkennungs_stufe, '2')
-        self.assertEqual(r.status, 'pruefung_match')
+        self.assertEqual(r.status, 'in_buchhaltung')
 
     def test_stufe_3_nur_kreditor(self):
         r = self._mock_erkennung(True, False, False)
         self.assertEqual(r.erkennungs_stufe, '3')
-        self.assertEqual(r.status, 'nicht_erkannt')
+        self.assertEqual(r.status, 'in_buchhaltung')
 
     def test_stufe_3_nichts(self):
         r = self._mock_erkennung(False, False, False)
         self.assertEqual(r.erkennungs_stufe, '3')
-        self.assertEqual(r.status, 'nicht_erkannt')
+        self.assertEqual(r.status, 'in_buchhaltung')
 
     def test_stufe_1_konto_allein_nicht_moeglich(self):
         # Konto ohne Kreditor/Objekt → Stufe 3 (Konto wird gar nicht geprüft)
@@ -338,68 +341,61 @@ class WorkflowPfadTest(TestCase):
         r.save()
         return r
 
-    def test_pfad_1_stufe1_konfidenz_98_betrag_250_auto(self):
-        """Stufe 1, Konfidenz 98%, Betrag 250 € → AUTO gebucht."""
-        r = self._rechnung_mit_konfidenz(250, k=0.98, o=0.98, c=1.0)
-        route_rechnung(r)
-        self.assertEqual(r.status, 'gebucht')
-        self.assertEqual(r.routing_ziel, 'limit_workflow')
+    # v1.1 (Spec Kap. 4 / 11.1): route_rechnung bucht NIE mehr automatisch —
+    # jede Rechnung landet in Stufe 1 (in_buchhaltung). routing_ziel bleibt
+    # als Erkennungs-Kontext erhalten; zugewiesen_an wird erst in Stufe 2 gesetzt.
 
-    def test_pfad_2_stufe1_konfidenz_92_betrag_250_nicht_auto(self):
-        """Stufe 1, Konfidenz 92%, Betrag 250 € → in_pruefung (Konfidenz zu niedrig)."""
+    def test_pfad_1_stufe1_konfidenz_98_betrag_250_nicht_auto(self):
+        """v1.1: Stufe 1, Konfidenz 98%, Betrag 250 € → KEINE Auto-Buchung, in_buchhaltung."""
+        from apps.buchhaltung.models import Buchung
+        anzahl_vorher = Buchung.objects.count()
+        r = self._rechnung_mit_konfidenz(250, k=0.98, o=0.98, c=1.0)
+        auto_gebucht = route_rechnung(r)
+        self.assertFalse(auto_gebucht)
+        self.assertEqual(r.status, 'in_buchhaltung')
+        self.assertEqual(r.routing_ziel, 'limit_workflow')
+        self.assertEqual(Buchung.objects.count(), anzahl_vorher)
+
+    def test_pfad_2_stufe1_konfidenz_92_betrag_250(self):
+        """v1.1: Stufe 1, Konfidenz 92% → in_buchhaltung (Stufe 1, keine Zuweisung)."""
         r = self._rechnung_mit_konfidenz(250, k=0.92, o=0.92, c=1.0)
         route_rechnung(r)
-        self.assertEqual(r.status, 'in_pruefung')
-        self.assertIsNotNone(r.zugewiesen_an)
+        self.assertEqual(r.status, 'in_buchhaltung')
+        self.assertIsNone(r.zugewiesen_an)
 
-    def test_pfad_3_stufe1_konfidenz_98_betrag_5000_gf(self):
-        """Stufe 1, Konfidenz 98%, Betrag 5000 € → in_pruefung an GF."""
+    def test_pfad_3_stufe1_konfidenz_98_betrag_5000(self):
+        """v1.1: auch hohe Beträge → in_buchhaltung (Freigabe-Stufe erst in Stufe 2)."""
         r = self._rechnung_mit_konfidenz(5000, k=0.98, o=0.98, c=1.0)
         route_rechnung(r)
-        self.assertEqual(r.status, 'in_pruefung')
+        self.assertEqual(r.status, 'in_buchhaltung')
 
-    def test_pfad_4_stufe_2_routing_objektbetreuer(self):
-        """Stufe 2 (Objekt erkannt, Konto fehlt) → Routing Objektbetreuer."""
+    def test_pfad_4_stufe_2_kontext_objektbetreuer(self):
+        """Stufe 2 (Objekt erkannt, Konto fehlt) → routing_ziel-Kontext, in_buchhaltung."""
         r = self._rechnung_mit_konfidenz(100, k=0.0, o=0.9, c=0.0, stufe='2')
         route_rechnung(r)
         self.assertEqual(r.routing_ziel, 'objektbetreuer')
-        self.assertEqual(r.zugewiesen_an, self.betreuer_user)
+        self.assertEqual(r.status, 'in_buchhaltung')
+        self.assertIsNone(r.zugewiesen_an)
 
-    def test_pfad_6_stufe_3_nur_kreditor_routing_frontoffice(self):
-        """Stufe 3 (nur Kreditor erkannt, kein Objekt) → Routing Frontoffice."""
+    def test_pfad_6_stufe_3_nur_kreditor_kontext_frontoffice(self):
+        """Stufe 3 (kein Objekt) → routing_ziel-Kontext frontoffice, in_buchhaltung."""
         r = self._rechnung_mit_konfidenz(100, k=0.95, o=0.0, c=0.0, stufe='3')
         r.objekt = None
         r.save()
         route_rechnung(r)
         self.assertEqual(r.routing_ziel, 'frontoffice')
         self.assertIsNone(r.zugewiesen_an)
+        self.assertEqual(r.status, 'in_buchhaltung')
 
-    def test_pfad_7_stufe_3_routing_frontoffice(self):
-        """Stufe 3 → Routing Frontoffice."""
+    def test_pfad_7_stufe_3_kontext_frontoffice(self):
+        """Stufe 3 → routing_ziel-Kontext frontoffice, in_buchhaltung."""
         r = self._rechnung_mit_konfidenz(100, k=0.0, o=0.0, c=0.0, stufe='3')
         r.objekt = None
         r.save()
         route_rechnung(r)
         self.assertEqual(r.routing_ziel, 'frontoffice')
         self.assertIsNone(r.zugewiesen_an)
-
-    def test_pfad_8_abwesenheit_vertretung(self):
-        """Stufe 2, Betreuer abwesend → Routing an Vertretung."""
-        from apps.mitarbeiter.models import Mitarbeiter
-        vertretung = make_user('vertretung', ['Sachbearbeiter'])
-        self.objekt.betreuer_vertretung = vertretung
-        self.objekt.save()
-
-        try:
-            profil = self.betreuer_user.mitarbeiter_profil
-            profil.abwesend = True
-            profil.save()
-        except Exception:
-            pass  # Profil-Modell existiert evtl. noch nicht in Test-DB
-
-        r = self._rechnung_mit_konfidenz(100, k=0.0, o=0.9, c=0.0, stufe='2')
-        route_rechnung(r)
-        self.assertEqual(r.routing_ziel, 'objektbetreuer')
+        self.assertEqual(r.status, 'in_buchhaltung')
 
 
 class LernlogikTest(TestCase):
@@ -483,8 +479,8 @@ class EdgeCaseTest(TestCase):
         }
         self.assertGreaterEqual(_konfidenz_min(r), AUTO_KONFIDENZ_SCHWELLE)
 
-    def test_stufe1_ohne_auto_in_config_immer_in_pruefung(self):
-        """Stufe 1 ohne Auto-Limit in zahlungsfreigabe_grenzen → immer in_pruefung."""
+    def test_stufe1_ohne_auto_in_config_in_buchhaltung(self):
+        """v1.1: auch ohne Auto-Limit in den Grenzen → Stufe 1 (in_buchhaltung)."""
         betreuer = make_user('betreuer2', ['Sachbearbeiter'])
         obj = make_objekt(
             betreuer=betreuer,
@@ -501,7 +497,7 @@ class EdgeCaseTest(TestCase):
         r.erkennungs_konfidenz = {'kreditor': 1.0, 'objekt': 1.0, 'aufwandskonto': 1.0}
         r.save()
         route_rechnung(r)
-        self.assertEqual(r.status, 'in_pruefung')
+        self.assertEqual(r.status, 'in_buchhaltung')
 
 
 # ===========================================================================

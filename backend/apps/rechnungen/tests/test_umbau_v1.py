@@ -1,7 +1,8 @@
 """
 Pflichttests Umbau Rechnungseingang v1.0 (Spec Kap. 10.1 + 10.2).
 
-Deckt ab: darf_freigeben/braucht_freigabe, Skonto, clean()-Validierungen,
+Deckt ab (v1.1): objektbasiertes darf_freigeben/route_zur_freigabe,
+Match-Regel-Gating (nur Stufe 2 mit Rückfrage), Skonto, clean()-Validierungen,
 baue_buchungstext (Debitor), Verifikations-Ampel (feld_konfidenz/gesamt_ampel/
 deterministische Validierungen) und die Skonto-Integrationsbuchung.
 """
@@ -64,9 +65,31 @@ def _objekt_und_konten():
     return objekt, aufwand, bank
 
 
-def _user_mit_limit(username, limit):
+def _gf(username):
+    """Geschäftsführer (Abteilung) — darf jede Freigabestufe (v1.1)."""
     u = User.objects.create_user(username=username, password="x")
-    Mitarbeiter.objects.create(user=u, freigabe_limit=limit)
+    Mitarbeiter.objects.create(user=u, abteilungen=["geschaeftsfuehrer"])
+    return u
+
+
+def _objektmanager(username, objekt=None):
+    """Objektmanagement-Mitarbeiter, optional dem Objekt zugeordnet
+    (Stufe-2-Freigeber der Sachbearbeiter-Stufe, v1.1)."""
+    u = User.objects.create_user(username=username, password="x")
+    m = Mitarbeiter.objects.create(user=u, abteilungen=["objektmanagement"])
+    if objekt is not None:
+        MitarbeiterObjektZuordnung.objects.create(
+            mitarbeiter=m, objekt=objekt, aufgabe="objektmanagement")
+    return u
+
+
+def _buchhalter(username, objekt=None):
+    """Buchhaltung, optional dem Objekt zugeordnet (Stufe-1-Inbox, E1)."""
+    u = User.objects.create_user(username=username, password="x")
+    m = Mitarbeiter.objects.create(user=u, abteilungen=["buchhaltung"])
+    if objekt is not None:
+        MitarbeiterObjektZuordnung.objects.create(
+            mitarbeiter=m, objekt=objekt, aufgabe="buchhaltung")
     return u
 
 
@@ -156,37 +179,66 @@ class SkontoPureTest(SimpleTestCase):
 
 
 # ---------------------------------------------------------------------------
-# 10.1 — Freigabe-Berechtigung
+# 11.1 — Stufe-2-Freigabe-Berechtigung (objektbasiert, v1.1)
 # ---------------------------------------------------------------------------
 
 class DarfFreigebenTest(TestCase):
+    """darf_freigeben läuft über objektbasierte zahlungsfreigabe_grenzen
+    (Rolle + Betragsschwelle) — kein persönliches Limit (Spec v1.1 Kap. 5.2)."""
+
     def setUp(self):
         self.objekt, *_ = _objekt_und_konten()
+        self.objekt.zahlungsfreigabe_grenzen = [
+            {"bis": 500,  "rolle": "auto",              "frist_tage": 0},
+            {"bis": 5000, "rolle": "sachbearbeiter",    "frist_tage": 3},
+            {"bis": None, "rolle": "geschaeftsfuehrer", "frist_tage": 5},
+        ]
+        self.objekt.save(update_fields=["zahlungsfreigabe_grenzen"])
         self.kreditor = Kreditor.objects.create(name="K", kreditorennummer="70001")
+        self.om = _objektmanager("om1", objekt=self.objekt)
+        self.gf = _gf("gf1")
+        self.fremd = _objektmanager("fremd1", objekt=None)   # keinem Objekt zugeordnet
 
     def _rechnung(self, betrag):
         return Rechnung(objekt=self.objekt, kreditor=self.kreditor,
                         betrag_brutto=Decimal(betrag), rechnungsnummer="RE-1")
 
-    def test_limit_none_keine_berechtigung(self):
-        u = User.objects.create_user(username="ohne", password="x")
-        Mitarbeiter.objects.create(user=u, freigabe_limit=None)
-        self.assertFalse(frs.darf_freigeben(self._rechnung("100"), u))
+    def test_sachbearbeiter_stufe_nur_zugeordnete(self):
+        r = self._rechnung("3000")   # sachbearbeiter-Stufe
+        self.assertTrue(frs.darf_freigeben(r, self.om))
+        self.assertFalse(frs.darf_freigeben(r, self.fremd))
 
-    def test_betrag_gleich_limit_erlaubt(self):
-        u = _user_mit_limit("gleich", Decimal("500"))
-        self.assertTrue(frs.darf_freigeben(self._rechnung("500"), u))
+    def test_bagatell_auto_stufe_geht_an_naechste_manuelle(self):
+        # B1: auch Bagatellen durch Stufe 2 → zuständig ist die
+        # nächste manuelle Stufe (sachbearbeiter)
+        r = self._rechnung("250")
+        self.assertTrue(frs.darf_freigeben(r, self.om))
+        self.assertEqual(frs.freigabestufe_fuer(r).get("rolle"), "sachbearbeiter")
 
-    def test_betrag_ueber_limit_verboten(self):
-        u = _user_mit_limit("drueber", Decimal("500"))
-        self.assertFalse(frs.darf_freigeben(self._rechnung("500.01"), u))
+    def test_gf_stufe_nur_gf(self):
+        r = self._rechnung("8000")   # geschaeftsfuehrer-Stufe
+        self.assertFalse(frs.darf_freigeben(r, self.om))
+        self.assertTrue(frs.darf_freigeben(r, self.gf))
 
-    def test_braucht_freigabe_bagatell(self):
-        self.objekt.zahlungsfreigabe_grenzen = [
-            {"bis": 500, "rolle": "auto"}, {"bis": None, "rolle": "gf"},
-        ]
-        self.assertFalse(frs.braucht_freigabe(self._rechnung("500")))     # == Bagatell
-        self.assertTrue(frs.braucht_freigabe(self._rechnung("500.01")))   # darüber
+    def test_gf_darf_jede_stufe(self):
+        self.assertTrue(frs.darf_freigeben(self._rechnung("250"), self.gf))
+        self.assertTrue(frs.darf_freigeben(self._rechnung("3000"), self.gf))
+
+    def test_objektbetreuer_darf_sachbearbeiter_stufe(self):
+        betreuer = User.objects.create_user(username="betr1", password="x")
+        self.objekt.betreuer = betreuer
+        self.objekt.save(update_fields=["betreuer"])
+        self.assertTrue(frs.darf_freigeben(self._rechnung("3000"), betreuer))
+
+    def test_route_zur_freigabe_setzt_status_und_person(self):
+        r = Rechnung.objects.create(
+            objekt=self.objekt, kreditor=self.kreditor,
+            betrag_brutto=Decimal("3000"), rechnungsnummer="RE-RZF",
+            status="in_buchhaltung",
+        )
+        frs.route_zur_freigabe(r)
+        r.refresh_from_db()
+        self.assertEqual(r.status, "zur_freigabe")
 
 
 # ---------------------------------------------------------------------------
@@ -363,52 +415,55 @@ class ErfassenApiTest(TestCase):
             "modus": modus,
         }
 
-    def test_erfassen_entwurf(self):
-        u = _user_mit_limit("erf1", Decimal("500"))
+    def test_erfassen_entwurf_bleibt_stufe_1(self):
+        u = _buchhalter("erf1", objekt=self.objekt)
         self.client.force_authenticate(u)
         resp = self.client.post(reverse("rechnungen-erfassen"), self._payload("250.00", "entwurf"), format="json")
         self.assertEqual(resp.status_code, 200, resp.data)
-        self.assertEqual(resp.data["status"], "erfasst")
+        self.assertEqual(resp.data["status"], "in_buchhaltung")
         self.assertIn(resp.data["erkennung_ampel"], ("gruen", "gelb", "rot"))
 
-    def test_erfassen_freigeben_im_limit_bucht_op(self):
-        u = _user_mit_limit("erf2", Decimal("500"))
+    def test_erfassen_zur_freigabe_bucht_nicht(self):
+        """v1.1: Stufe 1 bucht NIE — 'zur_freigabe' übergibt an Stufe 2."""
+        u = _buchhalter("erf2", objekt=self.objekt)
         self.client.force_authenticate(u)
-        resp = self.client.post(reverse("rechnungen-erfassen"), self._payload("250.00", "freigeben"), format="json")
+        resp = self.client.post(reverse("rechnungen-erfassen"), self._payload("250.00", "zur_freigabe"), format="json")
         self.assertEqual(resp.status_code, 200, resp.data)
-        self.assertEqual(resp.data["status"], "gebucht")     # OP gebucht (Enum-Rename → Phase D)
-        self.assertIsNotNone(resp.data["op_buchung"])
+        self.assertEqual(resp.data["status"], "zur_freigabe")
+        self.assertIsNone(resp.data["op_buchung"])
 
-    def test_erfassen_freigeben_ueber_limit_eskaliert(self):
-        u = _user_mit_limit("erf3", Decimal("500"))
+    def test_erfassen_legacy_modus_freigeben_geht_zur_freigabe(self):
+        """v1.0-Legacy-Modus 'freigeben' bucht nicht mehr, sondern eskaliert."""
+        u = _buchhalter("erf3", objekt=self.objekt)
         self.client.force_authenticate(u)
         resp = self.client.post(reverse("rechnungen-erfassen"), self._payload("5000.00", "freigeben"), format="json")
         self.assertEqual(resp.status_code, 200, resp.data)
-        self.assertEqual(resp.data["status"], "in_freigabe")
+        self.assertEqual(resp.data["status"], "zur_freigabe")
+        self.assertIsNone(resp.data["op_buchung"])
 
     def test_erfassen_haushaltsnah_ueber_brutto_400(self):
-        u = _user_mit_limit("erf4", Decimal("500"))
+        u = _buchhalter("erf4", objekt=self.objekt)
         self.client.force_authenticate(u)
         payload = self._payload("250.00", "entwurf")
         payload["betrag_haushaltsnah"] = "300.00"
         resp = self.client.post(reverse("rechnungen-erfassen"), payload, format="json")
         self.assertEqual(resp.status_code, 400)
 
-    def test_inbox_listet_offene(self):
-        # GF sieht alle offenen Rechnungen (Sichtbarkeitsregel Umbau v1.0)
-        u = User.objects.create_user(username="erf5", password="x")
-        Mitarbeiter.objects.create(user=u, abteilungen=["geschaeftsfuehrer"])
+    def test_inbox_zeigt_stufe_1_nicht_stufe_2(self):
+        u = _gf("erf5")
         self.client.force_authenticate(u)
         self.client.post(reverse("rechnungen-erfassen"), self._payload("250.00", "entwurf"), format="json")
         self.client.post(reverse("rechnungen-erfassen"), self._payload("5000.00", "zur_freigabe"), format="json")
         resp = self.client.get(reverse("rechnungen-inbox"))
         self.assertEqual(resp.status_code, 200)
         stati = {r["status"] for r in resp.data}
-        self.assertTrue(stati <= {"erfasst", "in_freigabe"})
-        self.assertEqual(len(resp.data), 2)
+        self.assertEqual(stati, {"in_buchhaltung"})   # zur_freigabe gehört zu Stufe 2
+        resp2 = self.client.get(reverse("rechnungen-freigabe-liste"))
+        self.assertEqual(resp2.status_code, 200)
+        self.assertEqual({r["status"] for r in resp2.data}, {"zur_freigabe"})
 
     def test_erfassen_gutschrift_zahlweg_splits(self):
-        u = _user_mit_limit("erf7", Decimal("500"))
+        u = _buchhalter("erf7", objekt=self.objekt)
         self.client.force_authenticate(u)
         aufwand2 = Konto.objects.create(
             wirtschaftsjahr=self.aufwand.wirtschaftsjahr, kontonummer="50200",
@@ -430,7 +485,7 @@ class ErfassenApiTest(TestCase):
         self.assertEqual(len(resp.data["splits"]), 2)
 
     def test_erfassen_split_summe_falsch_400(self):
-        u = _user_mit_limit("erf8", Decimal("500"))
+        u = _buchhalter("erf8", objekt=self.objekt)
         self.client.force_authenticate(u)
         aufwand2 = Konto.objects.create(
             wirtschaftsjahr=self.aufwand.wirtschaftsjahr, kontonummer="50200",
@@ -444,19 +499,101 @@ class ErfassenApiTest(TestCase):
         resp = self.client.post(reverse("rechnungen-erfassen"), payload, format="json")
         self.assertEqual(resp.status_code, 400)
 
-    def test_freigeben_endpoint_ueber_limit_403(self):
-        u = _user_mit_limit("erf6", Decimal("100"))
+    def test_freigeben_endpoint_ohne_berechtigung_403(self):
+        # Nicht zugeordneter Objektmanager darf nicht freigeben (objektbasiert)
+        u = _objektmanager("erf6", objekt=None)
         self.client.force_authenticate(u)
         r = Rechnung.objects.create(
             objekt=self.objekt, kreditor=self.kreditor, aufwandskonto=self.aufwand,
-            betrag_brutto=Decimal("5000.00"), rechnungsnummer="RE-FG", status="in_freigabe",
+            betrag_brutto=Decimal("5000.00"), rechnungsnummer="RE-FG", status="zur_freigabe",
         )
         resp = self.client.post(reverse("rechnungen-freigeben", args=[r.id]), {}, format="json")
         self.assertEqual(resp.status_code, 403)
 
+    def test_freigeben_endpoint_gf_bucht_op(self):
+        # P2: Stufe-2-Freigabe durch GF → freigegeben/gebucht + OP-Buchung
+        u = _gf("erf9")
+        self.client.force_authenticate(u)
+        r = Rechnung.objects.create(
+            objekt=self.objekt, kreditor=self.kreditor, aufwandskonto=self.aufwand,
+            betrag_brutto=Decimal("5000.00"), rechnungsnummer="RE-FG2", status="zur_freigabe",
+        )
+        resp = self.client.post(reverse("rechnungen-freigeben", args=[r.id]), {}, format="json")
+        self.assertEqual(resp.status_code, 200, resp.data)
+        r.refresh_from_db()
+        self.assertIsNotNone(r.op_buchung_id)
+
 
 # ---------------------------------------------------------------------------
-# Inbox-Sichtbarkeit nach Rolle/Zuständigkeit
+# 11.1 — Match-Regel: nur Stufe 2, mit Rückfrage (Spec 5.3)
+# ---------------------------------------------------------------------------
+
+class MatchRegelStufenTest(TestCase):
+    def setUp(self):
+        self.objekt, self.aufwand, _ = _objekt_und_konten()
+        self.aufwand2 = Konto.objects.create(
+            wirtschaftsjahr=self.aufwand.wirtschaftsjahr, kontonummer="50200",
+            kontoname="Reinigung", kontoart="standard", direktes_buchen=False,
+        )
+        self.kreditor = Kreditor.objects.create(name="Test GmbH", kreditorennummer="70001")
+        self.gf = _gf("mr_gf")
+        self.client = APIClient()
+
+    def _rechnung(self, status_="zur_freigabe"):
+        return Rechnung.objects.create(
+            objekt=self.objekt, kreditor=self.kreditor, aufwandskonto=self.aufwand,
+            betrag_brutto=Decimal("300.00"), rechnungsnummer=f"RE-MR-{status_}",
+            leistungstext="Treppenhausreinigung Mai", status=status_,
+        )
+
+    def test_stufe2_kontoaenderung_mit_ja_erzeugt_regel(self):
+        from apps.rechnungen.models import RechnungsMatchRegel
+        r = self._rechnung()
+        self.client.force_authenticate(self.gf)
+        resp = self.client.post(
+            reverse("rechnungen-freigeben", args=[r.id]),
+            {"aufwandskonto_id": str(self.aufwand2.id), "lernen": True},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        regel = RechnungsMatchRegel.objects.filter(kreditor=self.kreditor, objekt=self.objekt).first()
+        self.assertIsNotNone(regel)
+        self.assertEqual(regel.erstellt_aus, "freigabe_korrektur")
+        self.assertEqual(regel.aufwandskonto_id, self.aufwand2.id)
+
+    def test_stufe2_kontoaenderung_ohne_ja_keine_regel(self):
+        from apps.rechnungen.models import RechnungsMatchRegel
+        r = self._rechnung()
+        self.client.force_authenticate(self.gf)
+        resp = self.client.post(
+            reverse("rechnungen-freigeben", args=[r.id]),
+            {"aufwandskonto_id": str(self.aufwand2.id)},   # kein lernen → Default False
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(RechnungsMatchRegel.objects.count(), 0)
+        r.refresh_from_db()
+        self.assertIsNotNone(r.op_buchung_id)   # Freigabe trotzdem abgeschlossen
+
+    def test_stufe1_identifizieren_erzeugt_nie_regel(self):
+        from apps.rechnungen.models import RechnungsMatchRegel
+        r = self._rechnung(status_="pruefung_match")
+        buchhalter = _buchhalter("mr_bh", objekt=self.objekt)
+        self.client.force_authenticate(buchhalter)
+        resp = self.client.post(
+            reverse("rechnungen-identifizieren", args=[r.id]),
+            {"kreditor_id": str(self.kreditor.id), "objekt_id": str(self.objekt.id),
+             "aufwandskonto_id": str(self.aufwand2.id), "modus": "speichern"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(RechnungsMatchRegel.objects.count(), 0)
+        r.refresh_from_db()
+        self.assertEqual(r.status, "in_buchhaltung")
+
+
+# ---------------------------------------------------------------------------
+# Inbox-Sichtbarkeit Stufe 1 / Stufe-2-Liste (v1.1)
 # ---------------------------------------------------------------------------
 
 class InboxSichtbarkeitTest(TestCase):
@@ -469,12 +606,12 @@ class InboxSichtbarkeitTest(TestCase):
         self.kreditor = Kreditor.objects.create(name="K", kreditorennummer="70001")
         self.client = APIClient()
 
-        # Rechnungen: A / B / objektlos (je erfasst), + in_freigabe auf B
-        self.rA = self._re(self.objektA, "erfasst", "100")
-        self.rB = self._re(self.objektB, "erfasst", "100")
-        self.rNull = self._re(None, "erfasst", "100")
-        self.rFrei = self._re(self.objektB, "in_freigabe", "500")
-        self.rFreiHoch = self._re(self.objektB, "in_freigabe", "5000")
+        # Stufe 1: A / B / objektlos; Stufe 2: eine kleine + eine große auf B
+        self.rA = self._re(self.objektA, "in_buchhaltung", "100")
+        self.rB = self._re(self.objektB, "in_buchhaltung", "100")
+        self.rNull = self._re(None, "in_buchhaltung", "100")
+        self.rFrei = self._re(self.objektB, "zur_freigabe", "500")
+        self.rFreiHoch = self._re(self.objektB, "zur_freigabe", "15000")
 
     def _re(self, objekt, status_, betrag):
         return Rechnung.objects.create(
@@ -483,36 +620,39 @@ class InboxSichtbarkeitTest(TestCase):
             status=status_,
         )
 
-    def _mitarbeiter(self, username, abteilungen, limit=None, objekt_buchhaltung=None):
-        u = User.objects.create_user(username=username, password="x")
-        m = Mitarbeiter.objects.create(user=u, abteilungen=abteilungen, freigabe_limit=limit)
-        if objekt_buchhaltung:
-            MitarbeiterObjektZuordnung.objects.create(
-                mitarbeiter=m, objekt=objekt_buchhaltung, aufgabe="buchhaltung")
-        return u
-
     def _inbox_ids(self, user):
         self.client.force_authenticate(user)
         resp = self.client.get(reverse("rechnungen-inbox"))
         self.assertEqual(resp.status_code, 200)
         return {r["id"] for r in resp.data}
 
-    def test_gf_sieht_alle(self):
-        gf = self._mitarbeiter("gf", ["geschaeftsfuehrer"])
-        ids = self._inbox_ids(gf)
-        self.assertEqual(ids, {str(self.rA.id), str(self.rB.id), str(self.rNull.id),
-                               str(self.rFrei.id), str(self.rFreiHoch.id)})
+    def _freigabe_ids(self, user):
+        self.client.force_authenticate(user)
+        resp = self.client.get(reverse("rechnungen-freigabe-liste"))
+        self.assertEqual(resp.status_code, 200)
+        return {r["id"] for r in resp.data}
+
+    def test_gf_sieht_alle_stufe_1(self):
+        gf = _gf("gf")
+        self.assertEqual(self._inbox_ids(gf),
+                         {str(self.rA.id), str(self.rB.id), str(self.rNull.id)})
 
     def test_buchhaltung_nur_eigene_objekte_plus_objektlos(self):
-        bh = self._mitarbeiter("bh", ["buchhaltung"], objekt_buchhaltung=self.objektA)
-        ids = self._inbox_ids(bh)
-        self.assertEqual(ids, {str(self.rA.id), str(self.rNull.id)})   # nicht Objekt B
+        bh = _buchhalter("bh", objekt=self.objektA)
+        self.assertEqual(self._inbox_ids(bh), {str(self.rA.id), str(self.rNull.id)})
 
-    def test_objektmanager_sieht_nichts(self):
-        om = self._mitarbeiter("om", ["objektmanagement", "prokurist"])
+    def test_objektmanager_sieht_stufe_1_nicht(self):
+        om = _objektmanager("om", objekt=self.objektB)
         self.assertEqual(self._inbox_ids(om), set())
 
-    def test_freigeber_sieht_in_freigabe_im_limit(self):
-        fg = self._mitarbeiter("fg", ["objektmanagement"], limit=Decimal("1000"))
-        ids = self._inbox_ids(fg)
-        self.assertEqual(ids, {str(self.rFrei.id)})   # 500 ≤ 1000, aber nicht 5000
+    def test_freigabe_liste_objektmanager_nur_eigene_stufe(self):
+        # Default-Grenzen: auto 500 / objektmanager 5000 / geschaeftsfuehrer None.
+        # 500 → auto → nächste manuelle (objektmanager) → OM darf;
+        # 15000 → GF-Stufe → OM nicht.
+        om = _objektmanager("om2", objekt=self.objektB)
+        self.assertEqual(self._freigabe_ids(om), {str(self.rFrei.id)})
+
+    def test_freigabe_liste_gf_sieht_alle(self):
+        gf = _gf("gf2")
+        self.assertEqual(self._freigabe_ids(gf),
+                         {str(self.rFrei.id), str(self.rFreiHoch.id)})
