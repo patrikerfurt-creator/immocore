@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: immocore
       POSTGRES_PASSWORD: immocore
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
@@ -16,7 +16,7 @@ services:
     image: redis:7-alpine
     container_name: immocore_redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     restart: unless-stopped
 
   backend:
@@ -24,7 +24,7 @@ services:
       context: ./backend
     container_name: immocore_backend
     ports:
-      - "8001:8000"
+      - "127.0.0.1:8001:8000"
     env_file:
       - .env
     environment:
@@ -98,7 +98,7 @@ services:
       context: ./frontend
     container_name: immocore_frontend
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       VITE_PROXY_TARGET: http://backend:8000
     volumes:

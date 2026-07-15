@@ -20,6 +20,11 @@ services:
       dockerfile: Dockerfile.prod
     container_name: immocore_backend
     env_file: .env.prod
+    # Non-root: uid 1000 = Host-User patrik (Rechnungen-Eigentümer),
+    # Zusatzgruppe 1001 = Host-Gruppe rechnung (Lesezugriff auf Uploader-Dateien).
+    user: "1000:1000"
+    group_add:
+      - "1001"
     volumes:
       - backend_media:/app/media
       - backend_static:/app/staticfiles
@@ -37,6 +42,10 @@ services:
     container_name: immocore_celery_worker
     command: celery -A config worker --loglevel=info --concurrency=2
     env_file: .env.prod
+    # Non-root wie backend: uid 1000 (patrik) + Zusatzgruppe 1001 (rechnung).
+    user: "1000:1000"
+    group_add:
+      - "1001"
     volumes:
       - backend_media:/app/media
       - ./CamtDAT:/app/camt_dat
@@ -51,8 +60,14 @@ services:
       context: ./backend
       dockerfile: Dockerfile.prod
     container_name: immocore_celery_beat
-    command: celery -A config beat --loglevel=info
+    # --schedule nach /tmp: PersistentScheduler-Statusdatei liegt garantiert
+    # in einem für den non-root-User schreibbaren Pfad.
+    command: celery -A config beat --loglevel=info --schedule=/tmp/celerybeat-schedule
     env_file: .env.prod
+    # Non-root wie backend: uid 1000 (patrik) + Zusatzgruppe 1001 (rechnung).
+    user: "1000:1000"
+    group_add:
+      - "1001"
     volumes:
       - backend_media:/app/media
     depends_on:
