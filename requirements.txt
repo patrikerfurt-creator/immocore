@@ -1,0 +1,4 @@
+# Abhängigkeiten für immocore_import.py (eigenständiges PDF-Import-Tool)
+# Installation:  pip install -r requirements.txt
+# Voraussetzung: Python 3.10 oder neuer
+pdfplumber>=0.11.9
