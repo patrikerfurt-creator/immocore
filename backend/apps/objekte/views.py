@@ -1,6 +1,7 @@
 import csv
 import io
 
+from django.db import transaction
 from django.db.models import Q
 from django.http import HttpResponse
 from rest_framework import viewsets, filters, status
@@ -363,6 +364,8 @@ def _parse_einheiten_csv(raw: bytes) -> tuple[list, str | None]:
             continue
 
         fehler: list[str] = []
+        hinweis = ''          # nicht-blockierender Hinweis (z.B. Duplikat)
+        ist_duplikat = False  # Flächennummer bereits in DB vorhanden
 
         if not objekt_nr:
             fehler.append('Objektnummer fehlt')
@@ -394,6 +397,7 @@ def _parse_einheiten_csv(raw: bytes) -> tuple[list, str | None]:
                 if flaechennr:
                     csv_key = (objekt_id, flaechennr)
                     if csv_key in flaechennr_csv_set:
+                        # Doppelung innerhalb der Datei bleibt echter Fehler
                         fehler.append(
                             f'Flächennummer "{flaechennr}" kommt in dieser Datei mehrfach vor'
                         )
@@ -406,8 +410,12 @@ def _parse_einheiten_csv(raw: bytes) -> tuple[list, str | None]:
                                 .values_list('flaechennummer', flat=True)
                             )
                         if flaechennr in flaechennr_db_cache[objekt_id]:
-                            fehler.append(
-                                f'Flächennummer "{flaechennr}" existiert bereits in Objekt "{objekt_nr}"'
+                            # Bereits in DB → Duplikat (nicht blockierend), wird per
+                            # Default abgelehnt und kann pro Zeile übernommen werden.
+                            ist_duplikat = True
+                            hinweis = (
+                                f'Flächennummer "{flaechennr}" existiert bereits in '
+                                f'Objekt "{objekt_nr}"'
                             )
 
                 if eingang_bez:
@@ -424,10 +432,20 @@ def _parse_einheiten_csv(raw: bytes) -> tuple[list, str | None]:
                     else:
                         eingang_id = str(eg.id)
 
+        if fehler:
+            zeilen_status = 'fehler'
+        elif ist_duplikat:
+            zeilen_status = 'duplikat'
+        else:
+            zeilen_status = 'ok'
+
         rows.append({
             'zeile':  zeile_nr,
-            'status': 'fehler' if fehler else 'ok',
+            'status': zeilen_status,
+            # Default-Aktion: nur echte Neuzugänge werden importiert
+            'aktion': 'importieren' if zeilen_status == 'ok' else 'ablehnen',
             'fehler': fehler,
+            'hinweis': hinweis,
             'daten': {
                 'objekt_nr':      objekt_nr,
                 'objekt_id':      objekt_id,
@@ -441,6 +459,42 @@ def _parse_einheiten_csv(raw: bytes) -> tuple[list, str | None]:
         })
 
     return rows, None
+
+
+def _objekt_einheiten_loeschbar(objekt_id) -> tuple[bool, list[str]]:
+    """
+    Prüft, ob alle Einheiten eines Objekts für einen harten Neuimport gelöscht
+    werden dürfen. Blockierend sind abhängige Nutzdaten, deren Verlust nicht
+    hinnehmbar ist bzw. die per PROTECT die Löschung verhindern würden.
+
+    Nicht blockierend: Verteilerschlüssel-Werte (werden beim Import neu erzeugt)
+    und Tickets (SET_NULL — bleiben erhalten).
+
+    Gibt (loeschbar, gruende) zurück.
+    """
+    if not Einheit.objects.filter(objekt_id=objekt_id).exists():
+        return True, []
+
+    # reverse related_name → sprechende Bezeichnung
+    checks = [
+        ('eigentumsverhaeltnisse',       'Eigentumsverhältnisse'),
+        ('mietvertraege',                'Mietverträge'),
+        ('verbraeuche',                  'Verbrauchsdaten'),
+        ('wp_anteile',                   'Wirtschaftsplan-Anteile'),
+        ('einzelabrechnungen',           'Einzelabrechnungen'),
+        ('eigentuemerwechsel_vorgaenge', 'Eigentümerwechsel-Vorgänge'),
+        ('dokumente',                    'Dokumente'),
+    ]
+
+    gruende: list[str] = []
+    for related_name, label in checks:
+        anzahl = Einheit.objects.filter(
+            objekt_id=objekt_id, **{f'{related_name}__isnull': False}
+        ).count()
+        if anzahl:
+            gruende.append(f'{label}: {anzahl}')
+
+    return (len(gruende) == 0), gruende
 
 
 # ---------------------------------------------------------------------------
@@ -507,7 +561,7 @@ class EinheitViewSet(viewsets.ModelViewSet):
     def csv_vorschau(self, request):
         """
         CSV-Datei validieren und Vorschau zurückgeben. Kein DB-Commit.
-        Antwort: { rows, ok_anzahl, fehler_anzahl, gesamt }
+        Antwort: { rows, ok_anzahl, duplikat_anzahl, fehler_anzahl, gesamt }
         """
         datei = request.FILES.get('datei')
         if not datei:
@@ -517,24 +571,38 @@ class EinheitViewSet(viewsets.ModelViewSet):
         if global_error:
             return Response({'error': global_error}, status=status.HTTP_400_BAD_REQUEST)
 
-        ok_anzahl     = sum(1 for r in rows if r['status'] == 'ok')
-        fehler_anzahl = sum(1 for r in rows if r['status'] == 'fehler')
+        ok_anzahl       = sum(1 for r in rows if r['status'] == 'ok')
+        duplikat_anzahl = sum(1 for r in rows if r['status'] == 'duplikat')
+        fehler_anzahl   = sum(1 for r in rows if r['status'] == 'fehler')
 
         return Response({
-            'rows':          rows,
-            'ok_anzahl':     ok_anzahl,
-            'fehler_anzahl': fehler_anzahl,
-            'gesamt':        len(rows),
+            'rows':            rows,
+            'ok_anzahl':       ok_anzahl,
+            'duplikat_anzahl': duplikat_anzahl,
+            'fehler_anzahl':   fehler_anzahl,
+            'gesamt':          len(rows),
         })
 
     @action(detail=False, methods=['post'], url_path='csv-import')
     def csv_import(self, request):
         """
         Vorgeprüfte Rows aus csv-vorschau importieren. Kein direkter Datei-Upload.
-        Body: { rows: [...] }
-        Rows mit status='fehler' werden übersprungen.
+        Body: { rows: [...], modus: 'ergaenzen' | 'neuimport' }
+
+        - modus='ergaenzen' (Default): legt nur Zeilen mit aktion='importieren' an.
+          Bereits vorhandene (Duplikat) werden per Default abgelehnt, können aber
+          pro Zeile auf 'importieren' gesetzt werden.
+        - modus='neuimport': löscht ZUERST alle Einheiten der betroffenen Objekte
+          und legt dann die ausgewählten neu an — aber nur, wenn kein Objekt
+          abhängige Nutzdaten hat (sonst HTTP 409, es wird nichts verändert).
         """
-        rows = request.data.get('rows')
+        rows  = request.data.get('rows')
+        modus = (request.data.get('modus') or 'ergaenzen').strip()
+        if modus not in ('ergaenzen', 'neuimport'):
+            return Response(
+                {'error': f'Unbekannter Modus "{modus}"'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         if not rows:
             return Response(
                 {'error': 'rows fehlt — Datei zuerst mit csv-vorschau prüfen'},
@@ -543,28 +611,77 @@ class EinheitViewSet(viewsets.ModelViewSet):
 
         from apps.konten.services import verteilerschluessel_anlegen
 
-        angelegt    = 0
-        fehler      = []
-        objekt_ids  = set()
+        def _importierbar(row):
+            # status='fehler' wird nie importiert; sonst entscheidet die Aktion.
+            return row.get('status') != 'fehler' and row.get('aktion', 'importieren') == 'importieren'
 
-        for row in rows:
-            if row.get('status') == 'fehler':
-                continue
-            daten = row.get('daten', {})
-            try:
-                Einheit.objects.create(
-                    objekt_id=daten['objekt_id'],
-                    eingang_id=daten.get('eingang_id') or None,
-                    flaechennummer=daten.get('flaechennummer', ''),
-                    einheit_nr=daten['einheit_nr'],
-                    lage=daten.get('lage', ''),
-                    einheit_typ=daten['einheit_typ'],
+        if modus == 'neuimport':
+            # Objekt wird komplett ersetzt: der Duplikat-Status ist bedeutungslos
+            # (nach dem Löschen gibt es keine Duplikate mehr), daher werden ALLE
+            # fehlerfreien Zeilen angelegt — unabhängig von den Zeilen-Aktionen.
+            anzulegen = [r for r in rows if r.get('status') != 'fehler']
+        else:
+            anzulegen = [r for r in rows if _importierbar(r)]
+
+        # Beim Neuimport betroffene Objekte auf Löschbarkeit prüfen (vor jeder Änderung)
+        geloescht = 0
+        if modus == 'neuimport':
+            neuimport_objekt_ids = {
+                r.get('daten', {}).get('objekt_id')
+                for r in anzulegen
+                if r.get('daten', {}).get('objekt_id')
+            }
+            blocker = {}
+            for oid in neuimport_objekt_ids:
+                loeschbar, gruende = _objekt_einheiten_loeschbar(oid)
+                if not loeschbar:
+                    blocker[oid] = gruende
+            if blocker:
+                gruende_flat = sorted({g for gr in blocker.values() for g in gr})
+                return Response(
+                    {
+                        'error': (
+                            'Kompletter Neuimport nicht möglich: An vorhandenen Einheiten '
+                            'hängen noch abhängige Daten. Es wurde nichts gelöscht oder '
+                            'importiert.'
+                        ),
+                        'gruende': gruende_flat,
+                    },
+                    status=status.HTTP_409_CONFLICT,
                 )
-                if daten.get('objekt_id'):
-                    objekt_ids.add(daten['objekt_id'])
-                angelegt += 1
-            except Exception as exc:
-                fehler.append(f'Zeile {row.get("zeile", "?")}: {exc}')
+
+        angelegt   = 0
+        fehler     = []
+        objekt_ids = set()
+
+        try:
+            with transaction.atomic():
+                if modus == 'neuimport':
+                    for oid in neuimport_objekt_ids:
+                        geloescht += Einheit.objects.filter(objekt_id=oid).count()
+                        Einheit.objects.filter(objekt_id=oid).delete()
+
+                for row in anzulegen:
+                    daten = row.get('daten', {})
+                    try:
+                        Einheit.objects.create(
+                            objekt_id=daten['objekt_id'],
+                            eingang_id=daten.get('eingang_id') or None,
+                            flaechennummer=daten.get('flaechennummer', ''),
+                            einheit_nr=daten['einheit_nr'],
+                            lage=daten.get('lage', ''),
+                            einheit_typ=daten['einheit_typ'],
+                        )
+                        if daten.get('objekt_id'):
+                            objekt_ids.add(daten['objekt_id'])
+                        angelegt += 1
+                    except Exception as exc:
+                        fehler.append(f'Zeile {row.get("zeile", "?")}: {exc}')
+        except Exception as exc:
+            return Response(
+                {'error': f'Import fehlgeschlagen, keine Änderungen gespeichert: {exc}'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # VSBeteiligung für alle betroffenen Objekte nachlegen
         for oid in objekt_ids:
@@ -574,6 +691,11 @@ class EinheitViewSet(viewsets.ModelViewSet):
                 pass
 
         return Response(
-            {'angelegt': angelegt, 'fehler_anzahl': len(fehler), 'fehler': fehler},
-            status=status.HTTP_201_CREATED if angelegt > 0 else status.HTTP_400_BAD_REQUEST,
+            {
+                'angelegt':      angelegt,
+                'geloescht':     geloescht,
+                'fehler_anzahl': len(fehler),
+                'fehler':        fehler,
+            },
+            status=status.HTTP_201_CREATED if (angelegt > 0 or geloescht > 0) else status.HTTP_400_BAD_REQUEST,
         )

@@ -23,15 +23,23 @@ export const objekteApi = {
     const fd = new FormData()
     fd.append('datei', file)
     return client.post<{
-      rows: Array<{ zeile: number; status: string; fehler: string[]; daten: Record<string, string | null> }>
+      rows: Array<{
+        zeile: number
+        status: string
+        aktion: 'importieren' | 'ablehnen'
+        fehler: string[]
+        hinweis: string
+        daten: Record<string, string | null>
+      }>
       ok_anzahl: number
+      duplikat_anzahl: number
       fehler_anzahl: number
       gesamt: number
     }>('/einheiten/csv-vorschau/', fd, { headers: { 'Content-Type': undefined } }).then(r => r.data)
   },
-  csvImportEinheiten: (rows: Array<Record<string, unknown>>) =>
-    client.post<{ angelegt: number; fehler: string[] }>(
-      '/einheiten/csv-import/', { rows }
+  csvImportEinheiten: (rows: Array<Record<string, unknown>>, modus: 'ergaenzen' | 'neuimport' = 'ergaenzen') =>
+    client.post<{ angelegt: number; geloescht: number; fehler: string[] }>(
+      '/einheiten/csv-import/', { rows, modus }
     ).then(r => r.data),
 
   // Wirtschaftsjahre

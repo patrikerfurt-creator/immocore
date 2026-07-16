@@ -4,8 +4,17 @@ import { objekteApi } from '../../api/objekte'
 import { personenApi } from '../../api/personen'
 import { useObjektStore } from '../../stores/objekt'
 
-type VorschauRow = { zeile: number; status: string; fehler: string[]; daten: Record<string, string | null> }
-type Vorschau = { rows: VorschauRow[]; ok_anzahl: number; fehler_anzahl: number; gesamt: number }
+type ImportAktion = 'importieren' | 'ablehnen'
+type VorschauRow = {
+  zeile: number
+  status: string
+  aktion: ImportAktion
+  fehler: string[]
+  hinweis: string
+  daten: Record<string, string | null>
+}
+type Vorschau = { rows: VorschauRow[]; ok_anzahl: number; duplikat_anzahl: number; fehler_anzahl: number; gesamt: number }
+type ImportModus = 'ergaenzen' | 'neuimport'
 
 type SortKey = 'flaechennummer' | 'einheit_nr' | 'einheit_typ' | 'lage' | 'eingang_bezeichnung' | 'eigentuemer'
 type SortDir = 'asc' | 'desc'
@@ -38,7 +47,8 @@ export function EinheitenPage() {
   const fileRef = useRef<HTMLInputElement>(null)
   const { selectedId: selectedObjektId, selectedName } = useObjektStore()
   const [vorschau, setVorschau] = useState<Vorschau | null>(null)
-  const [importResult, setImportResult] = useState<{ angelegt: number; fehler: string[] } | null>(null)
+  const [modus, setModus] = useState<ImportModus>('ergaenzen')
+  const [importResult, setImportResult] = useState<{ angelegt: number; geloescht: number; fehler: string[] } | null>(null)
   const [importing, setImporting] = useState(false)
   const [sortKey, setSortKey] = useState<SortKey>('flaechennummer')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
@@ -134,25 +144,63 @@ export function EinheitenPage() {
       setVorschau(result)
     } catch (err: unknown) {
       const data = (err as { response?: { data?: { error?: string } } })?.response?.data
-      setImportResult({ angelegt: 0, fehler: [data?.error ?? 'Fehler beim Lesen der Datei.'] })
+      setImportResult({ angelegt: 0, geloescht: 0, fehler: [data?.error ?? 'Fehler beim Lesen der Datei.'] })
     } finally {
       setImporting(false)
     }
   }
 
+  const setAktion = (zeile: number, aktion: ImportAktion) =>
+    setVorschau(prev => prev && {
+      ...prev,
+      rows: prev.rows.map(r => r.zeile === zeile ? { ...r, aktion } : r),
+    })
+
+  const setAlleAktion = (aktion: ImportAktion) =>
+    setVorschau(prev => prev && {
+      ...prev,
+      // Fehlerzeilen sind nie importierbar und bleiben unangetastet
+      rows: prev.rows.map(r => r.status === 'fehler' ? r : { ...r, aktion }),
+    })
+
+  const anzahlImport = vorschau
+    ? (modus === 'neuimport'
+        // Neuimport ersetzt das Objekt komplett → alle fehlerfreien Zeilen zählen
+        ? vorschau.rows.filter(r => r.status !== 'fehler').length
+        : vorschau.rows.filter(r => r.status !== 'fehler' && r.aktion === 'importieren').length)
+    : 0
+
   const handleImportBestaetigen = async () => {
     if (!vorschau) return
+    if (modus === 'neuimport') {
+      const ok = window.confirm(
+        `Kompletter Neuimport für Objekt "${selectedName}":\n\n` +
+        `ALLE vorhandenen Einheiten dieses Objekts werden gelöscht und durch ` +
+        `${anzahlImport} neue ersetzt.\n\n` +
+        `Das ist nur möglich, wenn an den vorhandenen Einheiten keine Daten ` +
+        `(Eigentümer, Verträge, Abrechnungen …) hängen.\n\nFortfahren?`
+      )
+      if (!ok) return
+    }
     setImporting(true)
     setImportResult(null)
     try {
-      const result = await objekteApi.csvImportEinheiten(vorschau.rows)
-      setImportResult({ angelegt: result.angelegt, fehler: result.fehler ?? [] })
+      const result = await objekteApi.csvImportEinheiten(vorschau.rows, modus)
+      setImportResult({ angelegt: result.angelegt, geloescht: result.geloescht ?? 0, fehler: result.fehler ?? [] })
       setVorschau(null)
+      setModus('ergaenzen')
       qc.invalidateQueries({ queryKey: ['einheiten', selectedObjektId] })
     } catch (err: unknown) {
-      const data = (err as { response?: { data?: { fehler?: string[]; error?: string } } })?.response?.data
-      const msgs = data?.fehler?.length ? data.fehler : [data?.error ?? 'Fehler beim Import.']
-      setImportResult({ angelegt: 0, fehler: msgs })
+      const data = (err as { response?: { data?: { fehler?: string[]; error?: string; gruende?: string[] } } })?.response?.data
+      let msgs: string[]
+      if (data?.gruende?.length) {
+        msgs = [data.error ?? 'Neuimport nicht möglich.', ...data.gruende.map(g => `• ${g}`)]
+      } else if (data?.fehler?.length) {
+        msgs = data.fehler
+      } else {
+        msgs = [data?.error ?? 'Fehler beim Import.']
+      }
+      setImportResult({ angelegt: 0, geloescht: 0, fehler: msgs })
     } finally {
       setImporting(false)
     }
@@ -208,16 +256,33 @@ export function EinheitenPage() {
               className="hidden"
               onChange={handleFileSelect}
             />
-            <span className="text-xs text-gray-400">
-              Spalten: Objektnummer; Eingang; Flächennummer; Bez. Einheit; Einheit-Typ (100/200/300/400); Lage
-            </span>
+            <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer select-none ml-auto">
+              <input
+                type="checkbox"
+                checked={modus === 'neuimport'}
+                onChange={e => setModus(e.target.checked ? 'neuimport' : 'ergaenzen')}
+                className="rounded border-gray-300 text-red-600 focus:ring-red-400"
+              />
+              Kompletter Neuimport (alle Einheiten löschen)
+            </label>
           </div>
+
+          {modus === 'neuimport' && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-xs text-red-700">
+              <strong>Achtung:</strong> Beim Import werden zuerst <strong>alle vorhandenen Einheiten dieses Objekts gelöscht</strong>.
+              Das gelingt nur, wenn keine abhängigen Daten (Eigentümer, Verträge, Abrechnungen …) daran hängen — sonst wird der Import abgebrochen und nichts verändert.
+            </div>
+          )}
+          <p className="text-xs text-gray-400 -mt-2">
+            Spalten: Objektnummer; Eingang; Flächennummer; Bez. Einheit; Einheit-Typ (100/200/300/400); Lage
+          </p>
 
           {/* Import-Ergebnis */}
           {importResult && (
             <div className={`rounded-lg border p-3 space-y-1 ${importResult.fehler.length ? 'bg-amber-50 border-amber-200' : 'bg-green-50 border-green-200'}`}>
               <p className="text-sm font-medium text-gray-700">
                 Import abgeschlossen: <strong>{importResult.angelegt}</strong> Einheit{importResult.angelegt !== 1 ? 'en' : ''} angelegt
+                {importResult.geloescht > 0 && <>, <strong>{importResult.geloescht}</strong> gelöscht</>}
                 {importResult.fehler.length > 0 && <>, <strong>{importResult.fehler.length}</strong> Fehler</>}
               </p>
               {importResult.fehler.map((f, i) => (
@@ -229,19 +294,46 @@ export function EinheitenPage() {
           {/* Vorschau */}
           {vorschau && (
             <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
                 <p className="text-sm font-semibold text-gray-800">
-                  Vorschau: {vorschau.gesamt} Zeilen — <span className="text-green-700">{vorschau.ok_anzahl} ok</span>
+                  Vorschau: {vorschau.gesamt} Zeilen — <span className="text-green-700">{vorschau.ok_anzahl} neu</span>
+                  {vorschau.duplikat_anzahl > 0 && <>, <span className="text-amber-600">{vorschau.duplikat_anzahl} bereits vorhanden</span></>}
                   {vorschau.fehler_anzahl > 0 && <>, <span className="text-red-600">{vorschau.fehler_anzahl} Fehler</span></>}
                 </p>
-                <button
-                  type="button"
-                  onClick={() => setVorschau(null)}
-                  className="text-xs text-gray-500 hover:text-gray-700 underline"
-                >
-                  Abbrechen
-                </button>
+                <div className="flex items-center gap-2">
+                  {modus === 'ergaenzen' && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setAlleAktion('importieren')}
+                        className="text-xs px-2 py-1 rounded border border-green-300 text-green-700 hover:bg-green-50"
+                      >
+                        Alle importieren
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAlleAktion('ablehnen')}
+                        className="text-xs px-2 py-1 rounded border border-red-300 text-red-600 hover:bg-red-50"
+                      >
+                        Alle ablehnen
+                      </button>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setVorschau(null)}
+                    className="text-xs text-gray-500 hover:text-gray-700 underline"
+                  >
+                    Abbrechen
+                  </button>
+                </div>
               </div>
+
+              {modus === 'neuimport' && (
+                <p className="text-xs text-red-700">
+                  Neuimport: Alle vorhandenen Einheiten werden gelöscht und durch <strong>alle {anzahlImport}</strong> fehlerfreien Zeilen ersetzt. Die Einzel-Auswahl unten ist dabei inaktiv.
+                </p>
+              )}
 
               <div className="overflow-x-auto rounded border border-blue-200 bg-white max-h-64 overflow-y-auto">
                 <table className="w-full text-xs">
@@ -253,41 +345,76 @@ export function EinheitenPage() {
                       <th className="px-2 py-1.5 text-left font-medium text-gray-600">Bez. Einheit</th>
                       <th className="px-2 py-1.5 text-left font-medium text-gray-600">Typ</th>
                       <th className="px-2 py-1.5 text-left font-medium text-gray-600">Lage</th>
-                      <th className="px-2 py-1.5 text-left font-medium text-gray-600">Fehler</th>
+                      <th className="px-2 py-1.5 text-left font-medium text-gray-600 w-44">Aktion / Hinweis</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {vorschau.rows.map(row => (
-                      <tr key={row.zeile} className={`border-t ${row.status === 'fehler' ? 'bg-red-50' : ''}`}>
-                        <td className="px-2 py-1 text-gray-500">{row.zeile}</td>
-                        <td className="px-2 py-1">
-                          {row.status === 'fehler'
-                            ? <span className="text-red-600 font-medium">Fehler</span>
-                            : <span className="text-green-700">OK</span>}
-                        </td>
-                        <td className="px-2 py-1 text-gray-600">{row.daten.flaechennummer || '–'}</td>
-                        <td className="px-2 py-1 text-gray-800">{row.daten.einheit_nr || '–'}</td>
-                        <td className="px-2 py-1 text-gray-600">{row.daten.einheit_typ || '–'}</td>
-                        <td className="px-2 py-1 text-gray-600">{row.daten.lage || '–'}</td>
-                        <td className="px-2 py-1 text-red-600">{row.fehler.join('; ') || ''}</td>
-                      </tr>
-                    ))}
+                    {vorschau.rows.map(row => {
+                      const isFehler = row.status === 'fehler'
+                      const isDup = row.status === 'duplikat'
+                      const rowBg = isFehler ? 'bg-red-50' : isDup ? 'bg-amber-50' : ''
+                      return (
+                        <tr key={row.zeile} className={`border-t ${rowBg}`}>
+                          <td className="px-2 py-1 text-gray-500">{row.zeile}</td>
+                          <td className="px-2 py-1 whitespace-nowrap">
+                            {isFehler
+                              ? <span className="text-red-600 font-medium">Fehler</span>
+                              : isDup
+                                ? <span className="text-amber-600 font-medium">Bereits vorhanden</span>
+                                : <span className="text-green-700">Neu</span>}
+                          </td>
+                          <td className="px-2 py-1 text-gray-600">{row.daten.flaechennummer || '–'}</td>
+                          <td className="px-2 py-1 text-gray-800">{row.daten.einheit_nr || '–'}</td>
+                          <td className="px-2 py-1 text-gray-600">{row.daten.einheit_typ || '–'}</td>
+                          <td className="px-2 py-1 text-gray-600">{row.daten.lage || '–'}</td>
+                          <td className="px-2 py-1">
+                            {isFehler ? (
+                              <span className="text-red-600">{row.fehler.join('; ')}</span>
+                            ) : modus === 'neuimport' ? (
+                              <span className="text-green-700">wird importiert</span>
+                            ) : (
+                              <div className="space-y-0.5">
+                                <div className="flex rounded overflow-hidden border border-gray-200 w-fit">
+                                  <button
+                                    type="button"
+                                    onClick={() => setAktion(row.zeile, 'importieren')}
+                                    className={`px-2 py-0.5 transition-colors ${row.aktion === 'importieren' ? 'bg-green-500 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'}`}
+                                  >
+                                    Importieren
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setAktion(row.zeile, 'ablehnen')}
+                                    className={`px-2 py-0.5 border-l border-gray-200 transition-colors ${row.aktion === 'ablehnen' ? 'bg-red-500 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'}`}
+                                  >
+                                    Ablehnen
+                                  </button>
+                                </div>
+                                {row.hinweis && <p className="text-amber-600">{row.hinweis}</p>}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
 
-              {vorschau.ok_anzahl > 0 && (
-                <div className="flex justify-end">
-                  <button
-                    type="button"
-                    onClick={handleImportBestaetigen}
-                    disabled={importing}
-                    className="px-4 py-2 rounded bg-green-600 text-white text-sm font-medium hover:bg-green-700 disabled:opacity-50 transition-colors"
-                  >
-                    {importing ? 'Importiere…' : `${vorschau.ok_anzahl} Einheit${vorschau.ok_anzahl !== 1 ? 'en' : ''} importieren`}
-                  </button>
-                </div>
-              )}
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={handleImportBestaetigen}
+                  disabled={importing || anzahlImport === 0}
+                  className="px-4 py-2 rounded bg-green-600 text-white text-sm font-medium hover:bg-green-700 disabled:opacity-50 transition-colors"
+                >
+                  {importing
+                    ? 'Importiere…'
+                    : modus === 'neuimport'
+                      ? `Neuimport: ${anzahlImport} Einheit${anzahlImport !== 1 ? 'en' : ''} (alte löschen)`
+                      : `${anzahlImport} Einheit${anzahlImport !== 1 ? 'en' : ''} importieren`}
+                </button>
+              </div>
             </div>
           )}
 
