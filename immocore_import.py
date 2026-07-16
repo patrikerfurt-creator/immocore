@@ -308,9 +308,67 @@ def bereinige_lage(s):
     return s
 
 
+# Seiten-Kopf-Boilerplate, die bei jedem Seitenumbruch wiederholt wird und
+# NICHT zum Flächen-Block gehört (sonst würde sie mitten in eine Einheit fallen,
+# die über einen Seitenumbruch reicht).
+SEITENKOPF_PREFIXE = (
+    "Liste ", "Objektbereich", "Beteiligungskreise", "Flächenbereich",
+    "Personenbereich", "Zeitraum", "Stichtag", "Übertrag",
+)
+
+
+def parse_flaechen_dokument(zeilen, objekt_nr, altpk_prefix):
+    """Zerlegt die gesamte Zeilenliste des Dokuments in Einheiten-Blöcke und
+    parst jeden Block einzeln.
+
+    Blöcke werden anhand der 'Fläche …'-Kopfzeile getrennt, seitenübergreifend –
+    so bleibt eine Einheit, deren Daten über einen Seitenumbruch reichen
+    ('Übertrag Objekt … Fläche …'), zusammen.
+
+    Gibt (einheiten, vertraege) als Listen zurück.
+    """
+    # Wiederholte Seitenkopf-Zeilen entfernen, damit sie nicht in einen Block fallen
+    zeilen = [z for z in zeilen if not z.startswith(SEITENKOPF_PREFIXE)]
+
+    starts = [idx for idx, z in enumerate(zeilen) if FLAECHE_RE.match(z)]
+    if not starts:
+        return [], []
+
+    einheiten, vertraege = [], []
+    for n, start in enumerate(starts):
+        ende_block = starts[n + 1] if n + 1 < len(starts) else len(zeilen)
+        e, v = _parse_einheit_block(zeilen[start:ende_block], objekt_nr, altpk_prefix)
+        if e:
+            einheiten.append(e)
+            vertraege.extend(v)
+    return einheiten, vertraege
+
+
 def parse_flaeche_seite(text, objekt_nr, altpk_prefix):
+    """Rückwärtskompatibel: parst den Text EINER Seite (mehrere Flächen möglich).
+
+    Achtung: Einheiten, die über einen Seitenumbruch reichen, werden hier nur
+    unvollständig erfasst – der Massenimport nutzt parse_flaechen_dokument().
+    """
     zeilen = [z.strip() for z in text.splitlines() if z.strip()]
 
+    # Start-Indizes aller Flächen-Blöcke auf dieser Seite finden
+    starts = [idx for idx, z in enumerate(zeilen) if FLAECHE_RE.match(z)]
+    if not starts:
+        return [], []
+
+    einheiten, vertraege = [], []
+    for n, start in enumerate(starts):
+        ende_block = starts[n + 1] if n + 1 < len(starts) else len(zeilen)
+        e, v = _parse_einheit_block(zeilen[start:ende_block], objekt_nr, altpk_prefix)
+        if e:
+            einheiten.append(e)
+            vertraege.extend(v)
+    return einheiten, vertraege
+
+
+def _parse_einheit_block(zeilen, objekt_nr, altpk_prefix):
+    """Parst einen einzelnen Flächen-Block (beginnt mit der 'Fläche …'-Zeile)."""
     flaeche_nr = bez = einheit_typ = lage = ""
     strasse = plz = ort = ""
     belegung_ab = beleg_person = ""
@@ -340,8 +398,9 @@ def parse_flaeche_seite(text, objekt_nr, altpk_prefix):
 
         if z.startswith("Info "):
             rest = z[5:].strip()
-            if rest.startswith("Haus"):
+            if re.match(r'^Haus\s+\d', rest):
                 # Altes Format: "Info Haus 1" → Lage steht auf der nächsten Zeile
+                # (aber NICHT "Info Hauseingang rechts" – das ist die Lage selbst)
                 if i + 1 < len(zeilen):
                     lage = bereinige_lage(zeilen[i + 1])
             else:
@@ -427,14 +486,16 @@ def extrahiere_flaechen(pdf_pfad: Path, objekt_nr, ziel_einheiten: Path, ziel_ve
             altpk_prefix = str(objekt_nr)
             print(f"  Objekt-Prefix nicht erkannt, verwende: {altpk_prefix}")
 
+        # Alle Seiten zu einem durchgehenden Zeilenstrom zusammenfassen, damit
+        # Einheiten über Seitenumbrüche hinweg zusammenbleiben (Übertrag-Blöcke).
+        alle_zeilen = []
         for i, seite in enumerate(pdf.pages):
             text = seite.extract_text() or ""
-            e, v = parse_flaeche_seite(text, objekt_nr, altpk_prefix)
-            if e:
-                einheiten.append(e)
-                vertraege.extend(v)
+            alle_zeilen.extend(z.strip() for z in text.splitlines() if z.strip())
             if (i + 1) % 100 == 0:
                 print(f"    {i+1}/{gesamt} Seiten ...")
+
+        einheiten, vertraege = parse_flaechen_dokument(alle_zeilen, objekt_nr, altpk_prefix)
 
     with open(ziel_einheiten, "w", newline="", encoding="utf-8-sig") as f:
         f.write(EINHEITEN_KOMMENTAR + "\n")
