@@ -867,6 +867,12 @@ class BankImport(models.Model):
 
 
 class Jahresabrechnung(models.Model):
+    """Container je Objekt und Wirtschaftsjahr (HGA-Spec v1.0 Kap. 3.1).
+
+    Schritt 8 erzeugt KEINE Sachkontenbuchung mehr, sondern eine
+    HausgeldSollstellung(sollstellungs_typ='abrechnungsergebnis') je Einheit
+    über sollstellungslauf_service.run_abrechnungsergebnis().
+    """
     STATUS_CHOICES = [
         ('entwurf', 'Entwurf'),
         ('freigegeben', 'Freigegeben'),
@@ -875,9 +881,32 @@ class Jahresabrechnung(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
     objekt = models.ForeignKey(Objekt, on_delete=models.PROTECT, related_name='jahresabrechnungen')
-    wirtschaftsjahr = models.IntegerField()
-    erstellungsdatum = models.DateField(auto_now_add=True)
+    wirtschaftsjahr = models.ForeignKey(
+        'objekte.Wirtschaftsjahr', on_delete=models.PROTECT,
+        related_name='jahresabrechnungen',
+        help_text='Muss status=\'offen\' haben bei Anlage (Service-Validierung).',
+    )
+    erstellungsdatum = models.DateField(
+        auto_now_add=True,
+        help_text='Bestimmt den „aktuellen Eigentümer" je Einheit (Kap. 6.1).',
+    )
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='entwurf')
+    prozess = models.ForeignKey(
+        'prozesse.Prozess', on_delete=models.PROTECT,
+        related_name='jahresabrechnungen',
+        help_text='Wizard-Zwischenstand (Prozess-Engine).',
+    )
+    freigegeben_am = models.DateTimeField(null=True, blank=True)
+    freigegeben_von = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='freigegebene_jahresabrechnungen',
+    )
+    sollstellungslauf = models.ForeignKey(
+        'HausgeldSollstellungslauf', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='jahresabrechnungen',
+        help_text='Gesetzt nach erfolgreichem run_abrechnungsergebnis (Schritt 8).',
+    )
+    erstellt_am = models.DateTimeField(auto_now_add=True)
     erstellt_von = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
         related_name='jahresabrechnungen'
@@ -887,13 +916,23 @@ class Jahresabrechnung(models.Model):
         verbose_name = 'Jahresabrechnung'
         verbose_name_plural = 'Jahresabrechnungen'
         ordering = ['-wirtschaftsjahr']
-        unique_together = [['objekt', 'wirtschaftsjahr']]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['objekt', 'wirtschaftsjahr'],
+                condition=~Q(status='storniert'),
+                name='jahresabrechnung_unique_je_wj',
+            ),
+        ]
 
     def __str__(self):
-        return f"Jahresabrechnung {self.wirtschaftsjahr} — {self.objekt.bezeichnung} [{self.status}]"
+        return f"Jahresabrechnung {self.wirtschaftsjahr.jahr} — {self.objekt.bezeichnung} [{self.status}]"
 
 
 class EinzelAbrechnung(models.Model):
+    """Genau eine je Einheit unter einer Jahresabrechnung (HGA-Spec v1.0 Kap. 3.2).
+
+    Invariante (Service-Ebene): abrechnungsergebnis == kostenanteil_gesamt - hausgeld_soll_gesamt.
+    """
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
     jahresabrechnung = models.ForeignKey(
         Jahresabrechnung, on_delete=models.CASCADE, related_name='einzelabrechnungen'
@@ -901,26 +940,55 @@ class EinzelAbrechnung(models.Model):
     einheit = models.ForeignKey(
         Einheit, on_delete=models.PROTECT, related_name='einzelabrechnungen'
     )
-    eigentuemer_snapshot = models.JSONField()
-    personenkonto = models.ForeignKey(
-        Personenkonto, on_delete=models.PROTECT, related_name='einzelabrechnungen'
+    eigentuemer = models.ForeignKey(
+        'personen.Person', on_delete=models.PROTECT, related_name='einzelabrechnungen',
+        help_text='Snapshot zum erstellungsdatum — bleibt korrekt nach späterem Wechsel.',
     )
-    hausgeld_soll_gesamt = models.DecimalField(max_digits=12, decimal_places=2)
-    kostenanteil_gesamt = models.DecimalField(max_digits=12, decimal_places=2)
-    abrechnungsergebnis = models.DecimalField(max_digits=12, decimal_places=2)
+    eigentumsverhaeltnis = models.ForeignKey(
+        'personen.EigentumsVerhaeltnis', on_delete=models.PROTECT,
+        related_name='einzelabrechnungen',
+        help_text='Snapshot-Referenz für Nebenbuch-Verknüpfung.',
+    )
+    hausgeld_soll_gesamt = models.DecimalField(max_digits=14, decimal_places=2)
+    kostenanteil_gesamt = models.DecimalField(max_digits=14, decimal_places=2)
+    abrechnungsergebnis = models.DecimalField(
+        max_digits=14, decimal_places=2,
+        help_text='kostenanteil_gesamt - hausgeld_soll_gesamt; >0 Nachzahlung, <0 Guthaben.',
+    )
     positionen = models.JSONField(default=list)
     ruecklagen = models.JSONField(default=list)
-    pdf_pfad = models.CharField(max_length=500, blank=True)
-    gebucht = models.BooleanField(default=False)
+    sollstellung = models.ForeignKey(
+        'HausgeldSollstellung', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='einzelabrechnungen',
+        help_text='Gesetzt nach Schritt 8 — Verknüpfung zur Nebenbuch-Sollstellung.',
+    )
+    dokument = models.ForeignKey(
+        'dokumente.Dokument', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='einzelabrechnungen',
+        help_text='Gesetzt nach PDF-Erzeugung in Schritt 7/8.',
+    )
+    hinweis_eigentuemerwechsel = models.BooleanField(
+        default=False, help_text='Steuert Fußnote im PDF (Kap. 6.3).',
+    )
 
     class Meta:
         verbose_name = 'Einzelabrechnung'
         verbose_name_plural = 'Einzelabrechnungen'
         ordering = ['jahresabrechnung', 'einheit__einheit_nr']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['jahresabrechnung', 'einheit'],
+                name='einzelabrechnung_unique_je_einheit',
+            ),
+        ]
+
+    def positionen_hat_fehler(self) -> bool:
+        """True, wenn Schritt 6 Verteilerschlüssel-Fehler geloggt hat (Spec Kap. 7)."""
+        return any(p.get('fehler') for p in (self.positionen or []))
 
     def __str__(self):
         return (
-            f"Einzelabrechnung {self.jahresabrechnung.wirtschaftsjahr} — "
+            f"Einzelabrechnung {self.jahresabrechnung.wirtschaftsjahr.jahr} — "
             f"{self.einheit.einheit_nr}"
         )
 
@@ -1406,8 +1474,10 @@ class HausgeldSollstellung(models.Model):
             models.CheckConstraint(
                 name='negative_betrag_nur_korrektur',
                 check=(
+                    # Negativ erlaubt bei Korrektur und Abrechnungsergebnis
+                    # (Guthaben aus Jahresabrechnung, HGA-Spec Kap. 6.2)
                     Q(soll_betrag__gte=0)
-                    | Q(sollstellungs_typ='korrektur')
+                    | Q(sollstellungs_typ__in=['korrektur', 'abrechnungsergebnis'])
                 ),
             ),
             models.CheckConstraint(

@@ -333,6 +333,84 @@ def run_hausgeld_monat(
 
 
 @transaction.atomic
+def run_abrechnungsergebnis(objekt, wj, user) -> HausgeldSollstellungslauf:
+    """
+    Sollstellungslauf für Jahresabrechnungs-Ergebnisse (HGA-Spec v1.0 Kap. 6.1/6.2).
+
+    Erzeugt je EinzelAbrechnung der Jahresabrechnung (objekt, wj) mit
+    abrechnungsergebnis != 0 eine HausgeldSollstellung vom Typ
+    'abrechnungsergebnis' (BA 950, Periode = WJ-Ende). Ergebnisse == 0
+    werden übersprungen (kein leerer OP). Negative Beträge (Guthaben)
+    sind zulässig (CheckConstraint seit Migration 0045) und erscheinen
+    später in der Auszahlungslauf-Vorschau — ein Auszahlungslauf wird
+    hier bewusst NICHT angestoßen.
+
+    Einschritt-Commit ohne eigenen Vier-Augen-Zyklus: der Genehmigungsakt
+    ist die Wizard-Freigabe in Schritt 8 (Aufrufer: jahresabrechnung/
+    freigabe_service) — analog run_hausgeld_monat für Autopilot.
+    """
+    from apps.buchhaltung.models import Jahresabrechnung
+    from apps.buchhaltung.services.sollstellung_service import (
+        lege_abrechnungsergebnis_sollstellung_an,
+    )
+
+    periode = wj.ende_datum
+    bestehender = pruefe_duplikat_lauf(objekt, periode)
+    if bestehender:
+        raise ValidationError(
+            f"Für {objekt.objektnummer} / Periode {periode.strftime('%d.%m.%Y')} existiert "
+            f"bereits ein committeter Sollstellungslauf (ID {bestehender.id})."
+        )
+
+    ja = (
+        Jahresabrechnung.objects
+        .filter(objekt=objekt, wirtschaftsjahr=wj)
+        .exclude(status='storniert')
+        .first()
+    )
+    if ja is None:
+        raise ValidationError(
+            f"Keine Jahresabrechnung für {objekt.objektnummer} / WJ {wj.jahr} vorhanden."
+        )
+
+    lauf = HausgeldSollstellungslauf.objects.create(
+        objekt=objekt,
+        wirtschaftsjahr=wj,
+        typ='abrechnungsergebnis_jahr',
+        periode=periode,
+        status='freigegeben',
+        erstellt_von=user,
+        freigabe_user=user,
+        freigegeben_am=timezone.now(),
+    )
+
+    summe = Decimal('0')
+    anzahl = 0
+    for ea in ja.einzelabrechnungen.select_related('eigentumsverhaeltnis'):
+        if ea.abrechnungsergebnis == 0:
+            continue  # Kap. 6.2: kein leerer OP
+        lege_abrechnungsergebnis_sollstellung_an(
+            ev=ea.eigentumsverhaeltnis,
+            betrag=ea.abrechnungsergebnis,
+            wj_ende=periode,
+            lauf=lauf,
+            user=user,
+        )
+        summe += ea.abrechnungsergebnis
+        anzahl += 1
+
+    lauf.anzahl_sollstellungen = anzahl
+    lauf.summe = summe
+    lauf.status = 'commited'
+    lauf.commited_am = timezone.now()
+    lauf.commited_von = user
+    lauf.save(update_fields=[
+        'anzahl_sollstellungen', 'summe', 'status', 'commited_am', 'commited_von',
+    ])
+    return lauf
+
+
+@transaction.atomic
 def storniere_lauf(lauf: HausgeldSollstellungslauf, grund: str, user) -> None:
     """
     Storniert einen kompletten Lauf. Nur möglich wenn keine Sollstellung

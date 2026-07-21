@@ -109,7 +109,17 @@
       "Bash(Select-Object Name, Length, LastWriteTime, Attributes)",
       "Bash(Format-Table -AutoSize)",
       "PowerShell(Get-ChildItem \"C:\\\\Projekte\\\\immocore\\\\backend\" -Depth 3 -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq \"python.exe\" } | Select-Object FullName)",
-      "Bash(python3.11 *)"
+      "Bash(python3.11 *)",
+      "Bash(git stash *)",
+      "Bash(echo \"---EXIT:$?\")",
+      "Bash(docker cp *)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:codelocksconnect.net)",
+      "WebFetch(domain:portal.codelocksconnect.net)",
+      "WebSearch",
+      "WebFetch(domain:www.codelocks.co.uk)",
+      "Bash(git add *)"
     ]
   }
 }

@@ -256,15 +256,7 @@ export const buchhaltungApi = {
   deleteAbrechnungsart: (id: string) =>
     client.delete(`/abrechnungsarten/${id}/`),
 
-  // Jahresabrechnungen
-  jahresabrechnungen: (objektId?: string) =>
-    client.get('/jahresabrechnungen/', {
-      params: objektId ? { objekt: objektId } : undefined,
-    }).then(r => r.data),
-  jahresabrechnungFreigeben: (id: string) =>
-    client.post(`/jahresabrechnungen/${id}/freigeben/`).then(r => r.data),
-  jahresabrechnungSperren: (id: string) =>
-    client.post(`/jahresabrechnungen/${id}/sperren/`).then(r => r.data),
+  // Jahresabrechnungen — vollständige Wizard-API in src/api/jahresabrechnung.ts
 
   // E-Banking Phase E — BankBuchungen + BankMatchRegeln
   eBankingBuchungen: (params?: Record<string, string>) =>

@@ -385,20 +385,32 @@ class BankImportSerializer(serializers.ModelSerializer):
 
 class JahresabrechnungSerializer(serializers.ModelSerializer):
     erstellt_von = serializers.HiddenField(default=serializers.CurrentUserDefault())
+    objekt_bezeichnung = serializers.CharField(source='objekt.bezeichnung', read_only=True)
+    wirtschaftsjahr_jahr = serializers.IntegerField(source='wirtschaftsjahr.jahr', read_only=True)
+    current_step = serializers.IntegerField(source='prozess.current_step', read_only=True)
+    freigegeben_von_name = serializers.CharField(
+        source='freigegeben_von.username', read_only=True, default=None)
 
     class Meta:
         model = Jahresabrechnung
         fields = '__all__'
-        read_only_fields = ['id', 'erstellungsdatum']
+        read_only_fields = [
+            'id', 'erstellungsdatum', 'status', 'prozess',
+            'freigegeben_am', 'freigegeben_von', 'sollstellungslauf',
+        ]
 
 
 class EinzelAbrechnungSerializer(serializers.ModelSerializer):
     einheit_nr = serializers.CharField(source='einheit.einheit_nr', read_only=True)
+    eigentuemer_name = serializers.SerializerMethodField()
 
     class Meta:
         model = EinzelAbrechnung
         fields = '__all__'
         read_only_fields = ['id']
+
+    def get_eigentuemer_name(self, obj):
+        return str(obj.eigentuemer)
 
 
 class LastschriftLaufSerializer(serializers.ModelSerializer):

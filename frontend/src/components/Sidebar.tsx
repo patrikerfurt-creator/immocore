@@ -40,6 +40,7 @@ const zahlungsverkehrItems: NavItemDef[] = [
 
 const abrechnungWpItems: NavItemDef[] = [
   { to: '/abrechnung-wp/wirtschaftsplan', label: 'Wirtschaftsplan', icon: '📋', objektAware: true },
+  { to: '/abrechnung-wp/jahresabrechnung', label: 'Jahresabrechnung', icon: '🧾', objektAware: true },
 ]
 
 const otherItems: NavItemDef[] = [
