@@ -51,3 +51,7 @@ Thumbs.db
 # Uploads / temporäre Dateien
 backend/media/
 backend/staticfiles/
+
+# Lokale DB-Snapshots (enthalten echte Personendaten — niemals ins Git!)
+local_seed/*.sql
+local_seed/*.sql.gz
