@@ -1042,45 +1042,276 @@ class BankImportViewSet(viewsets.ModelViewSet):
         return response
 
 
+def _weg_guard(objekt):
+    """HGA-Spec Kap. 9: Jahresabrechnung ist WEG-spezifisch → 501 für ZH/SEV."""
+    if objekt.objekt_typ != 'WEG':
+        return Response(
+            {'error': 'Jahresabrechnung ist nur für WEG-Objekte verfügbar.'},
+            status=status.HTTP_501_NOT_IMPLEMENTED,
+        )
+    return None
+
+
 class JahresabrechnungViewSet(viewsets.ModelViewSet):
+    """Wizard-API Jahresabrechnung (HGA-Spec v1.0 Kap. 9). 8 Schritte."""
     serializer_class = JahresabrechnungSerializer
     permission_classes = [IsAuthenticated]
-    filter_backends = [filters.OrderingFilter]
-    ordering = ['-wirtschaftsjahr']
+    http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
 
     def get_queryset(self):
-        qs = Jahresabrechnung.objects.select_related('objekt', 'erstellt_von')
+        qs = Jahresabrechnung.objects.select_related(
+            'objekt', 'wirtschaftsjahr', 'prozess', 'erstellt_von',
+        ).order_by('-wirtschaftsjahr__jahr')
         if objekt_id := self.request.query_params.get('objekt'):
             qs = qs.filter(objekt_id=objekt_id)
         if s := self.request.query_params.get('status'):
             qs = qs.filter(status=s)
         return qs
 
-    @action(detail=True, methods=['post'], url_path='sperren')
-    def sperren(self, request, pk=None):
+    # -- Schritt 1: Anlage --------------------------------------------------
+
+    def create(self, request, *args, **kwargs):
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from apps.objekte.models import Objekt
+        from .services.jahresabrechnung import wizard_service
+
+        try:
+            objekt = Objekt.objects.get(pk=request.data.get('objekt'))
+            wj = Wirtschaftsjahr.objects.get(pk=request.data.get('wirtschaftsjahr'))
+        except (Objekt.DoesNotExist, Wirtschaftsjahr.DoesNotExist):
+            return Response(
+                {'error': 'Objekt oder Wirtschaftsjahr nicht gefunden.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if guard := _weg_guard(objekt):
+            return guard
+        try:
+            ja = wizard_service.erstelle_jahresabrechnung(objekt, wj, request.user)
+        except DjangoValidationError as exc:
+            return Response({'error': exc.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            JahresabrechnungSerializer(ja).data, status=status.HTTP_201_CREATED,
+        )
+
+    def destroy(self, request, *args, **kwargs):
+        """Fehlerhafter Entwurf wird gelöscht (Kap. 3.1) — gesperrte nie."""
         ja = self.get_object()
-        if ja.status == 'gesperrt':
-            return Response({'error': 'Jahresabrechnung ist bereits gesperrt'}, status=status.HTTP_400_BAD_REQUEST)
-        ja.status = 'gesperrt'
-        ja.save(update_fields=['status'])
-        return Response(JahresabrechnungSerializer(ja).data)
+        if ja.status != 'entwurf':
+            return Response(
+                {'error': 'Nur Entwürfe können gelöscht werden (Korrekturabrechnung: eigene Folgespec).'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        prozess = ja.prozess
+        ja.delete()
+        prozess.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    # -- Wizard-Navigation ---------------------------------------------------
+
+    @action(detail=True, methods=['get', 'patch'], url_path='schritt/(?P<nr>[1-8])')
+    def schritt(self, request, pk=None, nr=None):
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from .services.jahresabrechnung import wizard_service
+
+        ja = self.get_object()
+        nr = int(nr)
+        if request.method == 'PATCH':
+            try:
+                wizard_service.setze_schritt(ja, nr, request.data.get('daten'))
+            except DjangoValidationError as exc:
+                return Response({'error': exc.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
+
+        daten = {}
+        if nr == 1:
+            daten['eigentuemerwechsel'] = wizard_service.eigentuemerwechsel_im_wj(
+                ja.objekt, ja.wirtschaftsjahr)
+        elif nr == 2:
+            daten = wizard_service.buchungspruefung(ja.objekt, ja.wirtschaftsjahr)
+        return Response({
+            'jahresabrechnung': JahresabrechnungSerializer(ja).data,
+            'schritt': nr,
+            'current_step': ja.prozess.current_step,
+            'steps_data': (ja.prozess.steps_data or {}).get(str(nr)),
+            'daten': daten,
+        })
+
+    # -- Schritt 3: Kostenstellen ---------------------------------------------
+
+    @action(detail=True, methods=['get'], url_path='kostenstellen')
+    def kostenstellen(self, request, pk=None):
+        from .services.jahresabrechnung import kostenstellen_service
+        ja = self.get_object()
+        daten = kostenstellen_service.kostenstellen_uebersicht(ja.objekt, ja.wirtschaftsjahr)
+        daten['positionen'] = [
+            {**p, 'ist': str(p['ist']),
+             'plan': str(p['plan']) if p['plan'] is not None else None,
+             'abweichung': str(p['abweichung']) if p['abweichung'] is not None else None,
+             'abweichung_prozent': str(p['abweichung_prozent']) if p['abweichung_prozent'] is not None else None}
+            for p in daten['positionen']
+        ]
+        daten['summe_ist'] = str(daten['summe_ist'])
+        daten['summe_plan'] = str(daten['summe_plan']) if daten['summe_plan'] is not None else None
+        return Response(daten)
+
+    # -- Schritt 4: Umlageschlüssel --------------------------------------------
+
+    @action(detail=True, methods=['get', 'patch'], url_path='umlageschluessel')
+    def umlageschluessel(self, request, pk=None):
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from .services.jahresabrechnung import wizard_service, verteilerschluessel_service
+
+        ja = self.get_object()
+        if request.method == 'PATCH':
+            try:
+                wizard_service.korrigiere_umlageschluessel(
+                    ja, request.data.get('konto_id'), request.data.get('vs_code'))
+            except DjangoValidationError as exc:
+                return Response({'error': exc.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
+
+        from apps.konten.models import Konto
+        zeilen = []
+        for konto in Konto.objects.filter(
+            wirtschaftsjahr=ja.wirtschaftsjahr, kontoart='standard', aktiv=True,
+        ).order_by('kontonummer'):
+            try:
+                vs_code = verteilerschluessel_service.aktiver_vs_code(
+                    konto, stichtag=ja.wirtschaftsjahr.ende_datum)
+            except verteilerschluessel_service.VerteilerschluesselFehler:
+                vs_code = None
+            zeilen.append({
+                'konto_id': str(konto.id),
+                'kontonummer': konto.kontonummer,
+                'kontoname': konto.kontoname,
+                'vs_code': vs_code,
+            })
+        return Response({'konten': zeilen})
+
+    # -- Schritt 5: Rücklagen ---------------------------------------------------
+
+    @action(detail=True, methods=['get'], url_path='ruecklagen')
+    def ruecklagen(self, request, pk=None):
+        from .services.jahresabrechnung import ruecklagen_service
+        ja = self.get_object()
+        rows = ruecklagen_service.ruecklagen_uebersicht(ja.objekt, ja.wirtschaftsjahr)
+        for r in rows:
+            for feld in ('anfangsbestand', 'zufuehrungen', 'entnahmen',
+                         'endbestand_berechnet', 'endbestand_bank', 'abweichung'):
+                r[feld] = str(r[feld])
+        return Response({
+            'ruecklagen': rows,
+            'blockiert': any(r['klaerungsfall'] for r in rows),
+        })
+
+    # -- Schritt 6: Einzelabrechnungen -------------------------------------------
+
+    @action(detail=True, methods=['post'], url_path='einzelabrechnungen/berechnen')
+    def einzelabrechnungen_berechnen(self, request, pk=None):
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from .services.jahresabrechnung import einzelabrechnung_service
+        ja = self.get_object()
+        try:
+            eas = einzelabrechnung_service.berechne_alle_einzelabrechnungen(ja)
+        except DjangoValidationError as exc:
+            return Response({'error': exc.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(EinzelAbrechnungSerializer(eas, many=True).data)
+
+    @action(detail=True, methods=['get'], url_path='einzelabrechnungen')
+    def einzelabrechnungen(self, request, pk=None):
+        ja = self.get_object()
+        eas = ja.einzelabrechnungen.select_related('einheit', 'eigentuemer').order_by('einheit__einheit_nr')
+        return Response(EinzelAbrechnungSerializer(eas, many=True).data)
+
+    @action(
+        detail=True, methods=['get', 'patch'],
+        url_path='einzelabrechnungen/(?P<einheit_id>[0-9a-f-]{36})',
+    )
+    def einzelabrechnung_detail(self, request, pk=None, einheit_id=None):
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from .services.jahresabrechnung import wizard_service
+        ja = self.get_object()
+        try:
+            ea = ja.einzelabrechnungen.select_related('einheit', 'eigentuemer').get(einheit_id=einheit_id)
+        except EinzelAbrechnung.DoesNotExist:
+            return Response({'error': 'Einzelabrechnung nicht gefunden.'}, status=status.HTTP_404_NOT_FOUND)
+        if request.method == 'PATCH':
+            try:
+                ea = wizard_service.korrigiere_einzelabrechnung(
+                    ea,
+                    positionen=request.data.get('positionen') or [],
+                    grund=request.data.get('grund') or '',
+                    user=request.user,
+                )
+            except DjangoValidationError as exc:
+                return Response({'error': exc.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(EinzelAbrechnungSerializer(ea).data)
+
+    # -- Schritt 7: PDF-Vorschau ---------------------------------------------------
+
+    @action(detail=True, methods=['get'], url_path='pdf-vorschau')
+    def pdf_vorschau(self, request, pk=None):
+        from .services.jahresabrechnung import pdf_service
+        ja = self.get_object()
+        einheit_id = request.query_params.get('einheit')
+        if not einheit_id:
+            return Response({'error': 'Query-Parameter ?einheit=<id> fehlt.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        try:
+            ea = ja.einzelabrechnungen.get(einheit_id=einheit_id)
+        except EinzelAbrechnung.DoesNotExist:
+            return Response({'error': 'Einzelabrechnung nicht gefunden.'}, status=status.HTTP_404_NOT_FOUND)
+        pdf = pdf_service.render_einzelabrechnung_pdf(ea, entwurf=(ja.status == 'entwurf'))
+        response = HttpResponse(pdf, content_type='application/pdf')
+        response['Content-Disposition'] = (
+            f'inline; filename="JA_{ja.objekt.objektnummer}_'
+            f'{ea.einheit.einheit_nr}_{ja.wirtschaftsjahr.jahr}.pdf"'
+        )
+        return response
+
+    # -- Schritt 8: Freigabe --------------------------------------------------------
 
     @action(detail=True, methods=['post'], url_path='freigeben')
     def freigeben(self, request, pk=None):
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from .services.jahresabrechnung import freigabe_service, wizard_service
         ja = self.get_object()
-        if ja.status != 'entwurf':
-            return Response({'error': 'Nur Entwürfe können freigegeben werden'}, status=status.HTTP_400_BAD_REQUEST)
-        ja.status = 'freigegeben'
-        ja.save(update_fields=['status'])
-        return Response(JahresabrechnungSerializer(ja).data)
+        if guard := _weg_guard(ja.objekt):
+            return guard
+        pruefung = wizard_service.buchungspruefung(ja.objekt, ja.wirtschaftsjahr)
+        if pruefung['blockiert']:
+            return Response(
+                {'error': 'Offene Kreditoren-OPs vorhanden — Freigabe gesperrt (Schritt 2).'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        from .services.jahresabrechnung import ruecklagen_service
+        blocker = ruecklagen_service.pruefe_schritt5_blocker(ja.objekt, ja.wirtschaftsjahr)
+        if blocker:
+            return Response(
+                {'error': 'Rücklagen-Abweichung zum Bankauszug — Freigabe gesperrt (Schritt 5).'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            ja = freigabe_service.freigebe_jahresabrechnung(ja, request.user)
+        except DjangoValidationError as exc:
+            return Response({'error': exc.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
+        guthaben = ja.einzelabrechnungen.filter(abrechnungsergebnis__lt=0).count()
+        return Response({
+            'jahresabrechnung': JahresabrechnungSerializer(ja).data,
+            # Kap. 6.4: Hinweis, KEIN Direkt-Link zum Auszahlungslauf
+            'guthaben_einheiten': guthaben,
+            'hinweis': (
+                f"Jahresabrechnung {ja.objekt.bezeichnung} / WJ {ja.wirtschaftsjahr.jahr} "
+                f"freigegeben und gesperrt. {guthaben} Einheit(en) mit Guthaben — "
+                f"Auszahlungslauf kann unter „Zahlungen → Auszahlungen“ manuell gestartet werden."
+            ),
+        })
 
 
-class EinzelAbrechnungViewSet(viewsets.ModelViewSet):
+class EinzelAbrechnungViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = EinzelAbrechnungSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        qs = EinzelAbrechnung.objects.select_related('jahresabrechnung', 'einheit', 'personenkonto')
+        qs = EinzelAbrechnung.objects.select_related('jahresabrechnung', 'einheit', 'eigentuemer')
         if ja_id := self.request.query_params.get('jahresabrechnung'):
             qs = qs.filter(jahresabrechnung_id=ja_id)
         return qs

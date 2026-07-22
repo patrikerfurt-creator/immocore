@@ -34,8 +34,8 @@ class JahresabrechnungAdmin(admin.ModelAdmin):
 class EinzelAbrechnungAdmin(admin.ModelAdmin):
     list_display = [
         'jahresabrechnung', 'einheit', 'hausgeld_soll_gesamt',
-        'kostenanteil_gesamt', 'abrechnungsergebnis', 'gebucht'
+        'kostenanteil_gesamt', 'abrechnungsergebnis', 'sollstellung'
     ]
-    list_filter = ['gebucht', 'jahresabrechnung__objekt', 'jahresabrechnung__wirtschaftsjahr']
+    list_filter = ['jahresabrechnung__objekt', 'jahresabrechnung__wirtschaftsjahr']
     search_fields = ['einheit__einheit_nr']
     ordering = ['jahresabrechnung__wirtschaftsjahr', 'einheit__einheit_nr']
