@@ -5,305 +5,221 @@
 <style>
   @page {
     size: A4;
-    margin: 2cm 2cm 2.5cm 2cm;
-    @bottom-left {
-      content: element(page-footer-left);
-      font-size: 7pt;
-      color: #888;
-    }
-    @bottom-right {
-      content: "Seite " counter(page) " von " counter(pages);
-      font-size: 7pt;
-      color: #888;
-    }
+    margin: 1.6cm 1.6cm 2cm 1.6cm;
+    @bottom-right { content: "Seite " counter(page) " von " counter(pages); font-size: 7pt; color: #888; }
+    @bottom-left  { content: element(footer-left); font-size: 7pt; color: #888; }
   }
+  #footer-left { position: running(footer-left); }
 
   body {
     font-family: Arial, Helvetica, sans-serif;
-    font-size: 10pt;
+    font-size: 9.5pt;
     color: #333;
-    margin: 0;
-    padding: 0;
+    line-height: 1.4;
   }
 
-  #page-footer-left {
-    position: running(page-footer-left);
-    font-size: 7pt;
-    color: #888;
-  }
-
+  /* --- moderner Kopf --- */
   .letterhead {
-    display: table;
-    width: 100%;
     border-bottom: 2pt solid #1a3c5e;
-    padding-bottom: 8pt;
-    margin-bottom: 16pt;
+    padding-bottom: 8pt; margin-bottom: 14pt;
   }
-  .letterhead-left { display: table-cell; vertical-align: bottom; }
-
-  .company-name {
-    font-size: 13pt;
-    font-weight: bold;
-    color: #1a3c5e;
-  }
-  .company-addr {
-    font-size: 8pt;
-    color: #666;
-    margin-top: 2pt;
-  }
+  .company-name { font-size: 13pt; font-weight: bold; color: #1a3c5e; }
+  .company-addr { font-size: 8pt; color: #666; margin-top: 2pt; }
 
   .entwurf-banner {
-    background: #fff3cd;
-    border: 1pt solid #ffc107;
-    padding: 5pt 10pt;
-    margin-bottom: 14pt;
-    font-size: 9pt;
-    color: #856404;
+    background: #fff3cd; border: 1pt solid #ffc107;
+    padding: 5pt 10pt; margin-bottom: 14pt; font-size: 9pt; color: #856404;
   }
 
-  .doc-title {
-    font-size: 17pt;
-    font-weight: bold;
-    color: #1a3c5e;
-    margin: 12pt 0 2pt 0;
-  }
-  .doc-subtitle {
-    font-size: 11pt;
-    color: #555;
-    margin: 0 0 14pt 0;
-  }
+  .doc-title { font-size: 17pt; font-weight: bold; color: #1a3c5e; margin: 6pt 0 2pt 0; }
+  .doc-subtitle { font-size: 11pt; color: #555; margin: 0 0 14pt 0; }
 
-  .section-title {
-    font-size: 11pt;
-    font-weight: bold;
-    color: #1a3c5e;
-    margin: 16pt 0 6pt 0;
-  }
-
-  .info-box {
-    display: table;
-    width: 100%;
-    margin-bottom: 18pt;
-    background: #f7f9fc;
-    border: 0.5pt solid #d0d8e4;
-    padding: 8pt 12pt;
-  }
-  .info-grid {
-    display: table;
-    width: 100%;
-    border-collapse: collapse;
-  }
+  .info-box { background: #f7f9fc; border: 0.5pt solid #d0d8e4; padding: 8pt 12pt; margin-bottom: 18pt; }
+  .info-grid { display: table; width: 100%; }
   .info-row { display: table-row; }
-  .info-label {
-    display: table-cell;
-    font-size: 8.5pt;
-    color: #777;
-    padding: 2pt 12pt 2pt 0;
-    white-space: nowrap;
-    width: 110pt;
+  .info-label { display: table-cell; font-size: 8.5pt; color: #777; padding: 2pt 12pt 2pt 0; white-space: nowrap; width: 130pt; }
+  .info-value { display: table-cell; font-size: 8.5pt; font-weight: bold; padding: 2pt 0; }
+
+  .table-band {
+    display: flex; justify-content: space-between; align-items: baseline;
+    border-bottom: 1.5pt solid #1a3c5e; padding-bottom: 3pt; margin-bottom: 6pt;
   }
-  .info-value {
-    display: table-cell;
-    font-size: 8.5pt;
-    font-weight: bold;
-    padding: 2pt 0;
+  .table-band .section-title { font-size: 11pt; font-weight: bold; color: #1a3c5e; }
+  .table-band .eur-hint { font-size: 8pt; color: #777; }
+
+  /* --- tabellarischer Abrechnungskörper (monospace) --- */
+  table.abr {
+    width: 100%; border-collapse: collapse;
+    font-family: "DejaVu Sans Mono", "Courier New", monospace;
+    font-size: 8.5pt; color: #000;
+  }
+  table.abr th {
+    font-weight: normal; text-align: left; font-size: 8pt; color: #000;
+    border-bottom: 0.5pt solid #000; padding: 1pt 4pt; vertical-align: bottom;
+  }
+  table.abr th.r, table.abr td.r { text-align: right; }
+  table.abr td { padding: 0.6pt 4pt; vertical-align: top; }
+
+  tr.sec td {
+    font-weight: bold; padding-top: 8pt;
+    border-bottom: 0.5pt solid #000; padding-bottom: 1pt;
+  }
+  tr.sub td { font-weight: bold; border-top: 0.5pt solid #000; padding-top: 2pt; }
+  tr.total td { font-weight: bold; padding-top: 6pt; }
+  tr.spitze td {
+    font-weight: bold; border-top: 1pt solid #000; border-bottom: 3pt double #000;
+    padding-top: 3pt; padding-bottom: 3pt;
   }
 
-  table.positionen {
-    width: 100%;
-    border-collapse: collapse;
-  }
-  table.positionen th {
-    background: #1a3c5e;
-    color: #fff;
-    padding: 5pt 6pt;
-    font-size: 8.5pt;
-    text-align: left;
-  }
-  table.positionen th.r { text-align: right; }
-  table.positionen td {
-    padding: 3.5pt 6pt;
-    font-size: 8.5pt;
-    border-bottom: 0.5pt solid #e8e8e8;
-    vertical-align: middle;
-  }
-  table.positionen td.r {
-    text-align: right;
-    font-family: "Courier New", monospace;
-  }
-  table.positionen td.mono { font-family: "Courier New", monospace; }
-  table.positionen tr:nth-child(even) td { background: #f7f9fc; }
+  .nachrichtlich { margin-top: 16pt; font-family: "DejaVu Sans Mono", "Courier New", monospace; font-size: 8.5pt; color: #000; }
+  .nr-row { display: flex; justify-content: space-between; border-bottom: 0.5pt solid #ccc; padding: 2pt 0; }
+  .nr-row.saldo { font-weight: bold; border-bottom: 1pt solid #000; border-top: 1pt solid #000; }
 
-  .totals-box {
-    margin-top: 14pt;
-    border: 0.5pt solid #d0d8e4;
-  }
-  .totals-section {
-    padding: 6pt 10pt;
-  }
-  .totals-section + .totals-section {
-    border-top: 1pt solid #d0d8e4;
-  }
-  .totals-section.highlight {
-    background: #1a3c5e;
-    color: #fff;
-  }
-  .totals-row {
-    display: table;
-    width: 100%;
-    padding: 1.5pt 0;
-  }
-  .totals-label {
-    display: table-cell;
-    font-size: 9pt;
-  }
-  .totals-val {
-    display: table-cell;
-    font-size: 9pt;
-    text-align: right;
-    font-family: "Courier New", monospace;
-    width: 90pt;
-  }
-  .totals-row.main .totals-label { font-weight: bold; font-size: 10pt; }
-  .totals-row.main .totals-val   { font-weight: bold; font-size: 10pt; }
-  .totals-section.highlight .totals-row.main .totals-label { color: #fff; }
-  .totals-section.highlight .totals-row.main .totals-val   { color: #fff; }
-
-  .fussnote {
-    margin-top: 14pt;
-    padding: 6pt 10pt;
-    border-left: 2pt solid #1a3c5e;
-    background: #f7f9fc;
-    font-size: 8pt;
-    color: #555;
-  }
+  .section-hd { font-size: 11pt; font-weight: bold; color: #1a3c5e; border-bottom: 1.5pt solid #1a3c5e; padding-bottom: 3pt; margin: 20pt 0 8pt 0; }
+  .ka-title { font-family: "DejaVu Sans Mono", "Courier New", monospace; font-weight: bold; font-size: 9pt; margin: 12pt 0 4pt 0; }
+  .fehler { margin-top: 12pt; border-left: 2pt solid #1a3c5e; background: #f7f9fc; padding: 6pt 10pt; font-size: 8pt; color: #555; }
 </style>
 </head>
 <body>
 
-<div id="page-footer-left">Erstellt am {{ erstellt_am }}{% if ist_entwurf %} — Entwurf, vorbehaltlich Beschlussfassung{% endif %}</div>
+<div id="footer-left">Erstellt am {{ erstellt_am }}{% if ist_entwurf %} · ENTWURF, vorbehaltlich Beschlussfassung{% endif %}</div>
 
 <div class="letterhead">
-  <div class="letterhead-left">
-    <div class="company-name">Demme Immobilien Verwaltung GmbH</div>
-    <div class="company-addr">Coventrystraße 32 · 65934 Frankfurt am Main</div>
-  </div>
+  <div class="company-name">Demme Immobilien Verwaltung GmbH</div>
+  <div class="company-addr">Coventrystraße 32 · 65934 Frankfurt am Main</div>
 </div>
 
-{% if ist_entwurf %}
-<div class="entwurf-banner">
-  ▲ ENTWURF — Vorschau, noch nicht freigegeben
-</div>
-{% endif %}
+{% if ist_entwurf %}<div class="entwurf-banner">▲ ENTWURF — Vorschau, noch nicht freigegeben</div>{% endif %}
 
-<div class="doc-title">JAHRESABRECHNUNG {{ wj.jahr }}</div>
+<div class="doc-title">HAUSGELDABRECHNUNG {{ wj.jahr }}</div>
 <div class="doc-subtitle">{{ objekt.bezeichnung }}</div>
 
 <div class="info-box">
   <div class="info-grid">
-    <div class="info-row">
-      <div class="info-label">Objekt</div>
-      <div class="info-value">{{ objekt.objektnummer }} — {{ objekt.bezeichnung }}</div>
-    </div>
-    <div class="info-row">
-      <div class="info-label">Anschrift</div>
-      <div class="info-value">{{ objekt.strasse }}, {{ objekt.plz }} {{ objekt.ort }}</div>
-    </div>
-    <div class="info-row">
-      <div class="info-label">Einheit</div>
-      <div class="info-value">{{ einheit.einheit_nr }}{% if einheit.lage %} — {{ einheit.lage }}{% endif %}</div>
-    </div>
-    <div class="info-row">
-      <div class="info-label">Eigentümer</div>
-      <div class="info-value">{{ person_name }}</div>
-    </div>
-    <div class="info-row">
-      <div class="info-label">Abrechnungszeitraum</div>
-      <div class="info-value">{{ zeitraum_von }} – {{ zeitraum_bis }}</div>
-    </div>
+    <div class="info-row"><div class="info-label">Objekt</div><div class="info-value">{{ objekt.objektnummer }} — {{ objekt.bezeichnung }}</div></div>
+    <div class="info-row"><div class="info-label">Anschrift</div><div class="info-value">{{ objekt_anschrift }}</div></div>
+    <div class="info-row"><div class="info-label">Einheit</div><div class="info-value">{{ einheit_nr }}{% if einheit_lage %} — {{ einheit_lage }}{% endif %}</div></div>
+    <div class="info-row"><div class="info-label">Eigentümer</div><div class="info-value">{{ person_name }}</div></div>
+    <div class="info-row"><div class="info-label">Eigentümernr.</div><div class="info-value">{{ eigentuemer_nr }}</div></div>
+    <div class="info-row"><div class="info-label">Abrechnungszeitraum</div><div class="info-value">{{ zeitraum_lang }}</div></div>
   </div>
 </div>
 
-<div class="section-title">Kostenverteilung</div>
-<table class="positionen">
+<div class="table-band">
+  <span class="section-title">Kostenaufstellung</span>
+  <span class="eur-hint">Angaben in EUR</span>
+</div>
+
+<table class="abr">
   <thead>
     <tr>
-      <th>Konto</th>
-      <th>Bezeichnung</th>
-      <th>VS</th>
-      <th class="r">Gesamtkosten</th>
-      <th class="r">Anteil</th>
-      <th class="r">Ihr Anteil</th>
+      <th style="width:9%">Nr.</th>
+      <th style="width:29%">Bezeichnung</th>
+      <th class="r" style="width:13%">Gesamt</th>
+      <th style="width:19%">Umlageschlüssel</th>
+      <th class="r" style="width:12%">Umlagebasis</th>
+      <th class="r" style="width:12%">Umlageanteil</th>
+      <th class="r" style="width:11%">Ihr Anteil</th>
     </tr>
   </thead>
   <tbody>
-    {% for pos in positionen %}
+    <tr class="sec"><td colspan="7">umlagefähige Kosten</td></tr>
+    {% for p in umlagefaehig %}
     <tr>
-      <td class="mono">{{ pos.kontonummer }}</td>
-      <td>{{ pos.kontoname }}</td>
-      <td class="mono">{{ pos.vs_code|default:"—" }}</td>
-      <td class="r">{{ pos.gesamtkosten }}</td>
-      <td class="r">{{ pos.anteil }}</td>
-      <td class="r">{{ pos.betrag }}</td>
+      <td>{{ p.nr }}</td><td>{{ p.name }}</td><td class="r">{{ p.gesamt }}</td>
+      <td>{{ p.vs_name }}</td><td class="r">{{ p.umlagebasis }}</td><td class="r">{{ p.umlageanteil }}</td>
+      <td class="r">{{ p.ihr_anteil }}</td>
+    </tr>
+    {% endfor %}
+    <tr class="sub"><td colspan="2">Zwischensumme umlagefähig</td><td class="r">{{ summe_uf_gesamt }}</td><td colspan="3"></td><td class="r">{{ summe_uf_anteil }}</td></tr>
+
+    <tr class="sec"><td colspan="7">nicht umlagefähige Kosten</td></tr>
+    {% for p in nicht_umlagefaehig %}
+    <tr>
+      <td>{{ p.nr }}</td><td>{{ p.name }}</td><td class="r">{{ p.gesamt }}</td>
+      <td>{{ p.vs_name }}</td><td class="r">{{ p.umlagebasis }}</td><td class="r">{{ p.umlageanteil }}</td>
+      <td class="r">{{ p.ihr_anteil }}</td>
+    </tr>
+    {% endfor %}
+    <tr class="sub"><td colspan="2">Zwischensumme nicht umlagefähig</td><td class="r">{{ summe_nuf_gesamt }}</td><td colspan="3"></td><td class="r">{{ summe_nuf_anteil }}</td></tr>
+
+    <tr class="sec"><td colspan="7">Rücklage</td></tr>
+    <tr>
+      <td>001</td><td>Zuführung lt. Wirtschaftsplan</td><td class="r">{{ ruecklage_gesamt }}</td>
+      <td>MEA Gesamt</td><td class="r">{{ ruecklage_basis }}</td><td class="r">{{ ruecklage_anteil }}</td>
+      <td class="r">{{ ruecklage_ihr_anteil }}</td>
+    </tr>
+    <tr class="sub"><td colspan="2">Erhöhung durch Rücklage</td><td class="r">{{ ruecklage_gesamt }}</td><td colspan="3"></td><td class="r">{{ ruecklage_ihr_anteil }}</td></tr>
+
+    <tr class="total"><td colspan="2">Abrechnungssumme</td><td class="r">{{ abr_summe_gesamt }}</td><td colspan="3"></td><td class="r">{{ abr_summe_anteil }}</td></tr>
+    <tr><td colspan="2">abzgl. Hausgeld-Soll lt. Wirtschaftsplan</td><td class="r">{{ hg_soll_gesamt }}</td><td colspan="2"></td><td class="r">EUR</td><td class="r">{{ hg_soll_anteil }}</td></tr>
+    <tr class="spitze"><td colspan="2">Abrechnungsspitze</td><td class="r">{{ abr_spitze_gesamt }}</td><td colspan="2"></td><td class="r">{{ spitze_label }}</td><td class="r">{{ spitze_anteil }}</td></tr>
+  </tbody>
+</table>
+
+<div class="nachrichtlich">
+  <div class="nr-row"><span>Nachrichtlich — Ihre Hausgeldrückstände zum {{ zeitraum_bis }}</span><span>{{ rueckstand }}</span></div>
+  <div class="nr-row saldo"><span>Saldo zum {{ zeitraum_bis }} ({{ saldo_label }})</span><span>{{ saldo }}</span></div>
+</div>
+
+<div class="section-hd">Erklärung der Umlageschlüssel — {{ einheit_nr }}</div>
+<table class="abr">
+  <thead>
+    <tr>
+      <th style="width:46%">Umlageschlüssel</th>
+      <th style="width:26%">Zeitraum</th>
+      <th class="r" style="width:14%">Umlageanteil</th>
+      <th class="r" style="width:14%">Umlagebasis</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for v in vs_erklaerung %}
+    <tr>
+      <td>{{ v.name }}</td>
+      <td>{{ zeitraum_von }}-{{ zeitraum_bis }}</td>
+      <td class="r">{{ v.umlageanteil }}</td>
+      <td class="r">{{ v.umlagebasis }}</td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
 
-<div class="totals-box">
-  <div class="totals-section">
-    <div class="totals-row main">
-      <div class="totals-label">Summe Kostenanteil</div>
-      <div class="totals-val">{{ kostenanteil_gesamt }} €</div>
-    </div>
-    <div class="totals-row main">
-      <div class="totals-label">abzüglich Hausgeld-Soll {{ wj.jahr }}</div>
-      <div class="totals-val">−{{ hausgeld_soll_gesamt }} €</div>
-    </div>
-  </div>
-  <div class="totals-section highlight">
-    <div class="totals-row main">
-      <div class="totals-label">{{ ergebnis_label }}</div>
-      <div class="totals-val">{{ abrechnungsergebnis }} €</div>
-    </div>
-  </div>
+{% if fehler_positionen %}
+<div class="fehler">
+  <b>Hinweis:</b> {{ fehler_positionen|length }} Kostenposition(en) konnten nicht verteilt werden
+  (fehlender Verteilerschlüssel-Wert). Die Abrechnung ist erst nach Klärung freigabefähig.
 </div>
-
-{% if ruecklagen %}
-<div class="section-title">Entwicklung der Rücklagen</div>
-<table class="positionen">
-  <thead>
-    <tr>
-      <th>Rücklage</th>
-      <th class="r">Anfangsbestand</th>
-      <th class="r">Zuführungen</th>
-      <th class="r">Entnahmen</th>
-      <th class="r">Endbestand</th>
-      <th class="r">Ihr Anteil</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for r in ruecklagen %}
-    <tr>
-      <td>{{ r.bezeichnung }}</td>
-      <td class="r">{{ r.anfangsbestand }}</td>
-      <td class="r">{{ r.zufuehrungen }}</td>
-      <td class="r">{{ r.entnahmen }}</td>
-      <td class="r">{{ r.endbestand }}</td>
-      <td class="r">{{ r.anteil_eigentuemer|default:"—" }}</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
 {% endif %}
 
 {% if hinweis_eigentuemerwechsel %}
-<div class="fussnote">
-  Hinweis: Im Abrechnungszeitraum fand ein Eigentümerwechsel statt. Die
-  Abrechnung erfolgt vollständig gegenüber dem aktuellen Eigentümer
-  (§ 556 Abs. 3 BGB analog; WEG-Grundsatz). Ein zivilrechtlicher Ausgleich
-  zwischen Verkäufer und Käufer erfolgt außerhalb dieser Abrechnung.
+<div class="fehler">
+  Hinweis: Im Abrechnungszeitraum fand ein Eigentümerwechsel statt. Die Abrechnung erfolgt
+  vollständig gegenüber dem aktuellen Eigentümer; ein zivilrechtlicher Ausgleich zwischen
+  Verkäufer und Käufer erfolgt außerhalb dieser Abrechnung.
 </div>
+{% endif %}
+
+{% if kontoauszuege %}
+<div style="page-break-before: always;"></div>
+<div class="section-hd">Kontoauszug der Zahlungen — {{ einheit_nr }}</div>
+{% for k in kontoauszuege %}
+<div class="ka-title">Kontoauszug Zahlung — {{ k.label }} ({{ k.ba_nr }})</div>
+<table class="abr">
+  <thead>
+    <tr>
+      <th style="width:20%">Datum</th>
+      <th>Bemerkung</th>
+      <th class="r" style="width:20%">Bruttobetrag</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for z in k.zeilen %}
+    <tr><td>{{ z.datum }}</td><td>{{ z.bemerkung }}</td><td class="r">{{ z.betrag }}</td></tr>
+    {% endfor %}
+    <tr class="sub"><td colspan="2">Summe {{ k.label }}</td><td class="r">{{ k.summe }}</td></tr>
+  </tbody>
+</table>
+{% endfor %}
 {% endif %}
 
 </body>

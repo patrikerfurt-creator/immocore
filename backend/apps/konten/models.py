@@ -24,6 +24,11 @@ class Konto(models.Model):
     arge_konto          = models.BooleanField(default=False)
     arge_kostenart      = models.CharField(max_length=20, null=True, blank=True)
     aktiv               = models.BooleanField(default=True)
+    umlagefaehig        = models.BooleanField(
+        default=True,
+        help_text='Kosten dieses Kontos sind umlagefähig — steuert die '
+                  'Gliederung der Jahresabrechnung (umlagefähig / nicht umlagefähig).',
+    )
 
     class Meta:
         verbose_name        = 'Konto (Sachkonto)'

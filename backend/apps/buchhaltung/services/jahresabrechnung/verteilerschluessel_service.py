@@ -101,6 +101,54 @@ def mea_anteil(einheit: Einheit, wj: Wirtschaftsjahr) -> Decimal:
     return anteil_einheit_fuer_vs_code('010', einheit, wj)
 
 
+def alle_werte_und_gesamt(vs_code: str, objekt, wj: Wirtschaftsjahr):
+    """
+    Alle beteiligten Einheit-Werte + Gesamtwert eines VS-Codes fürs ganze Objekt
+    (objektweit statt je Einheit — vermeidet N+1 bei der Kostenverteilung und
+    liefert zugleich die Verteilerbasis für die PDF-Anzeige).
+
+    Verhält sich wie die Einzel-Auflöser: fehlende/NULL-Werte oder Gesamtwert 0
+    blockieren hart. Gibt (werte: {einheit_id: Decimal}, gesamt: Decimal) zurück.
+    """
+    if vs_code in VERBRAUCH_VS_CODES:
+        rows = EinheitVerbrauch.objects.filter(
+            wirtschaftsjahr=wj, einheit__objekt=objekt, vs_code=vs_code,
+        )
+        werte = {r.einheit_id: r.wert for r in rows}
+        unvollstaendig = "Verbrauchswerte unvollständig"
+    else:
+        vs_config = Verteilerschluessel.objects.filter(
+            objekt=objekt, schluessel=vs_code, aktiv=True,
+        ).first()
+        if vs_config is None:
+            raise VerteilerschluesselFehler(
+                None, None, vs_code, "Verteilerschlüssel ist am Objekt nicht konfiguriert.",
+            )
+        rows = VerteilerschluesselWert.objects.filter(
+            schluessel=vs_config, beteiligt=True, wirtschaftsjahr__in=(0, wj.jahr),
+        ).order_by('einheit_id', 'wirtschaftsjahr')
+        werte = {}
+        for r in rows:  # jahresspezifisch (wj.jahr > 0) überschreibt zeitlos (0)
+            werte[r.einheit_id] = r.wert
+        unvollstaendig = "Verteilerschlüssel-Werte unvollständig"
+
+    if not werte:
+        raise VerteilerschluesselFehler(
+            None, None, vs_code, "Keine beteiligten Einheiten / Werte hinterlegt.",
+        )
+    fehlende = [eid for eid, w in werte.items() if w is None]
+    if fehlende:
+        raise VerteilerschluesselFehler(
+            None, None, vs_code, f"{unvollstaendig} ({len(fehlende)} Einheit(en) ohne Wert).",
+        )
+    gesamt = sum(werte.values(), Decimal('0'))
+    if not gesamt:
+        raise VerteilerschluesselFehler(
+            None, None, vs_code, "Gesamtwert des Objekts ist 0 oder nicht ermittelbar.",
+        )
+    return werte, gesamt
+
+
 # ---------------------------------------------------------------------------
 # intern
 # ---------------------------------------------------------------------------

@@ -117,10 +117,17 @@ def _entnahmen(objekt: Objekt, wj: Wirtschaftsjahr, ba_nr: str) -> Decimal:
     """
     Entnahmen: Buchungen im WJ mit einem Rücklagen-Sachkonto
     (Konto.abrechnungsart == BA-Nr) auf der Haben-Seite (Gegenkonto).
+
+    Erlöskonten (41xxx) werden ausgeschlossen: Sie tragen zwar dieselbe
+    abrechnungsart wie das Rücklagen-Sachkonto, repräsentieren aber die
+    Hausgeld-Rücklagenzuführung (Einnahme, bereits in _zufuehrungen_nebenbuch
+    erfasst) — keine Entnahme. Ohne den Ausschluss würde jede Rücklagen-Zahlung
+    fälschlich zugleich als Entnahme gezählt.
     """
     summe = (
         buchungen_im_wj(objekt, wj)
         .filter(haben_konto__abrechnungsart=ba_nr)
+        .exclude(haben_konto__kontonummer__startswith='41')
         .aggregate(s=Sum('betrag'))['s']
     )
     return summe or Decimal('0')

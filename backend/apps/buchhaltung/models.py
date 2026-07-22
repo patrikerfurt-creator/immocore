@@ -931,7 +931,11 @@ class Jahresabrechnung(models.Model):
 class EinzelAbrechnung(models.Model):
     """Genau eine je Einheit unter einer Jahresabrechnung (HGA-Spec v1.0 Kap. 3.2).
 
-    Invariante (Service-Ebene): abrechnungsergebnis == kostenanteil_gesamt - hausgeld_soll_gesamt.
+    Invariante (Service-Ebene):
+        abrechnungssumme    = kostenanteil_gesamt + ruecklagen_zufuehrung_gesamt
+        abrechnungsergebnis = abrechnungssumme - hausgeld_soll_gesamt
+    (kostenanteil_gesamt = Bewirtschaftung umlagefähig + nicht umlagefähig;
+     ruecklagen_zufuehrung_gesamt = Σ der Rücklagen-Sollstellungssplits, BA 91x.)
     """
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
     jahresabrechnung = models.ForeignKey(
@@ -950,10 +954,18 @@ class EinzelAbrechnung(models.Model):
         help_text='Snapshot-Referenz für Nebenbuch-Verknüpfung.',
     )
     hausgeld_soll_gesamt = models.DecimalField(max_digits=14, decimal_places=2)
-    kostenanteil_gesamt = models.DecimalField(max_digits=14, decimal_places=2)
+    kostenanteil_gesamt = models.DecimalField(
+        max_digits=14, decimal_places=2,
+        help_text='Bewirtschaftungskosten (umlagefähig + nicht umlagefähig).',
+    )
+    ruecklagen_zufuehrung_gesamt = models.DecimalField(
+        max_digits=14, decimal_places=2, default=0,
+        help_text='Σ der Rücklagen-Zuführung (Sollstellungssplits BA 91x) im WJ.',
+    )
     abrechnungsergebnis = models.DecimalField(
         max_digits=14, decimal_places=2,
-        help_text='kostenanteil_gesamt - hausgeld_soll_gesamt; >0 Nachzahlung, <0 Guthaben.',
+        help_text='(kostenanteil_gesamt + ruecklagen_zufuehrung_gesamt) - hausgeld_soll_gesamt; '
+                  '>0 Nachzahlung, <0 Guthaben.',
     )
     positionen = models.JSONField(default=list)
     ruecklagen = models.JSONField(default=list)

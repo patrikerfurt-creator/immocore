@@ -4,8 +4,9 @@ from .models import Konto, Personenkonto, Unterkonto
 
 @admin.register(Konto)
 class KontoAdmin(admin.ModelAdmin):
-    list_display = ['kontonummer', 'kontoname', 'wirtschaftsjahr', 'kontoart', 'verteilerschluessel', 'aktiv']
-    list_filter = ['kontoart', 'verteilerschluessel', 'aktiv', 'wirtschaftsjahr__objekt']
+    list_display = ['kontonummer', 'kontoname', 'wirtschaftsjahr', 'kontoart', 'verteilerschluessel', 'umlagefaehig', 'aktiv']
+    list_filter = ['kontoart', 'verteilerschluessel', 'umlagefaehig', 'aktiv', 'wirtschaftsjahr__objekt']
+    list_editable = ['umlagefaehig']
     search_fields = ['kontonummer', 'kontoname']
     ordering = ['wirtschaftsjahr__objekt__bezeichnung', 'kontonummer']
 

@@ -23,12 +23,17 @@ Schreibt: EinzelAbrechnung (Upsert je jahresabrechnung+einheit).
 Manuelle Korrekturen (Schritt 6 UI) sind Phase E — eine Neuberechnung
 überschreibt den Datensatz vollständig.
 """
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_FLOOR, ROUND_HALF_UP
 
 from django.core.exceptions import ValidationError
 from django.db.models import Q, Sum
 
-from apps.buchhaltung.models import EinzelAbrechnung, HausgeldSollstellung, Jahresabrechnung
+from apps.buchhaltung.models import (
+    EinzelAbrechnung,
+    HausgeldSollstellung,
+    Jahresabrechnung,
+    SollstellungSplit,
+)
 from apps.konten.models import Konto
 from apps.objekte.models import Einheit
 from apps.personen.models import EigentumsVerhaeltnis
@@ -38,7 +43,7 @@ from .ruecklagen_service import ruecklagen_uebersicht
 from .verteilerschluessel_service import (
     VerteilerschluesselFehler,
     aktiver_vs_code,
-    anteil_einheit_fuer_vs_code,
+    alle_werte_und_gesamt,
     mea_anteil,
 )
 
@@ -58,6 +63,26 @@ def berechne_hausgeld_soll(ev: EigentumsVerhaeltnis, wj) -> Decimal:
         periode__lte=wj.ende_datum,
         storniert_am__isnull=True,
     ).aggregate(summe=Sum('soll_betrag'))['summe'] or Decimal('0.00')
+
+
+def berechne_ruecklagen_zufuehrung(ev: EigentumsVerhaeltnis, wj) -> Decimal:
+    """
+    Rücklagen-Zuführung des EV im WJ = Σ der Hausgeld-Sollstellungssplits mit
+    einer Rücklagen-Buchungsart (BA 91x, bankkonto_typ='ruecklage_nach_index').
+
+    Fließt zusätzlich zur Bewirtschaftung in die Abrechnungssumme ein (Kap. 4.1);
+    der gleiche Betrag steckt als 911-Split bereits im Hausgeld-Soll und hebt
+    sich dort auf — ein Ergebnis entsteht nur bei Abweichung Zuführung ≠ 911-Soll.
+    Soll-Prinzip; muss lt. Wirtschaftsplan aufgehen.
+    """
+    return SollstellungSplit.objects.filter(
+        sollstellung__eigentumsverhaeltnis=ev,
+        sollstellung__sollstellungs_typ='hausgeld',
+        sollstellung__periode__gte=wj.beginn_datum,
+        sollstellung__periode__lte=wj.ende_datum,
+        sollstellung__storniert_am__isnull=True,
+        ba__bankkonto_typ='ruecklage_nach_index',
+    ).aggregate(summe=Sum('betrag'))['summe'] or Decimal('0.00')
 
 
 def aktueller_eigentuemer(einheit: Einheit, stichtag) -> EigentumsVerhaeltnis:
@@ -105,13 +130,14 @@ def berechne_alle_einzelabrechnungen(ja: Jahresabrechnung) -> list:
         )
 
     wj = ja.wirtschaftsjahr
-    kosten = _kostenpositionen(ja.objekt, wj)
+    einheiten = list(ja.objekt.einheiten.all().order_by('einheit_nr'))
+    verteilung = _kostenverteilung(ja.objekt, wj, einheiten)
     ruecklagen = ruecklagen_uebersicht(ja.objekt, wj)
 
     ergebnisse = []
-    for einheit in ja.objekt.einheiten.all().order_by('einheit_nr'):
+    for einheit in einheiten:
         ergebnisse.append(
-            _berechne_einheit(ja, einheit, wj, kosten, ruecklagen)
+            _berechne_einheit(ja, einheit, wj, verteilung, ruecklagen)
         )
     return ergebnisse
 
@@ -121,9 +147,10 @@ def berechne_einzelabrechnung(ja: Jahresabrechnung, einheit: Einheit) -> EinzelA
     if ja.status != 'entwurf':
         raise ValidationError("Einzelabrechnungen können nur im Status 'entwurf' berechnet werden.")
     wj = ja.wirtschaftsjahr
+    einheiten = list(ja.objekt.einheiten.all().order_by('einheit_nr'))
     return _berechne_einheit(
         ja, einheit, wj,
-        _kostenpositionen(ja.objekt, wj),
+        _kostenverteilung(ja.objekt, wj, einheiten),
         ruecklagen_uebersicht(ja.objekt, wj),
     )
 
@@ -132,55 +159,102 @@ def berechne_einzelabrechnung(ja: Jahresabrechnung, einheit: Einheit) -> EinzelA
 # intern
 # ---------------------------------------------------------------------------
 
-def _kostenpositionen(objekt, wj) -> list:
-    """Aufwandskonten mit Ist-Kosten ≠ 0 inkl. Konto-Objekt und aktivem VS-Code."""
+def _kostenverteilung(objekt, wj, einheiten) -> list:
+    """
+    Verteilt je Aufwandskonto (Ist-Kosten ≠ 0) die Kosten objektweit auf die
+    Einheiten und gleicht Rundungsdifferenzen cent-genau aus, sodass
+    Σ Anteile == Ist-Kosten je Konto (Restcent nach größtem Nachkommarest).
+
+    Gibt je Position ein Dict zurück:
+        konto, ist, vs_code, vs_fehler,
+        werte:   {einheit_id: Wert},          # Verteilerbasis (PDF-Nachweis)
+        gesamt:  Gesamtwert des VS,
+        anteile: {einheit_id: Anteil},
+        betraege:{einheit_id: gerundeter Betrag}
+    Nicht am VS beteiligte Einheiten fehlen in werte/anteile/betraege und
+    werden je Einheit als Fehler ausgewiesen (bestehendes Verhalten).
+    """
     uebersicht = kostenstellen_uebersicht(objekt, wj)
     relevante = [p for p in uebersicht['positionen'] if p['ist'] != 0]
     konten = Konto.objects.in_bulk([p['konto_id'] for p in relevante])
     positionen = []
     for p in relevante:
         konto = konten[_uuid(p['konto_id'])]
+        ist = p['ist']
+        eintrag = {
+            'konto': konto, 'ist': ist, 'vs_code': None, 'vs_fehler': None,
+            'werte': {}, 'gesamt': None, 'anteile': {}, 'betraege': {},
+        }
         try:
             vs_code = aktiver_vs_code(konto, stichtag=wj.ende_datum)
-            vs_fehler = None
+            werte, gesamt = alle_werte_und_gesamt(vs_code, objekt, wj)
         except VerteilerschluesselFehler as exc:
-            vs_code = None
-            vs_fehler = exc.messages[0]
-        positionen.append({
-            'konto': konto,
-            'ist': p['ist'],
-            'vs_code': vs_code,
-            'vs_fehler': vs_fehler,
-        })
+            eintrag['vs_fehler'] = exc.messages[0]
+            positionen.append(eintrag)
+            continue
+        eintrag['vs_code'] = vs_code
+        eintrag['werte'] = werte
+        eintrag['gesamt'] = gesamt
+        eintrag['anteile'] = {
+            eid: (Decimal(w) / Decimal(gesamt)) for eid, w in werte.items()
+        }
+        eintrag['betraege'] = _apportioniere(ist, eintrag['anteile'])
+        positionen.append(eintrag)
     return positionen
 
 
-def _berechne_einheit(ja, einheit, wj, kosten, ruecklagen) -> EinzelAbrechnung:
+def _apportioniere(ist: Decimal, anteile: dict) -> dict:
+    """
+    Verteilt 'ist' im Verhältnis 'anteile' (Σ = 1) cent-genau auf die Einheiten.
+    Größte-Reste-Verfahren: jede Einheit erhält den abgerundeten Cent-Anteil,
+    die verbleibenden Cent gehen an die Einheiten mit dem größten Nachkommarest.
+    Garantiert Σ Beträge == ist (auch bei negativem ist).
+    """
+    if not anteile:
+        return {}
+    cent = Decimal('0.01')
+    ist_cents = int((ist / cent).to_integral_value(rounding=ROUND_HALF_UP))
+    roh = {eid: Decimal(ist_cents) * anteil for eid, anteil in anteile.items()}
+    boden = {eid: int(r.to_integral_value(rounding=ROUND_FLOOR)) for eid, r in roh.items()}
+    rest = ist_cents - sum(boden.values())  # stets in [0, Anzahl Einheiten)
+    reihenfolge = sorted(
+        roh, key=lambda eid: (roh[eid] - boden[eid], str(eid)), reverse=True
+    )
+    ergebnis = {eid: Decimal(boden[eid]) * cent for eid in roh}
+    for eid in reihenfolge[:rest]:
+        ergebnis[eid] += cent
+    return ergebnis
+
+
+def _berechne_einheit(ja, einheit, wj, verteilung, ruecklagen) -> EinzelAbrechnung:
     ev = aktueller_eigentuemer(einheit, ja.erstellungsdatum)
     hausgeld_soll = berechne_hausgeld_soll(ev, wj)
 
     positionen_json = []
     kostenanteil = Decimal('0.00')
-    for pos in kosten:
+    for pos in verteilung:
         eintrag = {
             'kontonummer': pos['konto'].kontonummer,
             'kontoname': pos['konto'].kontoname,
             'gesamtkosten': str(pos['ist']),
             'vs_code': pos['vs_code'],
+            'umlagefaehig': pos['konto'].umlagefaehig,
         }
         if pos['vs_fehler']:
             eintrag['fehler'] = pos['vs_fehler']
             positionen_json.append(eintrag)
             continue
-        try:
-            anteil = anteil_einheit_fuer_vs_code(pos['vs_code'], einheit, wj)
-        except VerteilerschluesselFehler as exc:
-            eintrag['fehler'] = exc.messages[0]
+        if einheit.id not in pos['betraege']:
+            eintrag['fehler'] = 'Kein Verteilerschlüssel-Wert für die Einheit hinterlegt.'
             positionen_json.append(eintrag)
             continue
-        betrag = (pos['ist'] * anteil).quantize(ZWEI_STELLEN, rounding=ROUND_HALF_UP)
+        anteil = pos['anteile'][einheit.id]
+        betrag = pos['betraege'][einheit.id]
         eintrag['anteil'] = str(anteil.quantize(Decimal('0.000001')))
         eintrag['betrag'] = str(betrag)
+        # Verteilerbasis (Wert der Einheit / Gesamtwert) für den PDF-Nachweis
+        eintrag['wert'] = str(pos['werte'][einheit.id])
+        eintrag['gesamt'] = str(pos['gesamt'])
         positionen_json.append(eintrag)
         kostenanteil += betrag
 
@@ -203,7 +277,12 @@ def _berechne_einheit(ja, einheit, wj, kosten, ruecklagen) -> EinzelAbrechnung:
             eintrag['fehler'] = exc.messages[0]
         ruecklagen_json.append(eintrag)
 
-    abrechnungsergebnis = kostenanteil - hausgeld_soll
+    # Rücklagenzuführung (BA 91x) fließt zusätzlich zur Bewirtschaftung in die
+    # Abrechnungssumme ein (Kap. 4.1). Der 911-Split steckt zugleich im
+    # Hausgeld-Soll und hebt sich dort auf.
+    ruecklagen_zufuehrung = berechne_ruecklagen_zufuehrung(ev, wj)
+    abrechnungssumme = kostenanteil + ruecklagen_zufuehrung
+    abrechnungsergebnis = abrechnungssumme - hausgeld_soll
 
     ea, _ = EinzelAbrechnung.objects.update_or_create(
         jahresabrechnung=ja,
@@ -213,6 +292,7 @@ def _berechne_einheit(ja, einheit, wj, kosten, ruecklagen) -> EinzelAbrechnung:
             'eigentumsverhaeltnis': ev,
             'hausgeld_soll_gesamt': hausgeld_soll,
             'kostenanteil_gesamt': kostenanteil,
+            'ruecklagen_zufuehrung_gesamt': ruecklagen_zufuehrung,
             'abrechnungsergebnis': abrechnungsergebnis,
             'positionen': positionen_json,
             'ruecklagen': ruecklagen_json,
