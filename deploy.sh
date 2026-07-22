@@ -3,7 +3,8 @@
 # Aufruf: bash deploy.sh
 
 set -e
-cd /opt/immocore
+# Ins Verzeichnis des Skripts wechseln (= Projektordner, z. B. /home/patrik/immocore)
+cd "$(dirname "$0")"
 
 echo "=== [1/5] Neuesten Code holen ==="
 git pull origin main
