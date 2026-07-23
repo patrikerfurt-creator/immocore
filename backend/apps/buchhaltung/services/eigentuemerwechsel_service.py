@@ -118,7 +118,7 @@ def analysiere_wechsel(einheit, stichtag: date) -> WechselAnalyse:
         ist = ss.ist_betrag
         soll = ss.soll_betrag
 
-        letzte_zahlung = ss.zahlungen.filter(storniert_am__isnull=True).order_by('-erstellt_am').first() if hasattr(ss, 'zahlungen') else None
+        letzte_zahlung = ss.zahlungen.exclude(buchung__status='storniert').order_by('-erstellt_am').first()
         juenger_56 = bool(
             letzte_zahlung and (heute - letzte_zahlung.erstellt_am.date()).days < 56
         )
