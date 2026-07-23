@@ -37,12 +37,15 @@ def kostenstellen_uebersicht(objekt: Objekt, wj: Wirtschaftsjahr) -> dict:
     """
     konten = _aufwandskonten(wj)
     ist_je_konto = _ist_kosten_je_konto(objekt, wj, konten)
+    ist_je_konto = _rolle_unterkonten_hoch(konten, ist_je_konto)
     plan_je_konto, wp_vorhanden = _plan_ansaetze_je_konto(wj)
 
     positionen = []
     summe_ist = Decimal('0')
     summe_plan = Decimal('0') if wp_vorhanden else None
     for konto in konten:
+        if konto.kontoart == Konto.Kontoart.UNTERKONTO:
+            continue  # Kosten sind ins Summierungskonto hochgerollt
         ist = ist_je_konto.get(konto.id, Decimal('0'))
         plan = plan_je_konto.get(konto.id) if wp_vorhanden else None
         abweichung = (ist - plan) if plan is not None else None
@@ -76,15 +79,47 @@ def kostenstellen_uebersicht(objekt: Objekt, wj: Wirtschaftsjahr) -> dict:
 # ---------------------------------------------------------------------------
 
 def _aufwandskonten(wj: Wirtschaftsjahr) -> list:
-    """Aufwandskonten 50xxx–55xxx des WJ (nur bebuchbare Standard-Konten)."""
+    """Aufwandskonten 50xxx–55xxx des WJ — standard, summierung UND unterkonto.
+
+    Unterkonten (z.B. 50300 Wasser) tragen die Kosten, werden aber später ins
+    jeweilige Summierungskonto (z.B. 50299) hochgerollt und selbst nicht mehr
+    ausgewiesen (_rolle_unterkonten_hoch).
+    """
     konten = Konto.objects.filter(
-        wirtschaftsjahr=wj, kontoart=Konto.Kontoart.STANDARD, aktiv=True,
+        wirtschaftsjahr=wj, aktiv=True,
     ).order_by('kontonummer')
     return [
         k for k in konten
         if k.kontonummer.isdigit()
         and AUFWANDSKONTO_MIN <= int(k.kontonummer) <= AUFWANDSKONTO_MAX
     ]
+
+
+def _rolle_unterkonten_hoch(konten: list, ist_je_konto: dict) -> dict:
+    """Rollt Unterkonto-Kosten (z.B. 50300–50360) ins nächst-vorangehende
+    Summierungskonto (z.B. 50299). Unterkonten werden dabei auf 0 gesetzt."""
+    summierungen = sorted(
+        (k for k in konten
+         if k.kontoart == Konto.Kontoart.SUMMIERUNG and k.kontonummer.isdigit()),
+        key=lambda k: int(k.kontonummer),
+    )
+    for k in konten:
+        if k.kontoart != Konto.Kontoart.UNTERKONTO or not k.kontonummer.isdigit():
+            continue
+        nr = int(k.kontonummer)
+        parent = None
+        for s in summierungen:
+            if int(s.kontonummer) < nr:
+                parent = s
+            else:
+                break
+        if parent is not None:
+            ist_je_konto[parent.id] = (
+                ist_je_konto.get(parent.id, Decimal('0'))
+                + ist_je_konto.get(k.id, Decimal('0'))
+            )
+            ist_je_konto[k.id] = Decimal('0')
+    return ist_je_konto
 
 
 def buchungen_im_wj(objekt: Objekt, wj: Wirtschaftsjahr):

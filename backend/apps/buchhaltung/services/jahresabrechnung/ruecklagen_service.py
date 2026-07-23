@@ -18,9 +18,15 @@ Read-only.
 """
 from decimal import Decimal
 
-from django.db.models import Sum
+from django.db.models import Q, Sum
 
-from apps.buchhaltung.models import Kontoumsatz, SollstellungZahlung
+from apps.buchhaltung.models import (
+    Buchung,
+    Kontoumsatz,
+    SollstellungZahlung,
+    WirtschaftsplanRuecklage,
+)
+from apps.konten.models import Konto
 from apps.objekte.models import Bankkonto, Einheit, Objekt, Wirtschaftsjahr
 
 from .kostenstellen_service import buchungen_im_wj
@@ -44,12 +50,15 @@ def ruecklagen_uebersicht(objekt: Objekt, wj: Wirtschaftsjahr) -> list:
     ).order_by('reihenfolge')
     for bk in ruecklagen_konten:
         ba_nr = str(910 + bk.reihenfolge)  # reihenfolge 1 → BA 911, 2 → 912, …
-        anfangsbestand = _bank_saldo(bk, bis=wj.beginn_datum, exklusiv=True)
+        anfangsbestand = _anfangsbestand(bk, objekt, wj, ba_nr)
         zufuehrungen = _zufuehrungen_nebenbuch(objekt, wj, ba_nr)
         entnahmen = _entnahmen(objekt, wj, ba_nr)
         endbestand_berechnet = anfangsbestand + zufuehrungen - entnahmen
         endbestand_bank = _bank_saldo(bk, bis=wj.ende_datum, exklusiv=False)
         abweichung = endbestand_berechnet - endbestand_bank
+        plan = WirtschaftsplanRuecklage.objects.filter(
+            wirtschaftsjahr=wj, ba_nr=ba_nr,
+        ).first()
         rows.append({
             'bankkonto_id': str(bk.id),
             'bezeichnung': bk.bezeichnung,
@@ -61,12 +70,27 @@ def ruecklagen_uebersicht(objekt: Objekt, wj: Wirtschaftsjahr) -> list:
             'endbestand_bank': endbestand_bank,
             'abweichung': abweichung,
             'klaerungsfall': abs(abweichung) > ABWEICHUNGS_TOLERANZ,
+            # Fixer Planwert lt. Wirtschaftsplan (Objekt-Gesamt); None = nicht erfasst
+            'zufuehrung_plan': plan.betrag if plan else None,
         })
     return rows
 
 
+def wirtschaftsplan_ruecklage_gesamt(wj: Wirtschaftsjahr):
+    """Summe der geplanten Rücklagen-Zuführung (alle Rücklagen-BAs) für das WJ.
+    None, wenn kein Planwert erfasst ist → Aufrufer fällt auf Ist-Werte zurück."""
+    plaene = WirtschaftsplanRuecklage.objects.filter(wirtschaftsjahr=wj)
+    if not plaene.exists():
+        return None
+    return plaene.aggregate(s=Sum('betrag'))['s'] or Decimal('0')
+
+
 def pruefe_schritt5_blocker(objekt: Objekt, wj: Wirtschaftsjahr) -> list:
-    """Klärungsfälle (Abweichung Endbestand vs. Bankauszug) — blockieren Schritt 5."""
+    """Klärungsfälle (Abweichung berechneter Endbestand vs. Bankauszug).
+
+    NUR informativ (Hinweis im Wizard-Schritt 5). Schritt 5 sperrt NICHT mehr,
+    und die Freigabe wird dadurch nicht blockiert.
+    """
     return [r for r in ruecklagen_uebersicht(objekt, wj) if r['klaerungsfall']]
 
 
@@ -78,6 +102,35 @@ def anteil_eigentuemer(endbestand: Decimal, einheit: Einheit, wj: Wirtschaftsjah
 # ---------------------------------------------------------------------------
 # intern
 # ---------------------------------------------------------------------------
+
+def _anfangsbestand(bankkonto: Bankkonto, objekt: Objekt, wj: Wirtschaftsjahr, ba_nr: str) -> Decimal:
+    """
+    Anfangsbestand der Rücklage: primär der Saldovortrag (BA 99) auf dem
+    Rücklagen-Bestandskonto 09<ba_nr> (z. B. 09911). Fällt zurück auf die
+    Summe der Bank-Kontoumsätze vor WJ-Beginn, wenn kein Bestandskonto oder
+    kein Saldovortrag gebucht ist (Alt-Logik / CAMT-Historie).
+    """
+    vortrag = _saldovortrag_bestandskonto(objekt, wj, ba_nr)
+    if vortrag is not None:
+        return vortrag
+    return _bank_saldo(bankkonto, bis=wj.beginn_datum, exklusiv=True)
+
+
+def _saldovortrag_bestandskonto(objekt: Objekt, wj: Wirtschaftsjahr, ba_nr: str):
+    """Saldovortrag (BA 99, Haben − Soll) auf dem Bestandskonto 09<ba_nr>.
+    Gibt None zurück, wenn Konto oder Saldovortrags-Buchung fehlen."""
+    konto = Konto.objects.filter(wirtschaftsjahr=wj, kontonummer=f"09{ba_nr}").first()
+    if konto is None:
+        return None
+    vortrag = Buchung.objects.filter(
+        wirtschaftsjahr=wj, buchungsart__nr='99',
+    ).filter(Q(haben_konto=konto) | Q(soll_konto=konto))
+    if not vortrag.exists():
+        return None
+    haben = vortrag.filter(haben_konto=konto).aggregate(s=Sum('betrag'))['s'] or Decimal('0')
+    soll = vortrag.filter(soll_konto=konto).aggregate(s=Sum('betrag'))['s'] or Decimal('0')
+    return haben - soll
+
 
 def _bank_saldo(bankkonto: Bankkonto, bis, exklusiv: bool) -> Decimal:
     """

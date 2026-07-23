@@ -233,8 +233,8 @@ class JahresabrechnungIntegrationTest(APITestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertIn('Kreditoren-OP', resp.data['error'])
 
-    def test_schritt5_bankabweichung_blockiert(self):
-        """Rücklagen-Endbestand != Bankauszug → Freigabe gesperrt."""
+    def test_schritt5_bankabweichung_sperrt_nicht(self):
+        """Rücklagen-Endbestand != Bankauszug → nur Hinweis, KEINE Sperre."""
         bk = Bankkonto.objects.create(
             objekt=self.objekt, konto_typ='ruecklage',
             bezeichnung='Erhaltungsrücklage', reihenfolge=1)
@@ -268,11 +268,14 @@ class JahresabrechnungIntegrationTest(APITestCase):
             'objekt': str(self.objekt.id), 'wirtschaftsjahr': str(self.wj.id)})
         ja_id = resp.data['id']
         resp = self.client.get(f'{BASE}{ja_id}/ruecklagen/')
-        self.assertTrue(resp.data['blockiert'])
+        # Schritt 5 sperrt nicht mehr: Abweichung ist nur ein Klärungshinweis
+        self.assertFalse(resp.data['blockiert'])
+        self.assertGreaterEqual(resp.data['klaerungsfaelle'], 1)
         self.client.post(f'{BASE}{ja_id}/einzelabrechnungen/berechnen/')
         resp = self.client.post(f'{BASE}{ja_id}/freigeben/')
-        self.assertEqual(resp.status_code, 400)
-        self.assertIn('Rücklagen', resp.data['error'])
+        # Freigabe wird NICHT wegen der Rücklagen-Abweichung blockiert
+        if resp.status_code == 400:
+            self.assertNotIn('Rücklagen', resp.data.get('error', ''))
 
     def test_schritt6_fehlender_verbrauchswert_blockiert_freigabe(self):
         """Konto mit Verbrauchs-VS 140 ohne EinheitVerbrauch → VS-Fehler → Freigabe gesperrt."""

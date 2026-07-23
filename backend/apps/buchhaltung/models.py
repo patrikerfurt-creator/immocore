@@ -1559,6 +1559,41 @@ class SollstellungZahlung(models.Model):
         return f"Zahlung {self.betrag} € für {self.sollstellung.opos_nr}"
 
 
+class WirtschaftsplanRuecklage(models.Model):
+    """Geplante Rücklagen-Zuführung (lt. Wirtschaftsplan) je Wirtschaftsjahr und
+    Rücklagen-Buchungsart (911, 912, …).
+
+    In der Jahresabrechnung ist dieser Objekt-Gesamtbetrag die fixe Größe: die
+    Summe der monatlichen Sollstellungen kann davon minimal abweichen — maßgeblich
+    ist der hier hinterlegte Planwert. Manuell pflegbar (auch ohne Wirtschaftsplan,
+    z. B. bei Objektübernahme).
+    """
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    wirtschaftsjahr = models.ForeignKey(
+        'objekte.Wirtschaftsjahr', on_delete=models.CASCADE,
+        related_name='ruecklagen_planwerte',
+    )
+    ba_nr = models.CharField(max_length=3, help_text='Rücklagen-Buchungsart, z. B. 911.')
+    betrag = models.DecimalField(max_digits=12, decimal_places=2)
+    erfasst_am = models.DateTimeField(auto_now=True)
+    erfasst_von = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='+',
+    )
+
+    class Meta:
+        verbose_name = 'Wirtschaftsplan-Rücklagenzuführung'
+        verbose_name_plural = 'Wirtschaftsplan-Rücklagenzuführungen'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['wirtschaftsjahr', 'ba_nr'], name='uniq_wp_ruecklage_je_wj_ba',
+            ),
+        ]
+
+    def __str__(self):
+        return f"WP-Rücklage {self.ba_nr} / {self.wirtschaftsjahr}: {self.betrag} €"
+
+
 # ---------------------------------------------------------------------------
 # Auto-Pipeline — Protokoll (GoBD-Audit-Tabelle, A3)
 # ---------------------------------------------------------------------------

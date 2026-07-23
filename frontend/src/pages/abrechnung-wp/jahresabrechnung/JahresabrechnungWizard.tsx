@@ -422,13 +422,38 @@ function Schritt4Umlageschluessel({ jaId, readOnly, onWeiter, onZurueck, onFehle
     onError: err => onFehler(apiError(err)),
   })
 
+  const neuEinlesen = useMutation({
+    mutationFn: () => jahresabrechnungApi.umlageschluesselNeuEinlesen(jaId),
+    onSuccess: res => {
+      onFehler(null)
+      queryClient.invalidateQueries({ queryKey: ['ja-umlageschluessel', jaId] })
+      queryClient.invalidateQueries({ queryKey: ['ja-kostenstellen', jaId] })
+      window.alert(`VS neu eingelesen: ${res.zugeordnet} von ${res.konten_gesamt} Konten zugeordnet.`)
+    },
+    onError: err => onFehler(apiError(err)),
+  })
+
   if (isLoading) return <p className="text-sm text-gray-400">Lade...</p>
 
   return (
     <div className="space-y-4">
-      <h2 className="font-semibold text-gray-700">Schritt 4 — Umlageschlüssel je Konto</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="font-semibold text-gray-700">Schritt 4 — Umlageschlüssel je Konto</h2>
+        {!readOnly && (
+          <button
+            onClick={() => {
+              if (window.confirm('VS-Zuordnungen für dieses Wirtschaftsjahr neu aus dem Kontenrahmen laden? Manuelle Korrekturen werden dabei überschrieben.'))
+                neuEinlesen.mutate()
+            }}
+            className="px-3 py-1.5 border border-primary-300 text-primary-700 text-sm rounded hover:bg-primary-50"
+          >
+            ↻ VS neu einlesen
+          </button>
+        )}
+      </div>
       <p className="text-sm text-gray-500">
         Korrekturen gelten nur für das aktuelle Wirtschaftsjahr, nicht rückwirkend.
+        „VS neu einlesen" setzt die Zuordnung aller Konten auf den Kontenrahmen (Konto-Feld) zurück.
       </p>
       <table className="min-w-full text-sm">
         <thead className="bg-gray-50 border-b border-gray-200">
@@ -453,7 +478,7 @@ function Schritt4Umlageschluessel({ jaId, readOnly, onWeiter, onZurueck, onFehle
                     className="border border-gray-300 rounded px-2 py-1 text-sm"
                   >
                     {k.vs_code == null && <option value="">— kein VS —</option>}
-                    {VS_OPTIONEN.map(o => (
+                    {(data?.vs_optionen ?? VS_OPTIONEN).map(o => (
                       <option key={o.code} value={o.code}>{o.label}</option>
                     ))}
                   </select>
@@ -480,20 +505,31 @@ function Schritt4Umlageschluessel({ jaId, readOnly, onWeiter, onZurueck, onFehle
 function Schritt5Ruecklagen({ jaId, onWeiter, onZurueck }: {
   jaId: string; onWeiter: () => void; onZurueck: () => void
 }) {
+  const qc = useQueryClient()
   const { data, isLoading } = useQuery({
     queryKey: ['ja-ruecklagen', jaId],
     queryFn: () => jahresabrechnungApi.ruecklagen(jaId),
   })
+  const planMutation = useMutation({
+    mutationFn: ({ baNr, betrag }: { baNr: string; betrag: string | null }) =>
+      jahresabrechnungApi.ruecklagenPlanSpeichern(jaId, baNr, betrag),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['ja-ruecklagen', jaId] }),
+  })
 
   if (isLoading) return <p className="text-sm text-gray-400">Lade...</p>
+
+  const speichern = (baNr: string, raw: string) => {
+    const wert = raw.trim().replace(/\./g, '').replace(',', '.')
+    planMutation.mutate({ baNr, betrag: wert === '' ? null : wert })
+  }
 
   return (
     <div className="space-y-4">
       <h2 className="font-semibold text-gray-700">Schritt 5 — Rücklagen</h2>
-      {data?.blockiert && (
-        <div className="rounded-md bg-red-50 border border-red-300 p-3 text-sm text-red-700">
-          Abweichung zwischen berechnetem Endbestand und Bankauszug (&gt; 0,01 €) —
-          Klärungsfall, Weiterschalten gesperrt.
+      {(data?.klaerungsfaelle ?? 0) > 0 && (
+        <div className="rounded-md bg-amber-50 border border-amber-300 p-3 text-sm text-amber-800">
+          Hinweis: Bei {data!.klaerungsfaelle} Rücklage(n) weicht der berechnete Endbestand vom
+          Bankauszug ab (Klärungsfall). Dies sperrt den Wizard nicht.
         </div>
       )}
       {data?.ruecklagen.length === 0 && (
@@ -505,36 +541,43 @@ function Schritt5Ruecklagen({ jaId, onWeiter, onZurueck }: {
             <tr>
               <th className="px-3 py-2 text-left font-medium text-gray-600">Rücklage</th>
               <th className="px-3 py-2 text-right font-medium text-gray-600">Anfangsbestand</th>
-              <th className="px-3 py-2 text-right font-medium text-gray-600">Zuführungen</th>
+              <th className="px-3 py-2 text-right font-medium text-gray-600">Zuführung (Ist)</th>
+              <th className="px-3 py-2 text-right font-medium text-gray-600">Zuführung lt. Wirtschaftsplan</th>
               <th className="px-3 py-2 text-right font-medium text-gray-600">Entnahmen</th>
               <th className="px-3 py-2 text-right font-medium text-gray-600">Endbestand (ber.)</th>
-              <th className="px-3 py-2 text-right font-medium text-gray-600">Bankauszug</th>
-              <th className="px-3 py-2 text-right font-medium text-gray-600">Abweichung</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {data!.ruecklagen.map(r => (
-              <tr key={r.bankkonto_id} className={r.klaerungsfall ? 'bg-red-50' : ''}>
+              <tr key={r.bankkonto_id}>
                 <td className="px-3 py-2">{r.bezeichnung} <span className="text-xs text-gray-400">(BA {r.ba_nr})</span></td>
                 <td className="px-3 py-2 text-right">{fmt(r.anfangsbestand)} €</td>
                 <td className="px-3 py-2 text-right">{fmt(r.zufuehrungen)} €</td>
+                <td className="px-3 py-2 text-right">
+                  <input
+                    type="text"
+                    defaultValue={r.zufuehrung_plan ? fmt(r.zufuehrung_plan) : ''}
+                    placeholder="lt. Plan"
+                    onBlur={e => speichern(r.ba_nr, e.target.value)}
+                    className="w-28 text-right border border-gray-300 rounded px-2 py-1"
+                  />
+                </td>
                 <td className="px-3 py-2 text-right">{fmt(r.entnahmen)} €</td>
                 <td className="px-3 py-2 text-right">{fmt(r.endbestand_berechnet)} €</td>
-                <td className="px-3 py-2 text-right">{fmt(r.endbestand_bank)} €</td>
-                <td className={`px-3 py-2 text-right ${r.klaerungsfall ? 'text-red-600 font-semibold' : ''}`}>
-                  {fmt(r.abweichung)} €
-                </td>
               </tr>
             ))}
           </tbody>
         </table>
       )}
+      <p className="text-xs text-gray-500">
+        „Zuführung lt. Wirtschaftsplan" ist der fixe Objekt-Gesamtbetrag, der in der Abrechnung
+        ausgewiesen wird. Leer lassen = Summe der Sollstellungen verwenden.
+      </p>
       <div className="flex gap-2">
         <button onClick={onZurueck} className="px-4 py-2 border border-gray-300 text-sm rounded hover:bg-gray-50">← Zurück</button>
         <button
           onClick={onWeiter}
-          disabled={data?.blockiert}
-          className="px-4 py-2 bg-primary-600 text-white text-sm rounded hover:bg-primary-700 disabled:opacity-50"
+          className="px-4 py-2 bg-primary-600 text-white text-sm rounded hover:bg-primary-700"
         >
           Weiter →
         </button>

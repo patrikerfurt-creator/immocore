@@ -52,6 +52,9 @@ class VerteilerschluesselSerializer(serializers.ModelSerializer):
     werte = serializers.SerializerMethodField()
     summe = serializers.SerializerMethodField()
 
+    # Verbrauchs-VS: Werte liegen in EinheitVerbrauch, nicht in VerteilerschluesselWert
+    VERBRAUCH_CODES = ('140', '141', '142', '143', '144', '145')
+
     class Meta:
         model = Verteilerschluessel
         fields = '__all__'
@@ -60,14 +63,47 @@ class VerteilerschluesselSerializer(serializers.ModelSerializer):
     def _wj(self):
         return self.context.get('wirtschaftsjahr', 0)
 
+    def _verbrauch_wj(self, obj):
+        from .models import Wirtschaftsjahr
+        jahr = self._wj()
+        return Wirtschaftsjahr.objects.filter(objekt=obj.objekt, jahr=jahr).first() if jahr else None
+
     def get_werte(self, obj):
+        if obj.schluessel in self.VERBRAUCH_CODES:
+            from .models import EinheitVerbrauch
+            wj = self._verbrauch_wj(obj)
+            if wj is None:
+                return []
+            rows = (
+                EinheitVerbrauch.objects
+                .filter(wirtschaftsjahr=wj, einheit__objekt=obj.objekt, vs_code=obj.schluessel)
+                .select_related('einheit').order_by('einheit__einheit_nr')
+            )
+            return [{
+                'id': str(r.id),
+                'einheit': str(r.einheit_id),
+                'einheit_nr': r.einheit.einheit_nr,
+                'wert': str(r.wert) if r.wert is not None else None,
+                'beteiligt': True,
+                'wirtschaftsjahr': self._wj(),
+                'quelle': r.quelle,
+            } for r in rows]
         werte = obj.werte.filter(wirtschaftsjahr=self._wj())
         return VerteilerschluesselWertSerializer(werte, many=True).data
 
     def get_summe(self, obj):
         from django.db.models import Sum
-        result = obj.werte.filter(beteiligt=True, wirtschaftsjahr=self._wj()).aggregate(s=Sum('wert'))['s']
-        return result
+        if obj.schluessel in self.VERBRAUCH_CODES:
+            from .models import EinheitVerbrauch
+            wj = self._verbrauch_wj(obj)
+            if wj is None:
+                return None
+            return (
+                EinheitVerbrauch.objects
+                .filter(wirtschaftsjahr=wj, einheit__objekt=obj.objekt, vs_code=obj.schluessel)
+                .aggregate(s=Sum('wert'))['s']
+            )
+        return obj.werte.filter(beteiligt=True, wirtschaftsjahr=self._wj()).aggregate(s=Sum('wert'))['s']
 
 
 class ObjektListEingangSerializer(serializers.ModelSerializer):

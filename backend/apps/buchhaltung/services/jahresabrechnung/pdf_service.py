@@ -62,8 +62,14 @@ def render_einzelabrechnung_pdf(ea: EinzelAbrechnung, entwurf: bool = True) -> b
         return sum((_d(p.get(key)) for p in positions), Decimal('0'))
 
     # Objektweite Aggregate (für die "Gesamt"-Spalte der Summenzeilen)
+    from apps.buchhaltung.services.jahresabrechnung.ruecklagen_service import (
+        wirtschaftsplan_ruecklage_gesamt,
+    )
     geschwister = EinzelAbrechnung.objects.filter(jahresabrechnung=ja)
-    obj_reserve = geschwister.aggregate(s=Sum('ruecklagen_zufuehrung_gesamt'))['s'] or Decimal('0')
+    obj_reserve_ist = geschwister.aggregate(s=Sum('ruecklagen_zufuehrung_gesamt'))['s'] or Decimal('0')
+    # Objekt-Gesamt der Rücklagenzuführung = fixer Wirtschaftsplan-Wert, sonst Ist.
+    plan_reserve = wirtschaftsplan_ruecklage_gesamt(wj)
+    obj_reserve = plan_reserve if plan_reserve is not None else obj_reserve_ist
     obj_hg_soll = geschwister.aggregate(s=Sum('hausgeld_soll_gesamt'))['s'] or Decimal('0')
     obj_kosten = summe(uf, 'gesamtkosten') + summe(nuf, 'gesamtkosten')
 

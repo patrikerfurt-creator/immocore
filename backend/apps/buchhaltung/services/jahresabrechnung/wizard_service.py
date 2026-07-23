@@ -196,6 +196,28 @@ def korrigiere_umlageschluessel(ja: Jahresabrechnung, konto_id, vs_code: str) ->
     return zuordnung
 
 
+def vs_zuordnung_neu_einlesen(ja: Jahresabrechnung) -> dict:
+    """
+    Schritt 4: VS-Zuordnung je Konto neu aus dem Kontenrahmen einlesen.
+
+    Materialisiert die Umlageschlüssel-Zuordnung des Wirtschaftsjahres frisch
+    aus dem Feld ``Konto.verteilerschluessel`` (Kontenrahmen). Bestehende
+    WJ-Zuordnungen (KontoVerteilerSchluessel) werden dabei ersetzt — so werden
+    veraltete manuelle Zuordnungen auf den aktuellen Kontenrahmen zurückgesetzt.
+    """
+    if ja.status != 'entwurf':
+        raise ValidationError("VS neu einlesen ist nur im Status 'entwurf' möglich.")
+    wj = ja.wirtschaftsjahr
+    konten = list(Konto.objects.filter(wirtschaftsjahr=wj))
+    KontoVerteilerSchluessel.objects.filter(konto__in=konten).delete()
+    neue = [
+        KontoVerteilerSchluessel(konto=k, gueltig_ab=wj.beginn_datum, vs_code=k.verteilerschluessel)
+        for k in konten if k.verteilerschluessel
+    ]
+    KontoVerteilerSchluessel.objects.bulk_create(neue)
+    return {'konten_gesamt': len(konten), 'zugeordnet': len(neue)}
+
+
 # ---------------------------------------------------------------------------
 # Schritt 6 — manuelle Korrektur einer Einzelabrechnung
 # ---------------------------------------------------------------------------

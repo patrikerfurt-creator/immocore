@@ -1170,8 +1170,10 @@ class JahresabrechnungViewSet(viewsets.ModelViewSet):
 
         from apps.konten.models import Konto
         zeilen = []
+        # Standard- UND Summierungskonten (z.B. 50299 Heiz-/Wasserkosten) zeigen —
+        # Summierungskonten tragen den VS für die Verbrauchsverteilung.
         for konto in Konto.objects.filter(
-            wirtschaftsjahr=ja.wirtschaftsjahr, kontoart='standard', aktiv=True,
+            wirtschaftsjahr=ja.wirtschaftsjahr, kontoart__in=['standard', 'summierung'], aktiv=True,
         ).order_by('kontonummer'):
             try:
                 vs_code = verteilerschluessel_service.aktiver_vs_code(
@@ -1184,7 +1186,25 @@ class JahresabrechnungViewSet(viewsets.ModelViewSet):
                 'kontoname': konto.kontoname,
                 'vs_code': vs_code,
             })
-        return Response({'konten': zeilen})
+        from apps.objekte.models import Verteilerschluessel
+        vs_optionen = [
+            {'code': v.schluessel, 'label': f"{v.schluessel} — {v.bezeichnung}"}
+            for v in Verteilerschluessel.objects.filter(objekt=ja.objekt, aktiv=True)
+            .exclude(schluessel='').order_by('schluessel')
+        ]
+        return Response({'konten': zeilen, 'vs_optionen': vs_optionen})
+
+    @action(detail=True, methods=['post'], url_path='umlageschluessel-neu-einlesen')
+    def umlageschluessel_neu_einlesen(self, request, pk=None):
+        """Schritt 4: VS-Zuordnung je Konto neu aus dem Kontenrahmen einlesen."""
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from .services.jahresabrechnung import wizard_service
+        ja = self.get_object()
+        try:
+            res = wizard_service.vs_zuordnung_neu_einlesen(ja)
+        except DjangoValidationError as exc:
+            return Response({'error': exc.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(res)
 
     # -- Schritt 5: Rücklagen ---------------------------------------------------
 
@@ -1197,10 +1217,39 @@ class JahresabrechnungViewSet(viewsets.ModelViewSet):
             for feld in ('anfangsbestand', 'zufuehrungen', 'entnahmen',
                          'endbestand_berechnet', 'endbestand_bank', 'abweichung'):
                 r[feld] = str(r[feld])
+            r['zufuehrung_plan'] = None if r['zufuehrung_plan'] is None else str(r['zufuehrung_plan'])
         return Response({
             'ruecklagen': rows,
-            'blockiert': any(r['klaerungsfall'] for r in rows),
+            # Schritt 5 sperrt NICHT mehr: Rücklagen-Abweichungen zum Bankauszug
+            # sind nur ein Hinweis (Klärungsfall), kein Blocker für Wizard/Freigabe.
+            'blockiert': False,
+            'klaerungsfaelle': sum(1 for r in rows if r['klaerungsfall']),
         })
+
+    @action(detail=True, methods=['patch'], url_path='ruecklagen-plan')
+    def ruecklagen_plan(self, request, pk=None):
+        """Setzt/löscht den fixen Wirtschaftsplan-Wert der Rücklagenzuführung
+        je Rücklagen-BA (Schritt 5). Leerer Betrag → Planwert entfernen."""
+        from decimal import Decimal, InvalidOperation
+        from apps.buchhaltung.models import WirtschaftsplanRuecklage
+        ja = self.get_object()
+        ba_nr = (request.data.get('ba_nr') or '').strip()
+        if not ba_nr:
+            return Response({'error': 'ba_nr erforderlich'}, status=status.HTTP_400_BAD_REQUEST)
+        betrag = request.data.get('betrag')
+        if betrag in (None, ''):
+            WirtschaftsplanRuecklage.objects.filter(
+                wirtschaftsjahr=ja.wirtschaftsjahr, ba_nr=ba_nr).delete()
+            return Response({'ok': True, 'ba_nr': ba_nr, 'betrag': None})
+        try:
+            wert = Decimal(str(betrag))
+        except (InvalidOperation, ValueError):
+            return Response({'error': 'Ungültiger Betrag.'}, status=status.HTTP_400_BAD_REQUEST)
+        WirtschaftsplanRuecklage.objects.update_or_create(
+            wirtschaftsjahr=ja.wirtschaftsjahr, ba_nr=ba_nr,
+            defaults={'betrag': wert, 'erfasst_von': request.user},
+        )
+        return Response({'ok': True, 'ba_nr': ba_nr, 'betrag': str(wert)})
 
     # -- Schritt 6: Einzelabrechnungen -------------------------------------------
 
@@ -1282,13 +1331,8 @@ class JahresabrechnungViewSet(viewsets.ModelViewSet):
                 {'error': 'Offene Kreditoren-OPs vorhanden — Freigabe gesperrt (Schritt 2).'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        from .services.jahresabrechnung import ruecklagen_service
-        blocker = ruecklagen_service.pruefe_schritt5_blocker(ja.objekt, ja.wirtschaftsjahr)
-        if blocker:
-            return Response(
-                {'error': 'Rücklagen-Abweichung zum Bankauszug — Freigabe gesperrt (Schritt 5).'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        # Schritt 5 (Rücklagen-Abweichung zum Bankauszug) sperrt die Freigabe
+        # NICHT mehr — Abweichungen sind nur ein Hinweis, kein Blocker.
         try:
             ja = freigabe_service.freigebe_jahresabrechnung(ja, request.user)
         except DjangoValidationError as exc:

@@ -41,6 +41,7 @@ from apps.personen.models import EigentumsVerhaeltnis
 from .kostenstellen_service import kostenstellen_uebersicht
 from .ruecklagen_service import ruecklagen_uebersicht
 from .verteilerschluessel_service import (
+    VERBRAUCH_VS_CODES,
     VerteilerschluesselFehler,
     aktiver_vs_code,
     alle_werte_und_gesamt,
@@ -198,7 +199,12 @@ def _kostenverteilung(objekt, wj, einheiten) -> list:
         eintrag['anteile'] = {
             eid: (Decimal(w) / Decimal(gesamt)) for eid, w in werte.items()
         }
-        eintrag['betraege'] = _apportioniere(ist, eintrag['anteile'])
+        if vs_code in VERBRAUCH_VS_CODES:
+            # Verbrauchs-VS (Techem): der Wert je Einheit ist ein FESTER Betrag
+            # (kein anteiliges Verteilen des Sammelkonto-Ist).
+            eintrag['betraege'] = {eid: Decimal(w) for eid, w in werte.items()}
+        else:
+            eintrag['betraege'] = _apportioniere(ist, eintrag['anteile'])
         positionen.append(eintrag)
     return positionen
 

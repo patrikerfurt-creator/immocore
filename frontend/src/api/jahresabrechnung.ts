@@ -48,6 +48,11 @@ export interface UmlageschluesselZeile {
   vs_code: string | null
 }
 
+export interface UmlageschluesselResponse {
+  konten: UmlageschluesselZeile[]
+  vs_optionen: { code: string; label: string }[]
+}
+
 export interface Ruecklage {
   bankkonto_id: string
   bezeichnung: string
@@ -59,6 +64,7 @@ export interface Ruecklage {
   endbestand_bank: string
   abweichung: string
   klaerungsfall: boolean
+  zufuehrung_plan: string | null
 }
 
 export interface EinzelAbrechnungPosition {
@@ -122,16 +128,27 @@ export const jahresabrechnungApi = {
     client.get<KostenstellenResponse>(`${BASE}/${id}/kostenstellen/`).then(r => r.data),
 
   umlageschluessel: (id: string) =>
-    client.get<{ konten: UmlageschluesselZeile[] }>(`${BASE}/${id}/umlageschluessel/`).then(r => r.data),
+    client.get<UmlageschluesselResponse>(`${BASE}/${id}/umlageschluessel/`).then(r => r.data),
 
   umlageschluesselKorrigieren: (id: string, kontoId: string, vsCode: string) =>
-    client.patch<{ konten: UmlageschluesselZeile[] }>(`${BASE}/${id}/umlageschluessel/`, {
+    client.patch<UmlageschluesselResponse>(`${BASE}/${id}/umlageschluessel/`, {
       konto_id: kontoId,
       vs_code: vsCode,
     }).then(r => r.data),
 
+  // VS-Zuordnung je Konto neu aus dem Kontenrahmen einlesen (Schritt 4)
+  umlageschluesselNeuEinlesen: (id: string) =>
+    client.post<{ konten_gesamt: number; zugeordnet: number }>(
+      `${BASE}/${id}/umlageschluessel-neu-einlesen/`).then(r => r.data),
+
   ruecklagen: (id: string) =>
-    client.get<{ ruecklagen: Ruecklage[]; blockiert: boolean }>(`${BASE}/${id}/ruecklagen/`).then(r => r.data),
+    client.get<{ ruecklagen: Ruecklage[]; blockiert: boolean; klaerungsfaelle: number }>(
+      `${BASE}/${id}/ruecklagen/`).then(r => r.data),
+
+  // Fixer Wirtschaftsplan-Wert der Rücklagenzuführung je BA (leer = löschen)
+  ruecklagenPlanSpeichern: (id: string, baNr: string, betrag: string | null) =>
+    client.patch<{ ok: boolean; ba_nr: string; betrag: string | null }>(
+      `${BASE}/${id}/ruecklagen-plan/`, { ba_nr: baNr, betrag }).then(r => r.data),
 
   einzelabrechnungenBerechnen: (id: string) =>
     client.post<EinzelAbrechnung[]>(`${BASE}/${id}/einzelabrechnungen/berechnen/`).then(r => r.data),
