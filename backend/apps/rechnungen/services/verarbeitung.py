@@ -188,14 +188,14 @@ def _vorschlage_konto_ki(leistungsbeschreibung: str, objekt):
         client = anthropic.Anthropic(api_key=getattr(settings, 'ANTHROPIC_API_KEY', ''))
         response = client.messages.create(
             model=getattr(settings, 'ANTHROPIC_MODEL', 'claude-sonnet-4-6'),
-            max_tokens=20,
+            max_tokens=1500,  # claude-sonnet-5 denkt zuerst — Budget für Thinking + kurze Antwort
             messages=[{'role': 'user', 'content':
                 f"Welches Buchungskonto (nur Kontonummer) passt zur Leistung: "
                 f"'{leistungsbeschreibung[:400]}'\n\nKontenplan:\n{konten_text[:2000]}\n\n"
                 f"Antworte NUR mit der Kontonummer, sonst nichts."
             }]
         )
-        nr = response.content[0].text.strip()
+        nr = next((b.text for b in response.content if getattr(b, 'type', None) == 'text'), '').strip()
         return next((k for k in konten if k.kontonummer == nr), None)
     except Exception:
         return None

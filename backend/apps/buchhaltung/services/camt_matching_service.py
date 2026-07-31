@@ -214,7 +214,11 @@ def erkenne_dbit(umsatz) -> dict | None:
 
 
 def _ermittle_bank_sachkonto(umsatz):
-    """Ermittelt das passende Sachkonto (18xxx) für den Bankabgang."""
+    """
+    Ermittelt das passende Sachkonto (18xxx) für den Bankabgang —
+    strikt im Wirtschaftsjahr des Umsatzdatums (Bankumsätze werden immer
+    am Datum aus der camt-Datei gebucht, nie in einem anderen WJ).
+    """
     from apps.konten.models import Konto
 
     if umsatz.objekt is None:
@@ -226,12 +230,18 @@ def _ermittle_bank_sachkonto(umsatz):
     else:
         kontonummern = ['18000', '18911']
 
+    buchungs_jahr = umsatz.buchungsdatum.year if umsatz.buchungsdatum else None
+
     for knr in kontonummern:
-        konto = Konto.objects.filter(
+        qs = Konto.objects.filter(
             wirtschaftsjahr__objekt=umsatz.objekt,
             kontonummer=knr,
             aktiv=True,
-        ).order_by('-wirtschaftsjahr__jahr').first()
+        )
+        if buchungs_jahr:
+            konto = qs.filter(wirtschaftsjahr__jahr=buchungs_jahr).first()
+        else:
+            konto = qs.order_by('-wirtschaftsjahr__jahr').first()
         if konto:
             return konto
 

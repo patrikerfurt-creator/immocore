@@ -317,10 +317,10 @@ class RechnungViewSet(viewsets.ModelViewSet):
         })
 
     # Stufe 1 („Rechnungsprüfung", Spec v1.1 Kap. 5.1): frisch eingegangene
-    # (inkl. Duplikat-Verdacht) + in Buchhaltungsprüfung befindliche Rechnungen.
-    # 'erfasst' bleibt als Übergangs-/Legacy-Status sichtbar (Cleanup Phase D).
-    INBOX_EINGANG_STATUS = ('importiert', 'erkannt', 'pruefung_match', 'nicht_erkannt', 'duplikat')
-    INBOX_STATUS = INBOX_EINGANG_STATUS + ('in_buchhaltung', 'erfasst')
+    # (inkl. Duplikat-Verdacht + OCR-Prüffälle) + in Buchhaltungsprüfung
+    # befindliche Rechnungen. Legacy-Status 'erfasst' wurde bereinigt (→ in_buchhaltung).
+    INBOX_EINGANG_STATUS = ('importiert', 'erkannt', 'pruefung_match', 'nicht_erkannt', 'duplikat', 'prueffall')
+    INBOX_STATUS = INBOX_EINGANG_STATUS + ('in_buchhaltung',)
 
     def _inbox_sichtbar(self, user, qs):
         """Sichtbarkeit Stufe-1-Inbox (Umbau v1.1, E1):
@@ -353,11 +353,13 @@ class RechnungViewSet(viewsets.ModelViewSet):
         Buchhaltung prüft die automatische KI-Erfassung. Sichtbarkeit nach
         Objekt-Zuordnung (E1, siehe _inbox_sichtbar)."""
         qs = self._inbox_sichtbar(request.user, self.get_queryset().filter(status__in=self.INBOX_STATUS))
+        from django.db.models import Q
         f = request.query_params.get('filter')     # 'erkannt' | 'prueffall' | 'alle'
         if f == 'erkannt':
             qs = qs.filter(erkennungs_stufe='1')
         elif f == 'prueffall':
-            qs = qs.filter(erkennungs_stufe__in=['2', '3'])
+            # Stufe-2/3-Fälle ODER OCR-unvollständige (Status prueffall, ohne Stufe)
+            qs = qs.filter(Q(erkennungs_stufe__in=['2', '3']) | Q(status='prueffall'))
         data = RechnungListSerializer(qs, many=True, context={'request': request}).data
         return Response(data)
 

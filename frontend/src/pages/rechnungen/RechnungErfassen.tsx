@@ -150,13 +150,29 @@ export default function RechnungErfassen() {
 
   const feldAmpel = (feld: keyof FormState) => {
     const key = FELD_AMPEL[feld]
-    return key && ampel?.felder?.[key] ? ampel.felder[key] : null
+    const fa = key && ampel?.felder?.[key] ? ampel.felder[key] : null
+    if (!fa) return null
+    // Fix 2: rotes Kernfeld mit manuell eingetragenem Wert → gelb "geprüft"
+    const wert = String((form as unknown as Record<string, unknown>)[feld] ?? '').trim()
+    if (fa.ampel === 'rot' && wert !== ''
+        && ['kreditor_id', 'betrag_brutto', 'rechnungsnummer'].includes(feld as string)) {
+      return { ...fa, ampel: 'gelb' as const, hinweis: 'Manuell nachgetragen — geprüft' }
+    }
+    return fa
   }
 
-  const kritischRot = useMemo(
-    () => !!ampel && Object.entries(ampel.felder).some(
-      ([n, f]) => f.ampel === 'rot' && ['kreditor', 'betrag_brutto', 'rechnungsnummer'].includes(n)),
-    [ampel])
+  // Ein rotes Kernfeld blockiert die Freigabe nur, solange der Buchhalter es
+  // NICHT ausgefüllt hat. Manuell nachgetragene Werte gelten als geprüft.
+  const kritischRot = useMemo(() => {
+    const formFeld: Record<string, string> = {
+      kreditor: 'kreditor_id', betrag_brutto: 'betrag_brutto', rechnungsnummer: 'rechnungsnummer',
+    }
+    return !!ampel && Object.entries(ampel.felder).some(([n, f]) => {
+      if (f.ampel !== 'rot' || !(n in formFeld)) return false
+      const wert = String((form as unknown as Record<string, unknown>)[formFeld[n]] ?? '').trim()
+      return wert === ''
+    })
+  }, [ampel, form])
   const hatGelb = useMemo(
     () => !!ampel && Object.values(ampel.felder).some(f => f.ampel === 'gelb'), [ampel])
 

@@ -49,9 +49,10 @@ def verwendungszweck_hash(text: str) -> str:
 
 def _ermittle_bank_sachkonto(ku):
     """
-    Findet das Sachkonto 18xxx für den Bankabgang/-eingang.
-    Wählt das Konto aus dem Wirtschaftsjahr das zum Buchungsdatum passt.
-    Fallback: neuestes aktives Wirtschaftsjahr.
+    Findet das Sachkonto 18xxx des Bankkontos, zu dem der Umsatz gehört —
+    strikt im Wirtschaftsjahr des Umsatzdatums. Bankumsätze werden immer am
+    Datum aus der camt-Datei gebucht, nie in einem anderen WJ. Fehlt das
+    Konto im Umsatz-WJ → None (Umsatz bleibt zur manuellen Bearbeitung).
     """
     from apps.konten.models import Konto
 
@@ -73,9 +74,8 @@ def _ermittle_bank_sachkonto(ku):
         )
         if buchungs_jahr:
             konto = qs.filter(wirtschaftsjahr__jahr=buchungs_jahr).first()
-            if konto:
-                return konto
-        konto = qs.order_by('-wirtschaftsjahr__jahr').first()
+        else:
+            konto = qs.order_by('-wirtschaftsjahr__jahr').first()
         if konto:
             return konto
     return None
@@ -83,39 +83,28 @@ def _ermittle_bank_sachkonto(ku):
 
 def _ermittle_wirtschaftsjahr(ku):
     """
-    Gibt das Wirtschaftsjahr zurück das zum Buchungsdatum passt.
-    Fallback: neuestes offenes, dann neuestes beliebiges Wirtschaftsjahr.
+    Gibt das Wirtschaftsjahr zum Umsatzdatum zurück — strikt, kein Fallback
+    in ein anderes Jahr. Fehlt das WJ → None (Auto-Verbuchung überspringen).
     """
     from apps.objekte.models import Wirtschaftsjahr
 
-    if ku.objekt is None:
+    if ku.objekt is None or not ku.buchungsdatum:
         return None
 
-    if ku.buchungsdatum:
-        wj = Wirtschaftsjahr.objects.filter(
-            objekt=ku.objekt, jahr=ku.buchungsdatum.year,
-        ).first()
-        if wj:
-            return wj
-
-    return (
-        Wirtschaftsjahr.objects.filter(objekt=ku.objekt, status='offen')
-        .order_by('-jahr')
-        .first()
-        or Wirtschaftsjahr.objects.filter(objekt=ku.objekt)
-        .order_by('-jahr')
-        .first()
-    )
+    return Wirtschaftsjahr.objects.filter(
+        objekt=ku.objekt, jahr=ku.buchungsdatum.year,
+    ).first()
 
 
 def _ermittle_konto(objekt, kontonummer, buchungsdatum=None):
-    """Findet ein Sachkonto im WJ passend zum Buchungsdatum, Fallback: neuestes."""
+    """
+    Findet ein Sachkonto — strikt im WJ des Buchungsdatums (kein Fallback in
+    ein anderes Jahr). Ohne Datum: neuestes WJ.
+    """
     from apps.konten.models import Konto
     qs = Konto.objects.filter(wirtschaftsjahr__objekt=objekt, kontonummer=kontonummer, aktiv=True)
     if buchungsdatum:
-        k = qs.filter(wirtschaftsjahr__jahr=buchungsdatum.year).first()
-        if k:
-            return k
+        return qs.filter(wirtschaftsjahr__jahr=buchungsdatum.year).first()
     return qs.order_by('-wirtschaftsjahr__jahr').first()
 
 
@@ -137,9 +126,8 @@ def _finde_kreditorkonto(kreditor_rechnungen, objekt, buchungsdatum=None):
         aktiv=True,
     )
     if buchungsdatum:
-        konto = qs.filter(wirtschaftsjahr__jahr=buchungsdatum.year).first()
-        if konto:
-            return konto
+        # strikt im WJ des Buchungsdatums — kein Fallback in ein anderes Jahr
+        return qs.filter(wirtschaftsjahr__jahr=buchungsdatum.year).first()
     return qs.order_by('-wirtschaftsjahr__jahr').first()
 
 
@@ -194,7 +182,10 @@ def versuche_e2e_tilgung(ku):
     if not bank_sachkonto:
         return None
 
-    wj = _ermittle_wirtschaftsjahr(ku)
+    try:
+        wj = _ermittle_wirtschaftsjahr(ku)
+    except Exception:
+        wj = None  # kein WJ zum Umsatzjahr -> Auto-Verbuchung ueberspringen
     if not wj:
         return None
 
@@ -306,7 +297,10 @@ def versuche_iban_ev_tilgung(ku):
     if not bank_sachkonto:
         return None
 
-    wj = _ermittle_wirtschaftsjahr(ku)
+    try:
+        wj = _ermittle_wirtschaftsjahr(ku)
+    except Exception:
+        wj = None  # kein WJ zum Umsatzjahr -> Auto-Verbuchung ueberspringen
     if not wj:
         return None
 
@@ -604,11 +598,21 @@ def fuehre_erkennung_aus(ku):
     try:
         ki = _ki_vorschlag(ku)
         if ki and ki.get('konfidenz_decimal', Decimal('0')) >= Decimal('0.50'):
+            ki_gegenkonto = ki.get('gegenkonto')
+            ki_begruendung = ki.get('begruendung', '')
+            # Regel: Eingänge dürfen nur bei Lastschrift gegen 13650 gebucht werden.
+            # Eine Überweisung/Gutschrift gehört direkt aufs Personenkonto (Debitor-Weg).
+            # Ein KI-Vorschlag auf 13650 bei einem Eingang wird daher verworfen.
+            if (ku.betrag or 0) > 0 and ki_gegenkonto is not None and ki_gegenkonto.kontonummer == '13650':
+                ki_gegenkonto = None
+                ki_begruendung = (
+                    (ki_begruendung + ' — ') if ki_begruendung else ''
+                ) + 'Regel: Eingang direkt aufs Personenkonto buchen (Debitor); 13650 nur bei Lastschrift.'
             ku.status                 = 'vorschlag'
-            ku.erkannt_gegenkonto     = ki.get('gegenkonto')
+            ku.erkannt_gegenkonto     = ki_gegenkonto
             ku.erkennungs_quelle      = 'ki'
             ku.erkennungs_konfidenz   = min(ki['konfidenz_decimal'], Decimal('0.85'))
-            ku.erkennungs_begruendung = ki.get('begruendung', '')
+            ku.erkennungs_begruendung = ki_begruendung
             log.stufe_erreicht  = '4'
             log.quelle          = 'ki'
             log.konfidenz       = ku.erkennungs_konfidenz
@@ -696,10 +700,10 @@ Antworte NUR mit JSON (kein Markdown):
         client = anthropic.Anthropic(api_key=api_key)
         model = getattr(settings, 'ANTHROPIC_MODEL', 'claude-haiku-4-5-20251001')
         msg = client.messages.create(
-            model=model, max_tokens=256,
+            model=model, max_tokens=4000,  # claude-sonnet-5 denkt zuerst — Budget für Thinking + JSON
             messages=[{'role': 'user', 'content': prompt}],
         )
-        raw = msg.content[0].text.strip()
+        raw = next((b.text for b in msg.content if getattr(b, 'type', None) == 'text'), '').strip()
         ki_result = json.loads(raw)
     except Exception as exc:
         logger.warning("KI-Vorschlag Fehler: %s", exc)

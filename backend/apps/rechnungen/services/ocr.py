@@ -85,7 +85,7 @@ def ki_ocr_rechnung(rechnung) -> dict:
 
     message = client.messages.create(
         model=model,
-        max_tokens=1500,
+        max_tokens=4000,  # claude-sonnet-5 denkt zuerst — Budget für Thinking + JSON
         messages=[{
             "role": "user",
             "content": [
@@ -97,9 +97,10 @@ def ki_ocr_rechnung(rechnung) -> dict:
     )
 
     try:
-        parsed = _parse_json(message.content[0].text)
+        _msg_text = next((b.text for b in message.content if getattr(b, 'type', None) == 'text'), '')
+        parsed = _parse_json(_msg_text)
     except (json.JSONDecodeError, IndexError):
-        logger.error("Claude API lieferte kein gültiges JSON: %s", message.content[0].text)
+        logger.error("Claude API lieferte kein gültiges JSON: %s", _msg_text)
         raise RuntimeError("Claude API lieferte kein gültiges JSON")
 
     felder = parsed.get("felder", parsed)

@@ -54,15 +54,21 @@ def _naechste_op_nummer() -> int:
     return (last + 1) if last else (basis + 1)
 
 
-def get_or_create_kreditor_konto(kreditor, objekt) -> Konto:
-    """Liefert das Sachkonto (70xxx) für diesen Kreditor im Objekt, legt es bei Bedarf an."""
+def get_or_create_kreditor_konto(kreditor, objekt, jahr=None) -> Konto:
+    """Liefert das Sachkonto (70xxx) für diesen Kreditor im Objekt, legt es bei Bedarf an.
+    jahr (optional): Wirtschaftsjahr, in dem das Kreditorkonto liegen soll (Option 2:
+    Buchungsjahr statt 'neuestes offenes WJ')."""
     if not kreditor.kreditorennummer:
         raise ValidationError(f"Kreditor '{kreditor.name}' hat noch keine Kreditorennummer.")
     from apps.objekte.models import Wirtschaftsjahr
-    wj = (
-        Wirtschaftsjahr.objects.filter(objekt=objekt, status='offen').order_by('-jahr').first()
-        or Wirtschaftsjahr.objects.filter(objekt=objekt).order_by('-jahr').first()
-    )
+    wj = None
+    if jahr:
+        wj = Wirtschaftsjahr.objects.filter(objekt=objekt, jahr=jahr).first()
+    if wj is None:
+        wj = (
+            Wirtschaftsjahr.objects.filter(objekt=objekt, status='offen').order_by('-jahr').first()
+            or Wirtschaftsjahr.objects.filter(objekt=objekt).order_by('-jahr').first()
+        )
     if wj is None:
         raise ValidationError(f"Kein Wirtschaftsjahr für Objekt '{objekt}' vorhanden.")
     konto, _ = Konto.objects.get_or_create(
@@ -134,7 +140,10 @@ def rechnung_freigeben(rechnung, aufwandskonto: Konto, freigegeben_von=None, buc
     elif not hat_splits:
         raise ValidationError("Kein Aufwandskonto gesetzt und keine Split-Positionen vorhanden – Freigabe nicht möglich.")
 
-    heute = buchungsdatum or date.today()
+    # Option 2 (Sandbox): Freigabe/OP-Buchung trägt das Belegdatum der Rechnung
+    # (Rechnungsdatum) statt "heute" — damit die Verbindlichkeit im richtigen
+    # Wirtschaftsjahr landet (Jahresdurchlauf mit 2026er-Systemuhr).
+    heute = buchungsdatum or rechnung.rechnungsdatum or date.today()
 
     konto_15900 = (
         Konto.objects.select_related('wirtschaftsjahr').filter(
@@ -152,7 +161,7 @@ def rechnung_freigeben(rechnung, aufwandskonto: Konto, freigegeben_von=None, buc
             f"Konto {KONTO_SCHWEBENDE_ER} (Schwebende ER) ist im Objekt nicht angelegt."
         )
 
-    kreditor_konto = get_or_create_kreditor_konto(rechnung.kreditor, rechnung.objekt)
+    kreditor_konto = get_or_create_kreditor_konto(rechnung.kreditor, rechnung.objekt, jahr=heute.year)
 
     kreditor_str = rechnung.kreditor.name
     wj = konto_15900.wirtschaftsjahr

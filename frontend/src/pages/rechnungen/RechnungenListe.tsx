@@ -395,11 +395,14 @@ function DetailModal({ rechnung, onClose }: { rechnung: RechnungList; onClose: (
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['rechnungen'] }); onClose() },
   })
 
-  const kannFreigeben = ['importiert', 'prueffall', 'in_pruefung', 'erfasst'].includes(rechnung.status)
-  const kannAblehnen = !['bezahlt', 'abgelehnt'].includes(rechnung.status)
-  const kannAlsNeu = ['prueffall', 'duplikat'].includes(rechnung.status)
-  const kannSachkonto = !['bezahlt', 'abgelehnt', 'fehler'].includes(rechnung.status)
-  const kannBankabgang = rechnung.status === 'bezahlt'
+  // "Rechnungen"-Liste ist nur-lesend — der Workflow läuft über die Menüpunkte
+  // Rechnungseingang (Stufe 1) und Rechnungsfreigabe (Stufe 2).
+  const NUR_ANSICHT = true
+  const kannFreigeben = !NUR_ANSICHT && ['importiert', 'prueffall', 'in_pruefung', 'erfasst'].includes(rechnung.status)
+  const kannAblehnen = !NUR_ANSICHT && !['bezahlt', 'abgelehnt'].includes(rechnung.status)
+  const kannAlsNeu = !NUR_ANSICHT && ['prueffall', 'duplikat'].includes(rechnung.status)
+  const kannSachkonto = !NUR_ANSICHT && !['bezahlt', 'abgelehnt', 'fehler'].includes(rechnung.status)
+  const kannBankabgang = !NUR_ANSICHT && rechnung.status === 'bezahlt'
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -425,8 +428,8 @@ function DetailModal({ rechnung, onClose }: { rechnung: RechnungList; onClose: (
 
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
 
-          {/* ── Editierbare Rechnungsfelder ── */}
-          <div className="space-y-2 text-sm">
+          {/* ── Rechnungsfelder (in "Rechnungen" nur Ansicht, disabled) ── */}
+          <fieldset disabled={NUR_ANSICHT} className="space-y-2 text-sm border-0 p-0 m-0 min-w-0">
             <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-2">
               Rechnungsdetails
               {korrDirty && <span className="text-orange-500 font-normal normal-case">● ungespeichert</span>}
@@ -519,7 +522,7 @@ function DetailModal({ rechnung, onClose }: { rechnung: RechnungList; onClose: (
                 {mutKorrektur.isError   && <span className="text-red-600 text-xs">Fehler beim Speichern</span>}
               </div>
             )}
-          </div>
+          </fieldset>
 
           <div className="flex items-center gap-6 px-1">
             <SepaToggle rechnung={rechnung} />
@@ -553,7 +556,8 @@ function DetailModal({ rechnung, onClose }: { rechnung: RechnungList; onClose: (
             </button>
           )}
 
-          {/* WKZ-Button */}
+          {/* WKZ-Button (nur außerhalb der reinen Ansicht) */}
+          {!NUR_ANSICHT && (
           <div className="border rounded-lg px-4 py-3 bg-gray-50">
             <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
               Wiederkehrende Zahlung
@@ -569,6 +573,7 @@ function DetailModal({ rechnung, onClose }: { rechnung: RechnungList; onClose: (
                 : '↻ Zusätzlich WKZ aus diesem Beleg anlegen'}
             </Button>
           </div>
+          )}
 
           {kannSachkonto && (
             <SachkontoForm

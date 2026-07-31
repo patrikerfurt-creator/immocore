@@ -58,8 +58,15 @@ function DetailSlideOver({
   const istZugang      = Number(buchung.betrag) > 0
   const kannBearbeiten = !['verbucht', 'storniert'].includes(buchung.status)
   const kannStornieren = buchung.status === 'verbucht'
+  // Regel: Eingänge nur bei Lastschrift gegen 13650. Sonst direkt aufs Personenkonto (Debitor).
+  const istLastschriftEingang = istZugang && buchung.erkennungs_quelle === 'sammellastschrift'
+  const gegenkontoIst13650    = buchung.erkannt_gegenkonto_detail?.kontonummer === '13650'
+  const zeigeErkanntesGegenkonto = !!buchung.erkannt_gegenkonto_detail
+    && !(istZugang && gegenkontoIst13650 && !istLastschriftEingang)
 
-  const [buchungsTyp,   setBuchungsTyp]   = useState<BuchungsTyp>(istZugang ? 'debitor' : 'sachkonto')
+  const [buchungsTyp,   setBuchungsTyp]   = useState<BuchungsTyp>(
+    istLastschriftEingang ? 'sachkonto' : istZugang ? 'debitor' : 'sachkonto'
+  )
   const [gegenkontoId,  setGegenkontoId]  = useState(buchung.erkannt_gegenkonto ?? '')
   const [selectedPKId,  setSelectedPKId]  = useState('')
   const [kreditorOPId,  setKreditorOPId]  = useState('')
@@ -226,12 +233,12 @@ function DetailSlideOver({
             </section>
           )}
 
-          {/* Erkanntes Gegenkonto (read-only) */}
-          {buchung.erkannt_gegenkonto_detail && (
+          {/* Erkanntes Gegenkonto (read-only) — bei Eingängen 13650 nur für Lastschriften zeigen */}
+          {zeigeErkanntesGegenkonto && (
             <section>
               <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Erkanntes Gegenkonto</h3>
               <div className="text-sm bg-gray-50 rounded-lg p-3">
-                {buchung.erkannt_gegenkonto_detail.kontonummer} — {buchung.erkannt_gegenkonto_detail.kontoname}
+                {buchung.erkannt_gegenkonto_detail?.kontonummer} — {buchung.erkannt_gegenkonto_detail?.kontoname}
               </div>
             </section>
           )}

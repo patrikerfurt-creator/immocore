@@ -245,7 +245,7 @@ Antworte NUR mit einem JSON-Objekt (kein Markdown) in diesem Format:
             max_tokens=512,
             messages=[{'role': 'user', 'content': prompt}]
         )
-        raw = message.content[0].text.strip()
+        raw = next((b.text for b in message.content if getattr(b, 'type', None) == 'text'), '').strip()
         ki_result = json.loads(raw)
     except json.JSONDecodeError:
         logger.error("Claude API lieferte kein gültiges JSON: %s", raw)

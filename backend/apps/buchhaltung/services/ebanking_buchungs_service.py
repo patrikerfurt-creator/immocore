@@ -32,28 +32,42 @@ def _buchungstext(ku, gk, ev, kr) -> str:
     return ' — '.join(p for p in parts if p) or 'Banktransaktion'
 
 
-def _ermittle_wirtschaftsjahr_fuer_datum(objekt, datum):
-    """Gibt das Wirtschaftsjahr zurück das zum angegebenen Datum passt (nach Jahr)."""
+def _ermittle_wirtschaftsjahr_fuer_datum(objekt, datum, strikt=False):
+    """
+    Gibt das Wirtschaftsjahr zurück das zum angegebenen Datum passt (nach Jahr).
+
+    strikt=True (camt-Verbuchung): NUR das WJ des Datums — Bankumsätze werden
+    immer am Datum aus der Datei gebucht und dürfen nie in einem anderen
+    Wirtschaftsjahr landen. Fehlt das WJ → ValidationError.
+    strikt=False (z.B. Storno zum Tagesdatum): Fallback auf offenes/neuestes WJ.
+    """
     from apps.objekte.models import Wirtschaftsjahr
     if not objekt or not datum:
         return None
-    return (
-        Wirtschaftsjahr.objects.filter(objekt=objekt, jahr=datum.year).first()
-        or Wirtschaftsjahr.objects.filter(objekt=objekt, status='offen').order_by('-jahr').first()
-        or Wirtschaftsjahr.objects.filter(objekt=objekt).order_by('-jahr').first()
+    wj = Wirtschaftsjahr.objects.filter(objekt=objekt, jahr=datum.year).first()
+    if wj or strikt is False:
+        return wj or (
+            Wirtschaftsjahr.objects.filter(objekt=objekt, status='offen').order_by('-jahr').first()
+            or Wirtschaftsjahr.objects.filter(objekt=objekt).order_by('-jahr').first()
+        )
+    raise ValidationError(
+        f"Kein Wirtschaftsjahr {datum.year} für Objekt {objekt} vorhanden — "
+        f"Bankumsatz vom {datum} kann nicht in ein anderes WJ gebucht werden."
     )
 
 
 def _ermittle_wirtschaftsjahr(ku):
-    """Gibt das passende Wirtschaftsjahr-Objekt für Buchungsdatum + Objekt zurück."""
-    return _ermittle_wirtschaftsjahr_fuer_datum(ku.objekt, ku.buchungsdatum) if ku.objekt else None
+    """WJ strikt zum Umsatzdatum (camt) — nie ein anderes Wirtschaftsjahr."""
+    return _ermittle_wirtschaftsjahr_fuer_datum(ku.objekt, ku.buchungsdatum, strikt=True) if ku.objekt else None
 
 
 def _ermittle_bank_sachkonto(ku):
     """
-    Findet Sachkonto 18xxx für den Bankabgang/-eingang.
-    Wählt das Konto aus dem Wirtschaftsjahr, das zum Buchungsdatum passt.
-    Fallback: neuestes aktives Wirtschaftsjahr.
+    Findet das Sachkonto 18xxx des Bankkontos, zu dem der Umsatz gehört
+    (ku.bankkonto wird beim camt-Import per IBAN gesetzt):
+      bewirtschaftung → 18000, ruecklage → 18911.
+    Strikt im Wirtschaftsjahr des Umsatzdatums — Bankumsätze werden immer
+    am Datum aus der Datei gegen das Konto dieses WJ gebucht.
     """
     from apps.konten.models import Konto
 
@@ -73,15 +87,15 @@ def _ermittle_bank_sachkonto(ku):
             kontonummer=knr,
             aktiv=True,
         )
-        # Zuerst passendes WJ-Jahr versuchen
         if buchungs_jahr:
+            # NUR das WJ des Umsatzdatums — kein Fallback in ein anderes Jahr
             konto = qs.filter(wirtschaftsjahr__jahr=buchungs_jahr).first()
             if konto:
                 return konto
-        # Fallback: neuestes WJ
-        konto = qs.order_by('-wirtschaftsjahr__jahr').first()
-        if konto:
-            return konto
+        else:
+            konto = qs.order_by('-wirtschaftsjahr__jahr').first()
+            if konto:
+                return konto
     return None
 
 
@@ -119,7 +133,9 @@ def verbuche(ku, verbucht_von,
         raise ValidationError(
             f"Konto {gk.kontonummer} ist ein Summierungskonto — nicht direkt buchbar."
         )
-    if not gk.direktes_buchen:
+    # Kreditorkonten (70xxx) sind über den OP-Ausgleich buchbar (siehe unten,
+    # _versuche_op_ausgleich) — auch wenn direktes_buchen=False. Daher zulassen.
+    if not gk.direktes_buchen and not gk.kontonummer.startswith('70'):
         raise ValidationError(
             f"Konto {gk.kontonummer} hat direktes_buchen=False — nicht direkt buchbar."
         )

@@ -171,11 +171,11 @@ def _parse_with_ai(text: str) -> dict:
         client = anthropic.Anthropic(api_key=api_key)
         response = client.messages.create(
             model=getattr(settings, 'ANTHROPIC_MODEL', 'claude-sonnet-4-6'),
-            max_tokens=512,
+            max_tokens=4000,  # claude-sonnet-5 denkt zuerst — Budget für Thinking + JSON
             system=_SYSTEM_PROMPT,
             messages=[{'role': 'user', 'content': f'Rechnungstext:\n\n{text[:8000]}'}],
         )
-        raw = response.content[0].text.strip()
+        raw = next((b.text for b in response.content if getattr(b, 'type', None) == 'text'), '').strip()
         raw = re.sub(r'^```[a-z]*\n?', '', raw)
         raw = re.sub(r'\n?```$', '', raw)
         return json.loads(raw)
@@ -202,7 +202,7 @@ def _parse_pdf_direct_with_ai(filepath: str) -> dict:
         client = anthropic.Anthropic(api_key=api_key)
         response = client.messages.create(
             model=getattr(settings, 'ANTHROPIC_MODEL', 'claude-sonnet-4-6'),
-            max_tokens=512,
+            max_tokens=4000,  # claude-sonnet-5 denkt zuerst — Budget für Thinking + JSON
             system=_SYSTEM_PROMPT,
             messages=[{
                 'role': 'user',
@@ -219,7 +219,7 @@ def _parse_pdf_direct_with_ai(filepath: str) -> dict:
                 ],
             }],
         )
-        raw = response.content[0].text.strip()
+        raw = next((b.text for b in response.content if getattr(b, 'type', None) == 'text'), '').strip()
         raw = re.sub(r'^```[a-z]*\n?', '', raw)
         raw = re.sub(r'\n?```$', '', raw)
         return json.loads(raw)

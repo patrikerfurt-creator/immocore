@@ -2009,14 +2009,19 @@ class EBankingBuchungViewSet(viewsets.ModelViewSet):
 
             bank_konto = _ermittle_bank_sachkonto(ku)
             if not bank_konto:
-                return Response({'error': 'Kein Bank-Sachkonto (18xxx) gefunden.'}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({'error': 'Kein Bank-Sachkonto (18xxx) im Wirtschaftsjahr des Umsatzdatums gefunden.'}, status=status.HTTP_400_BAD_REQUEST)
 
-            wj = (
-                Wirtschaftsjahr.objects.filter(objekt=ku.objekt, status='offen').order_by('-jahr').first()
-                or Wirtschaftsjahr.objects.filter(objekt=ku.objekt).order_by('-jahr').first()
-            )
+            # Bankumsätze werden immer am Datum aus der Datei gebucht —
+            # das WJ ergibt sich strikt aus dem Umsatzdatum, nie ein anderes.
+            wj = None
+            if ku.buchungsdatum:
+                wj = Wirtschaftsjahr.objects.filter(objekt=ku.objekt, jahr=ku.buchungsdatum.year).first()
             if not wj:
-                return Response({'error': 'Kein aktives Wirtschaftsjahr gefunden.'}, status=status.HTTP_400_BAD_REQUEST)
+                return Response(
+                    {'error': f'Kein Wirtschaftsjahr {ku.buchungsdatum.year if ku.buchungsdatum else "?"} vorhanden — '
+                              f'Bankumsatz vom {ku.buchungsdatum} kann nicht in ein anderes WJ gebucht werden.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
             with db_tx.atomic():
                 try:
