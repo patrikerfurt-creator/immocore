@@ -1,5 +1,6 @@
-from rest_framework import viewsets, filters
+from rest_framework import viewsets, filters, status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 from .models import Dokument
 from .serializers import DokumentSerializer
 
@@ -27,3 +28,12 @@ class DokumentViewSet(viewsets.ModelViewSet):
         if typ:
             qs = qs.filter(verknuepfung_typ=typ)
         return qs
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if instance.revisionssicher:
+            return Response(
+                {'error': 'Revisionssicheres Dokument darf nicht gelöscht werden (GoBD).'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().destroy(request, *args, **kwargs)

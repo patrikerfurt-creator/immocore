@@ -1,5 +1,6 @@
 from uuid import uuid4
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models, transaction
 from apps.objekte.models import Objekt, Einheit
 
@@ -162,6 +163,23 @@ class Dokument(models.Model):
         verbose_name = 'Dokument'
         verbose_name_plural = 'Dokumente'
         ordering = ['-hochgeladen_am']
+
+    def save(self, *args, **kwargs):
+        # GoBD: bei revisionssicherem Dokument darf die Datei nicht ausgetauscht werden
+        if self.pk:
+            alt = Dokument.objects.filter(pk=self.pk).values('revisionssicher', 'datei').first()
+            if alt and alt['revisionssicher'] and alt['datei'] != self.datei.name:
+                raise ValidationError(
+                    'Revisionssicheres Dokument: Datei darf nicht ausgetauscht werden (GoBD).'
+                )
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.revisionssicher:
+            raise ValidationError(
+                'Revisionssicheres Dokument darf nicht gelöscht werden (GoBD).'
+            )
+        return super().delete(*args, **kwargs)
 
     def __str__(self):
         return f"{self.dateiname} ({self.kategorie})"
