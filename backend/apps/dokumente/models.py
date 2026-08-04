@@ -121,7 +121,15 @@ class Beleg(models.Model):
 
 class Dokument(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
-    datei = models.FileField(upload_to='dokumente/')
+    datei = models.FileField(upload_to='dokumente/', max_length=1000)
+    ABLAGE_WURZEL_CHOICES = [
+        ('media',       'MEDIA_ROOT'),
+        ('rechnungen',  'Rechnungen-Bind-Mount'),
+    ]
+    ablage_wurzel = models.CharField(
+        max_length=20, choices=ABLAGE_WURZEL_CHOICES, default='media',
+        help_text='Wurzel, unter der datei relativ aufgelöst wird — Zugriff nur über beleg_service.dokument_pfad()',
+    )
     dateiname = models.CharField(max_length=255)
     kategorie = models.CharField(max_length=100)  # z.B. Teilungserklärung, Versicherung, Protokoll
     beschreibung = models.TextField(blank=True)

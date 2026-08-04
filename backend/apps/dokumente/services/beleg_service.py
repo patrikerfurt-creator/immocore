@@ -1,5 +1,7 @@
 import hashlib
+from pathlib import Path
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile
 from django.db import transaction
@@ -34,6 +36,28 @@ def lege_rechnungsbeleg_ab(rechnung, datei_bytes: bytes, dateiname: str,
     rechnung.beleg_dokument = dok
     rechnung.save(update_fields=['beleg_dokument'])
     return dok
+
+
+def rechnungen_root() -> Path:
+    """Wurzel des Rechnungen-Bind-Mounts, abgeleitet aus der Import-Ordner-Konfiguration.
+
+    Nutzt ``ImportOrdnerEinstellung`` (bereich='rechnungen', Feld ``archiv_ordner``,
+    z. B. ``/app/rechnungen/archiv``) — die Wurzel ist deren Elternordner
+    (``/app/rechnungen``). Ohne konfigurierte Einstellung Fallback hart auf
+    ``/app/rechnungen`` (Live-Bind-Mount-Pfad).
+    """
+    from apps.buchhaltung.models import ImportOrdnerEinstellung
+
+    einstellung = ImportOrdnerEinstellung.objects.filter(bereich='rechnungen').first()
+    if einstellung and einstellung.archiv_ordner:
+        return Path(einstellung.archiv_ordner).parent
+    return Path('/app/rechnungen')
+
+
+def dokument_pfad(dokument: Dokument) -> Path:
+    """Einzige erlaubte Pfadauflösung für Dokument.datei (berücksichtigt ablage_wurzel)."""
+    wurzeln = {'media': Path(settings.MEDIA_ROOT), 'rechnungen': rechnungen_root()}
+    return wurzeln[dokument.ablage_wurzel] / dokument.datei.name
 
 
 def sperre_beleg_revisionssicher(dokument: Dokument) -> Dokument:

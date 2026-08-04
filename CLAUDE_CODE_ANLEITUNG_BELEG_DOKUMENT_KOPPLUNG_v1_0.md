@@ -25,6 +25,9 @@ Phase 0 abgeschlossen (siehe `IST_BERICHT_BELEG_DOKUMENT.md`). Freigegebene Abwe
 | `Dokument.sha256` | NICHT unique (Duplikate real vorhanden), nur indiziert; Idempotenz über `beleg_dokument_id` |
 | — | `Dokument.objekt`/`einheit`: `on_delete` CASCADE→PROTECT (GoBD: Cascade umgeht delete()-Sperre) |
 | Sperr-Hook | nur in `rechnung_freigeben()` (rechnungen/services/rechnung_op_service.py); Views-Fallback `views.py:550` (Status ohne OP-Buchung) bleibt unverändert und ist als offener Bug dokumentiert |
+| Phase C als Datenmigration (Abschnitt 6) | **Freigegeben 2026-08-03:** Management-Command `migriere_rechnungsbelege` (--dry-run/--limit/--sperren/--rueckabwicklung) — deploy.sh fährt `migrate --no-input` unbeaufsichtigt, Nummernvergabe braucht den echten `BelegnummerZaehler` |
+| — | Phase-A-Nachtrag: `Dokument.ablage_wurzel` (media/rechnungen) + `datei` max_length 100→1000; Pfadauflösung NUR über `beleg_service.dokument_pfad()` |
+| `hochgeladen_von` bei Migration | System-User `immocore-autopilot` (Fallback: erster Superuser), nicht `erfasst_von` |
 
 ---
 
