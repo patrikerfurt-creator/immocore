@@ -16,6 +16,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 
 from apps.buchhaltung.models import Buchung, KreditorOP
+from apps.dokumente.services.beleg_service import sperre_beleg_revisionssicher
 from apps.konten.models import Konto
 from apps.rechnungen.konstanten import (
     KONTO_BEREICH_AUFWAND_VON,
@@ -223,6 +224,11 @@ def rechnung_freigeben(rechnung, aufwandskonto: Konto, freigegeben_von=None, buc
             rechnung.aufwandskonto = erster_split.aufwandskonto
     rechnung.op_buchung = buchung
     rechnung.status = "freigegeben"   # v1.1: Freigabe erteilt, OP gebucht
+
+    # GoBD: Beleg wird mit der OP-Buchung unveränderlich
+    if rechnung.beleg_dokument_id:
+        sperre_beleg_revisionssicher(rechnung.beleg_dokument)
+
     rechnung.save(update_fields=["aufwandskonto", "op_buchung", "status"])
 
     return rechnung

@@ -147,6 +147,11 @@ class Rechnung(models.Model):
         Buchung, on_delete=models.SET_NULL, null=True, blank=True,
         related_name='rechnung',
     )
+    beleg_dokument = models.OneToOneField(
+        'dokumente.Dokument', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='rechnung',
+        help_text='Physischer Beleg (PDF) im DMS — einzige Dateiablage (GoBD)',
+    )
     kundennummer = models.CharField(max_length=50, blank=True)
     vorgeschlagenes_konto = models.ForeignKey(
         Konto, on_delete=models.SET_NULL, null=True, blank=True,

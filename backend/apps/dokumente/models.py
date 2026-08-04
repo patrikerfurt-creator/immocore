@@ -1,5 +1,6 @@
 from uuid import uuid4
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models, transaction
 from apps.objekte.models import Objekt, Einheit
 
@@ -57,16 +58,12 @@ class BelegnummerZaehler(models.Model):
 
 
 class Beleg(models.Model):
-    """Zentrales Beleg-Modell — systemweite Klammer über alle eingehenden Dokumente.
+    """DEPRECATED — nicht verwenden. Wird in Folge-Spec v1_1 entfernt.
 
-    Jeder Beleg erhält eine unveränderliche, global eindeutige Belegnummer
-    (Format AA00000001). Die Nummer wird beim ersten ``save()`` automatisch
-    vergeben und kann danach nicht mehr geändert werden.
-
-    Verknüpfungen:
-      - rechnung  → Rechnung (1:1, optional)
-      - dokument  → Dokument (1:1, optional)
-      - Zukünftig: Konto-Belege, wiederkehrende Zahlungen, SEPA-Mandatsdokumente …
+    Ersetzt durch die direkte Kopplung Rechnung.beleg_dokument → Dokument
+    (Spec Beleg↔Dokument-Kopplung, E1-Beschluss 2026-08-03). Der
+    Belegnummernkreis lebt weiter: Dokument.beleg_nummer, vergeben über
+    BelegnummerZaehler.naechste_nummer().
     """
 
     TYP_CHOICES = [
@@ -124,17 +121,25 @@ class Beleg(models.Model):
 
 class Dokument(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
-    datei = models.FileField(upload_to='dokumente/')
+    datei = models.FileField(upload_to='dokumente/', max_length=1000)
+    ABLAGE_WURZEL_CHOICES = [
+        ('media',       'MEDIA_ROOT'),
+        ('rechnungen',  'Rechnungen-Bind-Mount'),
+    ]
+    ablage_wurzel = models.CharField(
+        max_length=20, choices=ABLAGE_WURZEL_CHOICES, default='media',
+        help_text='Wurzel, unter der datei relativ aufgelöst wird — Zugriff nur über beleg_service.dokument_pfad()',
+    )
     dateiname = models.CharField(max_length=255)
     kategorie = models.CharField(max_length=100)  # z.B. Teilungserklärung, Versicherung, Protokoll
     beschreibung = models.TextField(blank=True)
     verknuepfung_typ = models.CharField(max_length=50)  # Objekt / Einheit / Ticket / Rechnung
     objekt = models.ForeignKey(
-        Objekt, on_delete=models.CASCADE, null=True, blank=True,
+        Objekt, on_delete=models.PROTECT, null=True, blank=True,
         related_name='dokumente'
     )
     einheit = models.ForeignKey(
-        Einheit, on_delete=models.CASCADE, null=True, blank=True,
+        Einheit, on_delete=models.PROTECT, null=True, blank=True,
         related_name='dokumente'
     )
     hochgeladen_von = models.ForeignKey(
@@ -143,10 +148,46 @@ class Dokument(models.Model):
     )
     hochgeladen_am = models.DateTimeField(auto_now_add=True)
 
+    # ── Beleg-/GoBD-Felder (Spec Beleg↔Dokument-Kopplung, Phase A) ──
+    TYP_CHOICES = [
+        ('beleg',          'Beleg'),
+        ('vertrag',        'Vertrag'),
+        ('korrespondenz',  'Korrespondenz'),
+        ('beschluss',      'Beschluss'),
+        ('abrechnung',     'Abrechnung'),
+        ('sonstiges',      'Sonstiges'),
+    ]
+    dokument_typ = models.CharField(max_length=20, choices=TYP_CHOICES, default='sonstiges')
+    revisionssicher = models.BooleanField(default=False)   # True = Lösch-/Austauschsperre (GoBD), Durchsetzung in Phase B
+    revisionssicher_seit = models.DateTimeField(null=True, blank=True)
+    sha256 = models.CharField(max_length=64, null=True, blank=True, db_index=True)
+    abgelegt_am = models.DateTimeField(auto_now_add=True)
+    beleg_nummer = models.CharField(
+        max_length=12, unique=True, null=True, blank=True, editable=False,
+        help_text='Globale Belegnummer (AA00000001 …), Vergabe über BelegnummerZaehler',
+    )
+
     class Meta:
         verbose_name = 'Dokument'
         verbose_name_plural = 'Dokumente'
         ordering = ['-hochgeladen_am']
+
+    def save(self, *args, **kwargs):
+        # GoBD: bei revisionssicherem Dokument darf die Datei nicht ausgetauscht werden
+        if self.pk:
+            alt = Dokument.objects.filter(pk=self.pk).values('revisionssicher', 'datei').first()
+            if alt and alt['revisionssicher'] and alt['datei'] != self.datei.name:
+                raise ValidationError(
+                    'Revisionssicheres Dokument: Datei darf nicht ausgetauscht werden (GoBD).'
+                )
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.revisionssicher:
+            raise ValidationError(
+                'Revisionssicheres Dokument darf nicht gelöscht werden (GoBD).'
+            )
+        return super().delete(*args, **kwargs)
 
     def __str__(self):
         return f"{self.dateiname} ({self.kategorie})"
