@@ -130,6 +130,22 @@ def _create_hausgeld_historie(ev, ba, betrag=Decimal('250.00'), gueltig_ab=None,
     )
 
 
+def _create_wirtschaftsjahr(objekt, jahr):
+    from apps.objekte.models import Wirtschaftsjahr
+    return Wirtschaftsjahr.objects.get_or_create(
+        objekt=objekt, jahr=jahr, defaults=dict(beginn_monat=1),
+    )[0]
+
+
+def _create_konto_13650(wj):
+    """DCL-Debitor-Konto — Gegenkonto für Lastschrift-Buchungen (sepa_lastschrift.erstelle_lastschrift_buchungen)."""
+    from apps.konten.models import Konto
+    return Konto.objects.get_or_create(
+        wirtschaftsjahr=wj, kontonummer='13650',
+        defaults=dict(kontoname='DCL-Debitor', kontoart='standard', direktes_buchen=False),
+    )[0]
+
+
 def _get_or_create_ba(nr='900'):
     from apps.buchhaltung.models import Buchungsart
     ba, _ = Buchungsart.objects.get_or_create(
@@ -252,6 +268,8 @@ class _VollePipelineMixin:
         self.objekt = _create_test_objekt()
         self.bk = _create_test_bankkonto(self.objekt)
         self.ba = _get_or_create_ba('900')
+        self.wj = _create_wirtschaftsjahr(self.objekt, jahr=self.PERIODE.year)
+        self.konto_13650 = _create_konto_13650(self.wj)
 
     def _add_rcur_ev(self, index: int):
         mandat = _create_sepa_mandat(

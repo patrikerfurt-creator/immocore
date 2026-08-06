@@ -12,7 +12,7 @@ from datetime import date
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 
-from apps.objekte.models import Objekt, Bankkonto
+from apps.objekte.models import Objekt, Bankkonto, Wirtschaftsjahr
 from apps.konten.models import Konto
 from apps.rechnungen.models import Kreditor
 from apps.buchhaltung.models import (
@@ -40,13 +40,14 @@ def _setup():
         ort='Frankfurt', verwaltung_seit=date(2020, 1, 1),
         zahlungsfreigabe_grenzen=[],
     )
+    wj = Wirtschaftsjahr.objects.create(objekt=objekt, jahr=2026, beginn_monat=1)
     bankkonto = Bankkonto.objects.create(
         objekt=objekt, konto_typ='bewirtschaftung',
         bezeichnung='Hauptkonto', iban='DE00000000000000000000',
     )
-    Konto.objects.create(objekt=objekt, kontonummer='50100', kontoname='Wasser',
+    Konto.objects.create(wirtschaftsjahr=wj, kontonummer='50100', kontoname='Wasser',
                          kontoart='standard', direktes_buchen=False, aktiv=True)
-    Konto.objects.create(objekt=objekt, kontonummer='18000', kontoname='Bank',
+    Konto.objects.create(wirtschaftsjahr=wj, kontonummer='18000', kontoname='Bank',
                          kontoart='standard', direktes_buchen=True, aktiv=True)
     kreditor = Kreditor.objects.create(
         name='Stadtwerke FFM', iban='DE99999999999999999999'

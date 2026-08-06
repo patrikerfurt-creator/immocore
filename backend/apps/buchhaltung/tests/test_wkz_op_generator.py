@@ -12,7 +12,7 @@ from datetime import date, timedelta
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 
-from apps.objekte.models import Objekt
+from apps.objekte.models import Objekt, Wirtschaftsjahr
 from apps.konten.models import Konto
 from apps.rechnungen.models import Kreditor
 from apps.buchhaltung.models import (
@@ -38,7 +38,8 @@ def _setup():
         ort='Frankfurt', verwaltung_seit=date(2020, 1, 1),
         zahlungsfreigabe_grenzen=[],
     )
-    Konto.objects.create(objekt=objekt, kontonummer='50100', kontoname='Wasser',
+    wj = Wirtschaftsjahr.objects.create(objekt=objekt, jahr=2026, beginn_monat=1)
+    Konto.objects.create(wirtschaftsjahr=wj, kontonummer='50100', kontoname='Wasser',
                          kontoart='standard', direktes_buchen=False, aktiv=True)
     kreditor = Kreditor.objects.create(name='Stadtwerke', iban='DE11111111111111111111')
     return user, objekt, kreditor

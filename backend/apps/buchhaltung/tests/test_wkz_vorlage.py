@@ -13,7 +13,7 @@ from django.test import TestCase
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 
-from apps.objekte.models import Objekt
+from apps.objekte.models import Objekt, Wirtschaftsjahr
 from apps.konten.models import Konto
 from apps.rechnungen.models import Kreditor
 from apps.buchhaltung.models import WiederkehrendeBuchungVorlage, WiederkehrendeBuchungSplit
@@ -43,22 +43,23 @@ def _setup():
         verwaltung_seit=date(2020, 1, 1),
         zahlungsfreigabe_grenzen=[],
     )
+    wj = Wirtschaftsjahr.objects.create(objekt=objekt, jahr=2026, beginn_monat=1)
     # Aufwandskonten
     konto_50100 = Konto.objects.create(
-        objekt=objekt, kontonummer='50100', kontoname='Wasser',
+        wirtschaftsjahr=wj, kontonummer='50100', kontoname='Wasser',
         kontoart='standard', direktes_buchen=False, aktiv=True,
     )
     konto_50200 = Konto.objects.create(
-        objekt=objekt, kontonummer='50200', kontoname='Müll',
+        wirtschaftsjahr=wj, kontonummer='50200', kontoname='Müll',
         kontoart='standard', direktes_buchen=False, aktiv=True,
     )
     # Bankkonto (kein split-zulässiges Konto)
     Konto.objects.create(
-        objekt=objekt, kontonummer='18000', kontoname='Bank',
+        wirtschaftsjahr=wj, kontonummer='18000', kontoname='Bank',
         kontoart='standard', direktes_buchen=True, aktiv=True,
     )
     kreditor = Kreditor.objects.create(name='Stadt Frankfurt', iban='DE12345678901234567890')
-    return user, objekt, konto_50100, konto_50200, kreditor
+    return user, objekt, wj, konto_50100, konto_50200, kreditor
 
 
 def _vorlage_data(objekt, kreditor, **kwargs):
@@ -90,7 +91,7 @@ def _splits_data():
 
 class VorlageAnlageTest(TestCase):
     def setUp(self):
-        self.user, self.objekt, self.k50100, self.k50200, self.kreditor = _setup()
+        self.user, self.objekt, self.wj, self.k50100, self.k50200, self.kreditor = _setup()
 
     def test_vorlage_anlegen_ok(self):
         data = _vorlage_data(self.objekt, self.kreditor)
@@ -119,7 +120,7 @@ class VorlageAnlageTest(TestCase):
         """Konto mit direktes_buchen=True darf nicht als Split verwendet werden."""
         data = _vorlage_data(self.objekt, self.kreditor, betrag_gesamt=Decimal('100.00'))
         Konto.objects.create(
-            objekt=self.objekt, kontonummer='50999', kontoname='Direkt',
+            wirtschaftsjahr=self.wj, kontonummer='50999', kontoname='Direkt',
             kontoart='standard', direktes_buchen=True, aktiv=True,
         )
         splits = [{'kontonummer': '50999', 'bezeichnung': 'Test', 'betrag': Decimal('100.00')}]
@@ -140,7 +141,7 @@ class VorlageAnlageTest(TestCase):
 
 class FreigabeWorkflowTest(TestCase):
     def setUp(self):
-        self.user, self.objekt, _, _, self.kreditor = _setup()
+        self.user, self.objekt, self.wj, _, _, self.kreditor = _setup()
 
     def test_auto_freigabe_ohne_grenzen(self):
         """Ohne zahlungsfreigabe_grenzen → automatische Aktivierung."""
@@ -160,7 +161,7 @@ class FreigabeWorkflowTest(TestCase):
 
 class StatusUebergangsTest(TestCase):
     def setUp(self):
-        self.user, self.objekt, _, _, self.kreditor = _setup()
+        self.user, self.objekt, self.wj, _, _, self.kreditor = _setup()
         data = _vorlage_data(self.objekt, self.kreditor)
         self.vorlage = erstelle_vorlage(data, _splits_data(), self.user)
         aktiviere_vorlage(self.vorlage, self.user)
@@ -190,10 +191,10 @@ class StatusUebergangsTest(TestCase):
 
 class ErsetzVorlageTest(TestCase):
     def setUp(self):
-        self.user, self.objekt, k50100, k50200, self.kreditor = _setup()
+        self.user, self.objekt, self.wj, k50100, k50200, self.kreditor = _setup()
         # Weitere Konten für neue Splits
         Konto.objects.get_or_create(
-            objekt=self.objekt, kontonummer='50300',
+            wirtschaftsjahr=self.wj, kontonummer='50300',
             defaults={'kontoname': 'Abwasser', 'kontoart': 'standard', 'direktes_buchen': False, 'aktiv': True},
         )
         data = _vorlage_data(self.objekt, self.kreditor)

@@ -39,6 +39,21 @@ def bestimme_aktives_wj(objekt, datum: date) -> int:
     return datum.year
 
 
+def _hole_wirtschaftsjahr(objekt, jahr: int):
+    """
+    Löst das Wirtschaftsjahr-Objekt (FK-Ziel von Buchung.wirtschaftsjahr) zum
+    gegebenen Objekt/Jahr auf. Raises KontoNichtImWJException wenn kein WJ
+    für dieses Jahr existiert.
+    """
+    from apps.objekte.models import Wirtschaftsjahr
+    wj = Wirtschaftsjahr.objects.filter(objekt=objekt, jahr=jahr).first()
+    if not wj:
+        raise KontoNichtImWJException(
+            f"Kein Wirtschaftsjahr {jahr} im Objekt '{objekt.bezeichnung}' gefunden."
+        )
+    return wj
+
+
 def _finde_konto(objekt, kontonummer: str):
     """
     Sucht das Konto mit der gegebenen Kontonummer im Objekt.
@@ -46,7 +61,7 @@ def _finde_konto(objekt, kontonummer: str):
     """
     from apps.konten.models import Konto
     konto = Konto.objects.filter(
-        objekt=objekt,
+        wirtschaftsjahr__objekt=objekt,
         kontonummer=kontonummer,
         aktiv=True,
     ).first()
@@ -71,7 +86,7 @@ def _bestimme_bank_sachkonto(kontoumsatz, objekt):
     if bankkonto:
         ziel_nr = '18000' if bankkonto.konto_typ == 'bewirtschaftung' else '18911'
         konto = Konto.objects.filter(
-            objekt=objekt,
+            wirtschaftsjahr__objekt=objekt,
             kontonummer=ziel_nr,
             aktiv=True,
         ).first()
@@ -80,7 +95,7 @@ def _bestimme_bank_sachkonto(kontoumsatz, objekt):
 
     # Fallback: erstes Bank-Konto im Objekt (18000–18999)
     konto = Konto.objects.filter(
-        objekt=objekt,
+        wirtschaftsjahr__objekt=objekt,
         aktiv=True,
     ).filter(
         kontonummer__gte='18000',
@@ -114,7 +129,10 @@ def _naechste_belegnr_wkz(objekt, datum: date) -> str:
 
 def _erzeuge_sammelbuchung(objekt, datum, belegnr, verwendungszweck, wj, erstellt_von,
                            betrag=None, haben_konto=None):
-    """Erzeugt die Parent-Buchung (Sammelbuchung)."""
+    """
+    Erzeugt die Parent-Buchung (Sammelbuchung).
+    wj: Wirtschaftsjahr-Instanz (FK-Ziel von Buchung.wirtschaftsjahr).
+    """
     from apps.buchhaltung.models import Buchung
     return Buchung.objects.create(
         objekt=objekt,
@@ -124,6 +142,7 @@ def _erzeuge_sammelbuchung(objekt, datum, belegnr, verwendungszweck, wj, erstell
         buchungstext=verwendungszweck,
         verwendungszweck=verwendungszweck,
         wirtschaftsjahr=wj,
+        wirtschaftsjahr_nr=wj.jahr if wj else None,
         status='entwurf',
         erstellt_von=erstellt_von,
         betrag=betrag,
@@ -145,6 +164,7 @@ def _erzeuge_teilbuchung(parent, soll_konto, haben_konto, betrag, text, erstellt
         belegnr=parent.belegnr,
         buchungstext=text or parent.buchungstext,
         wirtschaftsjahr=parent.wirtschaftsjahr,
+        wirtschaftsjahr_nr=parent.wirtschaftsjahr_nr,
         status='entwurf',
         erstellt_von=erstellt_von,
     )
@@ -172,7 +192,8 @@ def verbuche_bankabgang(wkz_op, kontoumsatz, user=None) -> 'Buchung':
     bank_datum = kontoumsatz.buchungsdatum
     bank_betrag = abs(kontoumsatz.betrag)
 
-    wj = bestimme_aktives_wj(objekt, bank_datum)
+    wj_jahr = bestimme_aktives_wj(objekt, bank_datum)
+    wj = _hole_wirtschaftsjahr(objekt, wj_jahr)
     bank_konto = _bestimme_bank_sachkonto(kontoumsatz, objekt)
 
     # Splits auflösen
@@ -223,7 +244,7 @@ def verbuche_bankabgang(wkz_op, kontoumsatz, user=None) -> 'Buchung':
 
     logger.info(
         "WKZ Bankabgang verbucht: WKZ-OP %s, Buchung %s, Betrag %s, WJ %s",
-        wkz_op.id, parent.id, bank_betrag, wj
+        wkz_op.id, parent.id, bank_betrag, wj_jahr
     )
     return parent
 
@@ -250,7 +271,8 @@ def verbuche_mit_anpassung(
     objekt = vorlage.objekt
     bank_datum = kontoumsatz.buchungsdatum
 
-    wj = bestimme_aktives_wj(objekt, bank_datum)
+    wj_jahr = bestimme_aktives_wj(objekt, bank_datum)
+    wj = _hole_wirtschaftsjahr(objekt, wj_jahr)
     bank_konto = _bestimme_bank_sachkonto(kontoumsatz, objekt)
 
     # Split-Konten auflösen

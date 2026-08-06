@@ -12,7 +12,7 @@ from datetime import date
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 
-from apps.objekte.models import Objekt, Bankkonto
+from apps.objekte.models import Objekt, Bankkonto, Wirtschaftsjahr
 from apps.konten.models import Konto
 from apps.rechnungen.models import Kreditor
 from apps.buchhaltung.models import (
@@ -40,24 +40,25 @@ def _setup():
         ort='Frankfurt', verwaltung_seit=date(2020, 1, 1),
         zahlungsfreigabe_grenzen=[],
     )
+    wj = Wirtschaftsjahr.objects.create(objekt=objekt, jahr=2026, beginn_monat=1)
     bankkonto = Bankkonto.objects.create(
         objekt=objekt, konto_typ='bewirtschaftung',
         bezeichnung='Hauptkonto', iban='DE00000000000000000000',
     )
     konto_50100 = Konto.objects.create(
-        objekt=objekt, kontonummer='50100', kontoname='Wasser',
+        wirtschaftsjahr=wj, kontonummer='50100', kontoname='Wasser',
         kontoart='standard', direktes_buchen=False, aktiv=True,
     )
     konto_50200 = Konto.objects.create(
-        objekt=objekt, kontonummer='50200', kontoname='Müll',
+        wirtschaftsjahr=wj, kontonummer='50200', kontoname='Müll',
         kontoart='standard', direktes_buchen=False, aktiv=True,
     )
     konto_18000 = Konto.objects.create(
-        objekt=objekt, kontonummer='18000', kontoname='Bank Bewirtschaftung',
+        wirtschaftsjahr=wj, kontonummer='18000', kontoname='Bank Bewirtschaftung',
         kontoart='standard', direktes_buchen=True, aktiv=True,
     )
     kreditor = Kreditor.objects.create(name='Stadtwerke', iban='DE99999999999999999999')
-    return user, objekt, bankkonto, kreditor, konto_50100, konto_50200, konto_18000
+    return user, objekt, wj, bankkonto, kreditor, konto_50100, konto_50200, konto_18000
 
 
 def _vorlage_und_op(objekt, kreditor, user, splits_daten=None, betrag=Decimal('850.00')):
@@ -115,7 +116,7 @@ class BestimmeAktivesWJTest(TestCase):
 
 class BuchungErzeugenTest(TestCase):
     def setUp(self):
-        self.user, self.objekt, self.bankkonto, self.kreditor, \
+        self.user, self.objekt, self.wj, self.bankkonto, self.kreditor, \
             self.k50100, self.k50200, self.k18000 = _setup()
         self.vorlage, self.wkz_op = _vorlage_und_op(self.objekt, self.kreditor, self.user)
 
@@ -149,7 +150,8 @@ class BuchungErzeugenTest(TestCase):
     def test_wirtschaftsjahr_korrekt(self):
         ku = _kontoumsatz(self.bankkonto, self.objekt, datum=date(2026, 4, 1))
         buchung = verbuche_bankabgang(self.wkz_op, ku, user=self.user)
-        self.assertEqual(buchung.wirtschaftsjahr, 2026)
+        self.assertEqual(buchung.wirtschaftsjahr.jahr, 2026)
+        self.assertEqual(buchung.wirtschaftsjahr_nr, 2026)
 
     def test_haben_konto_bank(self):
         ku = _kontoumsatz(self.bankkonto, self.objekt)
@@ -166,7 +168,7 @@ class BuchungErzeugenTest(TestCase):
 
 class KontoFehltTest(TestCase):
     def setUp(self):
-        self.user, self.objekt, self.bankkonto, self.kreditor, \
+        self.user, self.objekt, self.wj, self.bankkonto, self.kreditor, \
             self.k50100, self.k50200, self.k18000 = _setup()
 
     def test_fehlendes_konto_raises_exception(self):
@@ -174,7 +176,7 @@ class KontoFehltTest(TestCase):
         from apps.konten.models import Konto
         # Konto 55500 anlegen (im Aufwandsbereich), damit Vorlage erstellt werden kann
         k = Konto.objects.create(
-            objekt=self.objekt, kontonummer='55500', kontoname='Wird deaktiviert',
+            wirtschaftsjahr=self.wj, kontonummer='55500', kontoname='Wird deaktiviert',
             kontoart='standard', direktes_buchen=False, aktiv=True,
         )
         splits_daten = [
@@ -195,7 +197,7 @@ class KontoFehltTest(TestCase):
 
 class VerbuchemitAnpassungTest(TestCase):
     def setUp(self):
-        self.user, self.objekt, self.bankkonto, self.kreditor, \
+        self.user, self.objekt, self.wj, self.bankkonto, self.kreditor, \
             self.k50100, self.k50200, self.k18000 = _setup()
         self.vorlage, self.wkz_op = _vorlage_und_op(self.objekt, self.kreditor, self.user)
 

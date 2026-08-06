@@ -32,6 +32,11 @@ def validiere_split_kontonummer(kontonummer: str, objekt) -> None:
         raise ValidationError(
             f"Konto {kontonummer} im Objekt nicht gefunden, inaktiv oder ein Summierungskonto."
         )
+    if konto.direktes_buchen:
+        raise ValidationError(
+            f"Konto {kontonummer} ist direkt buchbar (direktes_buchen=True) — "
+            f"nicht als WKZ-Split zulässig."
+        )
     try:
         nr = int(kontonummer)
     except ValueError:
