@@ -225,9 +225,11 @@ class VerbuchungsVorzeichenTest(TestCase):
         with self.assertRaises(ValidationError):
             verbuche(ku, verbucht_von=self.user, gegenkonto=self.summierung_konto)
 
-    def test_validierung_kein_direktes_buchen_abgelehnt(self):
+    def test_validierung_kein_direktes_buchen_ausserhalb_aufwandsbereich_abgelehnt(self):
+        """Konto außerhalb 50000–55999 und kein Kreditorkonto (70xxx) mit
+        direktes_buchen=False ist weiterhin nicht buchbar."""
         konto_nd = Konto.objects.create(
-            wirtschaftsjahr=self.wj, kontonummer='55999', kontoname='ND',
+            wirtschaftsjahr=self.wj, kontonummer='46000', kontoname='ND',
             kontoart='standard', direktes_buchen=False,
         )
         ku = Kontoumsatz.objects.create(
@@ -237,6 +239,24 @@ class VerbuchungsVorzeichenTest(TestCase):
         )
         with self.assertRaises(ValidationError):
             verbuche(ku, verbucht_von=self.user, gegenkonto=konto_nd)
+
+    def test_aufwandskonto_50xxx_ohne_direktes_buchen_buchbar(self):
+        """Aufwandskonten im Bereich 50000–55999 sind auch mit
+        direktes_buchen=False direkt buchbar (Sonderregel wie im
+        Rechnungs-Modul)."""
+        konto_aufwand_50xxx = Konto.objects.create(
+            wirtschaftsjahr=self.wj, kontonummer='52000', kontoname='Instandhaltung',
+            kontoart='standard', direktes_buchen=False,
+        )
+        ku = Kontoumsatz.objects.create(
+            objekt=self.objekt, bankkonto=self.bankkonto,
+            sha256_hash='h_50xxx',
+            betrag=Decimal('-100.00'), buchungsdatum=date(2026, 1, 15),
+        )
+        b = verbuche(ku, verbucht_von=self.user, gegenkonto=konto_aufwand_50xxx)
+        self.assertEqual(b.soll_konto_id, konto_aufwand_50xxx.id)
+        self.assertEqual(b.haben_konto_id, self.bank_konto.id)
+        self.assertEqual(b.betrag, Decimal('100.00'))
 
     def test_bereits_verbuchter_umsatz_wirft_fehler(self):
         ku = Kontoumsatz.objects.create(
