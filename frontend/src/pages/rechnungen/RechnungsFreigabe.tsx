@@ -48,6 +48,11 @@ export default function RechnungsFreigabe() {
 
   const freigeben = async (r: RechnungList) => {
     const kontoId = auswahl[r.id]
+    // v1_1: ohne Aufwandskonto (weder gewählt noch gespeichert) ist keine Freigabe möglich
+    if (!kontoId && !r.aufwandskonto_id) {
+      setFehler('Bitte zuerst ein Aufwandskonto wählen.')
+      return
+    }
     const geaendert = !!kontoId && kontoId !== (r.aufwandskonto_id ?? '')
     let lernen = false
     if (geaendert) {

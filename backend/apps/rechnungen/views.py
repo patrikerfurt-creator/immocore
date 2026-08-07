@@ -550,8 +550,12 @@ class RechnungViewSet(viewsets.ModelViewSet):
             except DjangoValidationError as exc:
                 return Response({'error': exc.message}, status=status.HTTP_400_BAD_REQUEST)
         else:
-            rechnung.status = 'freigegeben'
-            rechnung.save(update_fields=['status'])
+            # v1_1: Status-only-Freigabe ohne OP-Buchung ist nicht mehr zulässig —
+            # 'freigegeben' bedeutet 'OP gebucht' (GoBD-Sperre hängt daran).
+            return Response(
+                {'error': 'Aufwandskonto erforderlich — Freigabe ohne Aufwandskonto ist nicht möglich.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         Freigabe.objects.create(
             rechnung=rechnung,

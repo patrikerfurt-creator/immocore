@@ -20,7 +20,7 @@ from apps.objekte.models import Objekt, Wirtschaftsjahr, Einheit
 from apps.konten.models import Konto, Personenkonto
 from apps.personen.models import Person, EigentumsVerhaeltnis
 from apps.mitarbeiter.models import Mitarbeiter, MitarbeiterObjektZuordnung
-from apps.rechnungen.models import Rechnung, Kreditor
+from apps.rechnungen.models import Rechnung, Kreditor, Freigabe, Verarbeitungslog
 from apps.rechnungen.services import (
     rechnung_freigabe_service as frs,
     erkennung_ampel_service as amp,
@@ -522,6 +522,24 @@ class ErfassenApiTest(TestCase):
         self.assertEqual(resp.status_code, 200, resp.data)
         r.refresh_from_db()
         self.assertIsNotNone(r.op_buchung_id)
+
+    def test_freigeben_ohne_aufwandskonto_400_kein_statuswechsel(self):
+        # v1_1: Status-only-Freigabe ohne OP-Buchung ist verboten (GoBD-Sperre
+        # hängt am OP-Buchungspfad, nicht am Status allein).
+        u = _gf("erf10")
+        self.client.force_authenticate(u)
+        r = Rechnung.objects.create(
+            objekt=self.objekt, kreditor=self.kreditor, aufwandskonto=None,
+            betrag_brutto=Decimal("5000.00"), rechnungsnummer="RE-FG3", status="zur_freigabe",
+        )
+        resp = self.client.post(reverse("rechnungen-freigeben", args=[r.id]), {}, format="json")
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("error", resp.data)
+        r.refresh_from_db()
+        self.assertEqual(r.status, "zur_freigabe")
+        self.assertIsNone(r.op_buchung_id)
+        self.assertEqual(Freigabe.objects.filter(rechnung=r).count(), 0)
+        self.assertEqual(Verarbeitungslog.objects.filter(rechnung=r).count(), 0)
 
 
 # ---------------------------------------------------------------------------
