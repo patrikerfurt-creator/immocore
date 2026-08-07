@@ -893,6 +893,30 @@ export interface Dokument {
   beschreibung: string
 }
 
+export type DokumentTyp = 'beleg' | 'vertrag' | 'korrespondenz' | 'beschluss' | 'abrechnung' | 'sonstiges'
+
+export const DOKUMENT_TYP_CHOICES: { value: DokumentTyp; label: string }[] = [
+  { value: 'beleg',         label: 'Beleg' },
+  { value: 'vertrag',       label: 'Vertrag' },
+  { value: 'korrespondenz', label: 'Korrespondenz' },
+  { value: 'beschluss',     label: 'Beschluss' },
+  { value: 'abrechnung',    label: 'Abrechnung' },
+  { value: 'sonstiges',     label: 'Sonstiges' },
+]
+
+// Minimale DMS-Leseansicht (Objekt-Dokumentenliste, Spec Abschnitt 7)
+export interface ObjektDokument {
+  id: string
+  dateiname: string
+  kategorie: string
+  dokument_typ: DokumentTyp
+  abgelegt_am: string
+  beleg_nummer: string | null
+  revisionssicher: boolean
+  rechnung_nummer: string | null
+  rechnung_id: string | null
+}
+
 // ── Tickets ───────────────────────────────────────────────────────────
 export type TicketTyp = 'maengelmeldung' | 'anfrage' | 'aufgabe' | 'sonstiges'
 export type TicketStatus = 'offen' | 'in_bearbeitung' | 'erledigt' | 'geschlossen'

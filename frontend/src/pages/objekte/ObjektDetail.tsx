@@ -5,11 +5,12 @@ import { objekteApi } from '../../api/objekte'
 import { personenApi } from '../../api/personen'
 import { mitarbeiterApi, zuordnungApi } from '../../api/mitarbeiter'
 import { buchhaltungApi } from '../../api/buchhaltung'
+import { dokumenteApi } from '../../api/dokumente'
 import { Badge } from '../../components/ui/Badge'
 import { IbanInput } from '../../components/ui/IbanInput'
 import { useObjektStore } from '../../stores/objekt'
-import type { Objekt, Eingang, Bankkonto, AutoLaufStatus } from '../../types'
-import { ABTEILUNG_LABELS } from '../../types'
+import type { Objekt, Eingang, Bankkonto, AutoLaufStatus, ObjektDokument } from '../../types'
+import { ABTEILUNG_LABELS, DOKUMENT_TYP_CHOICES } from '../../types'
 
 const AUTO_LAUF_STATUS_COLOR: Record<AutoLaufStatus, string> = {
   erfolg:          'bg-green-100 text-green-800',
@@ -157,6 +158,76 @@ function AutoPipelineSection({
             Alle Läufe ansehen →
           </Link>
         </>
+      )}
+    </div>
+  )
+}
+
+function DokumenteSection({ objektId }: { objektId: string }) {
+  const [typ, setTyp] = useState<string>('beleg')
+
+  const { data: dokumente = [] } = useQuery({
+    queryKey: ['objekt-dokumente', objektId, typ],
+    queryFn: () => dokumenteApi.listByObjekt(objektId, typ || undefined),
+    enabled: !!objektId,
+  })
+
+  const typLabel = (d: ObjektDokument) =>
+    DOKUMENT_TYP_CHOICES.find(t => t.value === d.dokument_typ)?.label ?? d.dokument_typ
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 p-5 mb-4">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="font-semibold text-gray-700">Dokumente ({dokumente.length})</h2>
+        <select
+          value={typ}
+          onChange={e => setTyp(e.target.value)}
+          className="text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:border-primary-500"
+        >
+          <option value="">Alle Typen</option>
+          {DOKUMENT_TYP_CHOICES.map(t => (
+            <option key={t.value} value={t.value}>{t.label}</option>
+          ))}
+        </select>
+      </div>
+
+      {dokumente.length === 0 ? (
+        <p className="text-sm text-gray-400">Keine Dokumente vorhanden.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
+                <th className="py-2 pr-3 font-medium">Belegnr.</th>
+                <th className="py-2 pr-3 font-medium">Dateiname</th>
+                <th className="py-2 pr-3 font-medium">Typ</th>
+                <th className="py-2 pr-3 font-medium">Abgelegt am</th>
+                <th className="py-2 pr-3 font-medium">Rechnung</th>
+                <th className="py-2 pr-3 font-medium"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {dokumente.map(d => (
+                <tr
+                  key={d.id}
+                  className="border-b border-gray-50 hover:bg-gray-50 cursor-pointer"
+                  onClick={() => dokumenteApi.openDatei(d.id)}
+                >
+                  <td className="py-2 pr-3 text-gray-500 font-mono text-xs">{d.beleg_nummer ?? '–'}</td>
+                  <td className="py-2 pr-3 text-primary-600 hover:underline">{d.dateiname}</td>
+                  <td className="py-2 pr-3"><Badge value={d.dokument_typ} label={typLabel(d)} /></td>
+                  <td className="py-2 pr-3 text-gray-500">
+                    {d.abgelegt_am ? new Date(d.abgelegt_am).toLocaleDateString('de-DE') : '–'}
+                  </td>
+                  <td className="py-2 pr-3 text-gray-500">{d.rechnung_nummer ?? '–'}</td>
+                  <td className="py-2 pr-3 text-right">
+                    {d.revisionssicher && <span title="Revisionssicher gesperrt (GoBD)">🔒</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   )
@@ -1127,6 +1198,9 @@ export function ObjektDetail() {
 
       {/* ── Mitarbeiter-Zuordnung ─────────────────────────────────── */}
       <MitarbeiterZuordnungSection objektId={id!} />
+
+      {/* ── Dokumente (minimaler DMS-Lesezugriff) ───────────────────── */}
+      <DokumenteSection objektId={id!} />
 
       {/* ── Auto-Pipeline ────────────────────────────────────────── */}
       <AutoPipelineSection

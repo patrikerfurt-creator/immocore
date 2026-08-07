@@ -1,8 +1,13 @@
+import mimetypes
+
 from rest_framework import viewsets, filters, status
+from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from django.http import FileResponse
 from .models import Dokument
 from .serializers import DokumentSerializer
+from .services.beleg_service import dokument_pfad
 
 
 class DokumentViewSet(viewsets.ModelViewSet):
@@ -37,3 +42,13 @@ class DokumentViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         return super().destroy(request, *args, **kwargs)
+
+    @action(detail=True, methods=['get'], url_path='datei')
+    def datei(self, request, pk=None):
+        """Liefert die Dokumentdatei über die zentrale Pfadauflösung (beleg_service.dokument_pfad)."""
+        dokument = self.get_object()
+        pfad = dokument_pfad(dokument)
+        if not pfad.exists():
+            return Response({'error': 'Datei nicht gefunden'}, status=status.HTTP_404_NOT_FOUND)
+        content_type, _ = mimetypes.guess_type(str(pfad))
+        return FileResponse(open(pfad, 'rb'), content_type=content_type or 'application/octet-stream')

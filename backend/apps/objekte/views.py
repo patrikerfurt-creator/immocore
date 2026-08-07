@@ -202,6 +202,27 @@ class ObjektViewSet(viewsets.ModelViewSet):
 
         return Response({'kopiert': kopiert, 'quell_wj': quell_wj, 'ziel_wj': ziel_wj})
 
+    @action(detail=True, methods=['get'], url_path='dokumente')
+    def dokumente(self, request, pk=None):
+        """Minimaler DMS-Lesezugriff (Spec Beleg↔Dokument-Kopplung, Abschnitt 7).
+
+        ?typ=beleg filtert dokument_typ; ohne Parameter alle Dokumente des Objekts.
+        """
+        from django.shortcuts import get_object_or_404
+        from apps.dokumente.models import Dokument
+        from apps.dokumente.serializers import ObjektDokumentSerializer
+
+        # Bewusst NICHT self.get_object(): dessen get_queryset() interpretiert den
+        # Query-Param 'typ' bereits als objekt_typ-Filter für die Objekt-Liste —
+        # das würde hier mit unserem 'typ' (dokument_typ) kollidieren.
+        objekt = get_object_or_404(Objekt, pk=pk)
+        qs = Dokument.objects.filter(objekt=objekt).select_related('rechnung')
+        typ = request.query_params.get('typ')
+        if typ:
+            qs = qs.filter(dokument_typ=typ)
+        qs = qs.order_by('-abgelegt_am')
+        return Response(ObjektDokumentSerializer(qs, many=True).data)
+
 
 class EingangViewSet(viewsets.ModelViewSet):
     serializer_class = EingangSerializer

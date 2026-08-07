@@ -1,5 +1,5 @@
 import client from './client'
-import type { Dokument } from '../types'
+import type { Dokument, ObjektDokument } from '../types'
 
 export const dokumenteApi = {
   list: (params?: Record<string, string>) =>
@@ -16,5 +16,17 @@ export const dokumenteApi = {
     return client.post<Dokument>('/dokumente/', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
     }).then(r => r.data)
+  },
+
+  // Minimaler DMS-Lesezugriff (Spec Beleg↔Dokument-Kopplung, Abschnitt 7)
+  listByObjekt: (objektId: string, typ?: string) =>
+    client.get<ObjektDokument[]>(`/objekte/${objektId}/dokumente/`, {
+      params: typ ? { typ } : undefined,
+    }).then(r => r.data),
+
+  openDatei: async (id: string) => {
+    const response = await client.get(`/dokumente/${id}/datei/`, { responseType: 'blob' })
+    const url = URL.createObjectURL(response.data)
+    window.open(url, '_blank')
   },
 }

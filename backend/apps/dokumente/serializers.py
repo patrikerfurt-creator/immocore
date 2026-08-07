@@ -1,5 +1,35 @@
+from django.core.exceptions import ObjectDoesNotExist
 from rest_framework import serializers
 from .models import Dokument
+
+
+class ObjektDokumentSerializer(serializers.ModelSerializer):
+    """Schlanker Lese-Serializer für die Dokumentenliste eines Objekts (Spec Abschnitt 7).
+
+    Kein Upload, keine Kategorieverwaltung — nur die Felder für die
+    DMS-Leseansicht in ObjektDetail.
+    """
+    rechnung_nummer = serializers.SerializerMethodField()
+    rechnung_id = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Dokument
+        fields = [
+            'id', 'dateiname', 'kategorie', 'dokument_typ', 'abgelegt_am',
+            'beleg_nummer', 'revisionssicher', 'rechnung_nummer', 'rechnung_id',
+        ]
+
+    def get_rechnung_nummer(self, obj):
+        try:
+            return obj.rechnung.rechnungsnummer or None
+        except ObjectDoesNotExist:
+            return None
+
+    def get_rechnung_id(self, obj):
+        try:
+            return str(obj.rechnung.id)
+        except ObjectDoesNotExist:
+            return None
 
 
 class DokumentSerializer(serializers.ModelSerializer):
