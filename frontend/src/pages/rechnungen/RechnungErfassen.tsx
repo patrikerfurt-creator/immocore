@@ -120,7 +120,7 @@ export default function RechnungErfassen() {
 
   // PDF-Vorschau laden (parallel neben dem Formular)
   useEffect(() => {
-    if (!id || !(rechnung?.pdf_upload || rechnung?.pfad)) return
+    if (!id || !rechnung?.pfad) return
     let cancelled = false
     rechnungenApi.getPdfBlobUrl(id).then(url => {
       if (cancelled) { URL.revokeObjectURL(url); return }
@@ -129,7 +129,7 @@ export default function RechnungErfassen() {
       setPdfUrl(url)
     }).catch(() => {})
     return () => { cancelled = true }
-  }, [id, rechnung?.pdf_upload])
+  }, [id, rechnung?.pfad])
 
   // Blob-URL beim Verlassen freigeben
   useEffect(() => () => { if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current) }, [])
@@ -268,7 +268,7 @@ export default function RechnungErfassen() {
         <h1 className="text-xl font-semibold text-gray-800">
           {id ? 'Rechnung bearbeiten' : 'Rechnung erfassen'}
         </h1>
-        {id && (rechnung?.pdf_upload || rechnung?.pfad) && (
+        {id && rechnung?.pfad && (
           <div className="flex gap-2">
             <button onClick={ocrAusfuehren} disabled={busy}
                     className="px-3 py-1.5 text-sm rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-50">

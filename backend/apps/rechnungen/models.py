@@ -141,7 +141,6 @@ class Rechnung(models.Model):
         Konto, on_delete=models.PROTECT, null=True, blank=True,
         related_name='rechnungen',
     )
-    pdf_upload = models.FileField(upload_to='rechnungen/', blank=True)
     ki_extraktion = models.JSONField(null=True, blank=True)
     buchung = models.ForeignKey(
         Buchung, on_delete=models.SET_NULL, null=True, blank=True,

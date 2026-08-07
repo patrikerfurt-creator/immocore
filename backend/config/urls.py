@@ -46,7 +46,6 @@ def reset_testdaten(request):
     )
     from apps.abrechnung_wp.models import Wirtschaftsplan
     from apps.rechnungen.models import Rechnung
-    from apps.dokumente.models import Beleg
 
     counts = {}
     with transaction.atomic():
@@ -75,7 +74,6 @@ def reset_testdaten(request):
         counts['hausgeld_sollstellungen'], _ = HausgeldSollstellung.objects.all().delete()
         counts['hausgeld_laeufe'],         _ = HausgeldSollstellungslauf.objects.all().delete()
         counts['wirtschaftsplaene'],       _ = Wirtschaftsplan.objects.all().delete()
-        counts['belege'],                  _ = Beleg.objects.all().delete()
         counts['rechnungen'],              _ = Rechnung.objects.all().delete()
         # E-Banking: CamtImportLog, Kontoumsatz (+ BankErkennungsLog via CASCADE), BankImport
         counts['camt_logs'],               _ = CamtImportLog.objects.all().delete()

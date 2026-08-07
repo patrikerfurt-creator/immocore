@@ -799,7 +799,6 @@ export interface Rechnung extends RechnungList {
   leistungsbeschreibung: string
   textauszug: string
   verarbeitungsnotiz: string
-  pdf_upload: string | null
   ki_extraktion: Record<string, unknown> | null
   freigaben: Freigabe[]
   erstellt_am: string

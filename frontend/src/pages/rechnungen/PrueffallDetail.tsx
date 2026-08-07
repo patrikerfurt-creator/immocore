@@ -99,7 +99,7 @@ export default function PrueffallDetail() {
   const pdfUrlRef = useRef<string | null>(null)
   useEffect(() => {
     if (!rechnung?.id) return
-    if (!(rechnung.pfad || rechnung.pdf_upload)) return
+    if (!rechnung.pfad) return
     let cancelled = false
     rechnungenApi.getPdfBlobUrl(rechnung.id).then(url => {
       if (cancelled) { URL.revokeObjectURL(url); return }
@@ -327,7 +327,7 @@ export default function PrueffallDetail() {
             <span className="text-sm font-semibold text-gray-800">{EUR(rechnung.betrag_brutto)}</span>
           </div>
         </div>
-        {(rechnung.pfad || rechnung.pdf_upload) && (
+        {rechnung.pfad && (
           <Button
             variant="secondary"
             onClick={() => rechnungenApi.openPdf(rechnung.id).catch(() => alert('PDF konnte nicht geladen werden.'))}

@@ -547,7 +547,7 @@ function DetailModal({ rechnung, onClose }: { rechnung: RechnungList; onClose: (
             </div>
           )}
 
-          {(detail?.pfad || detail?.pdf_upload) && (
+          {detail?.pfad && (
             <button
               onClick={() => rechnungenApi.openPdf(rechnung.id).catch(() => alert('PDF konnte nicht geladen werden.'))}
               className="text-sm text-blue-600 hover:underline text-left"

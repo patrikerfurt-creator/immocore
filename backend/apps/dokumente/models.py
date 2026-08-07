@@ -1,7 +1,7 @@
 from uuid import uuid4
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.db import models, transaction
+from django.db import models
 from apps.objekte.models import Objekt, Einheit
 
 
@@ -55,68 +55,6 @@ class BelegnummerZaehler(models.Model):
         zaehler.letzter_zaehler += 1
         zaehler.save(update_fields=['letzter_zaehler'])
         return _format_belegnummer(zaehler.letzter_zaehler)
-
-
-class Beleg(models.Model):
-    """DEPRECATED — nicht verwenden. Wird in Folge-Spec v1_1 entfernt.
-
-    Ersetzt durch die direkte Kopplung Rechnung.beleg_dokument → Dokument
-    (Spec Beleg↔Dokument-Kopplung, E1-Beschluss 2026-08-03). Der
-    Belegnummernkreis lebt weiter: Dokument.beleg_nummer, vergeben über
-    BelegnummerZaehler.naechste_nummer().
-    """
-
-    TYP_CHOICES = [
-        ('rechnung',      'Rechnung'),
-        ('dokument',      'Dokument'),
-        ('wiederkehrend', 'Wiederkehrende Zahlung'),
-        ('sonstiges',     'Sonstiges'),
-    ]
-
-    id          = models.UUIDField(primary_key=True, default=uuid4, editable=False)
-    belegnummer = models.CharField(
-        max_length=12, unique=True, editable=False,
-        help_text='Systemweit eindeutige, unveränderliche Belegnummer (AA00000001 …)',
-    )
-    typ         = models.CharField(max_length=20, choices=TYP_CHOICES)
-    beschreibung = models.CharField(max_length=500, blank=True)
-
-    objekt = models.ForeignKey(
-        Objekt, on_delete=models.PROTECT,
-        null=True, blank=True, related_name='belege',
-    )
-
-    # Verknüpfungen zu bestehenden Dokumenten-Modellen
-    rechnung = models.OneToOneField(
-        'rechnungen.Rechnung', on_delete=models.SET_NULL,
-        null=True, blank=True, related_name='beleg',
-    )
-    dokument = models.OneToOneField(
-        'dokumente.Dokument', on_delete=models.SET_NULL,
-        null=True, blank=True, related_name='beleg',
-    )
-
-    erstellt_am  = models.DateTimeField(auto_now_add=True)
-    erstellt_von = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
-        null=True, blank=True, related_name='erstellte_belege',
-    )
-
-    class Meta:
-        verbose_name        = 'Beleg'
-        verbose_name_plural = 'Belege'
-        ordering            = ['-erstellt_am']
-
-    def save(self, *args, **kwargs):
-        if not self.belegnummer:
-            with transaction.atomic():
-                self.belegnummer = BelegnummerZaehler.naechste_nummer()
-                super().save(*args, **kwargs)
-        else:
-            super().save(*args, **kwargs)
-
-    def __str__(self):
-        return f"Beleg {self.belegnummer} [{self.get_typ_display()}]"
 
 
 class Dokument(models.Model):
