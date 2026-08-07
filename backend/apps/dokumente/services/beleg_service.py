@@ -54,6 +54,47 @@ def rechnungen_root() -> Path:
     return Path('/app/rechnungen')
 
 
+@transaction.atomic
+def koppel_rechnungsbeleg(rechnung, hochgeladen_von) -> Dokument:
+    """Koppelt die bereits im Rechnungen-Archiv liegende Datei (rechnung.pfad)
+    als Beleg-Dokument an die Rechnung — reine Referenz-Übernahme, KEINE Datei-Operation.
+
+    Die Logik entspricht dem Neuanlage-Zweig von migriere_rechnungsbelege
+    (dort wiederverwendet); die Existenz der physischen Datei wird hier NICHT
+    geprüft — das bleibt Aufgabe des Aufrufers (die Pipeline hat die Datei
+    gerade erst selbst per shutil.move abgelegt, der Migrations-Command prüft
+    davor selbst).
+    """
+    if rechnung.beleg_dokument_id:
+        raise ValidationError("Rechnung hat bereits einen Beleg.")
+    if not rechnung.pfad:
+        raise ValidationError("Rechnung hat keinen Pfad.")
+
+    root = rechnungen_root()
+    try:
+        rel = Path(rechnung.pfad).relative_to(root).as_posix()
+    except ValueError:
+        raise ValidationError(f"Rechnung.pfad liegt außerhalb der Rechnungen-Wurzel '{root}'.")
+
+    dok = Dokument.objects.create(
+        datei=rel,                     # String-Zuweisung: Storage schreibt NICHTS
+        ablage_wurzel='rechnungen',
+        dateiname=rechnung.dateiname or Path(rechnung.pfad).name,
+        kategorie='Beleg',
+        dokument_typ='beleg',
+        verknuepfung_typ='Rechnung',
+        sha256=rechnung.sha256_hash or None,
+        objekt=rechnung.objekt,
+        einheit=None,
+        hochgeladen_von=hochgeladen_von,
+        revisionssicher=False,
+        beleg_nummer=BelegnummerZaehler.naechste_nummer(),
+    )
+    rechnung.beleg_dokument = dok
+    rechnung.save(update_fields=['beleg_dokument'])
+    return dok
+
+
 def dokument_pfad(dokument: Dokument) -> Path:
     """Einzige erlaubte Pfadauflösung für Dokument.datei (berücksichtigt ablage_wurzel)."""
     wurzeln = {'media': Path(settings.MEDIA_ROOT), 'rechnungen': rechnungen_root()}

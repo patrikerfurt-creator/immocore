@@ -33,7 +33,7 @@ from django.db.models import Count, Max
 from django.db.models.functions import Length
 
 from apps.dokumente.models import BelegnummerZaehler, Dokument
-from apps.dokumente.services.beleg_service import rechnungen_root
+from apps.dokumente.services.beleg_service import koppel_rechnungsbeleg, rechnungen_root
 from apps.rechnungen.models import Rechnung, Verarbeitungslog
 
 User = get_user_model()
@@ -168,26 +168,12 @@ class Command(BaseCommand):
                 continue
 
             with transaction.atomic():
-                dok = Dokument.objects.create(
-                    datei=rel,                     # String-Zuweisung: Storage schreibt NICHTS
-                    ablage_wurzel='rechnungen',
-                    dateiname=r.dateiname or Path(r.pfad).name,
-                    kategorie='Beleg',
-                    dokument_typ='beleg',
-                    verknuepfung_typ='Rechnung',
-                    sha256=r.sha256_hash or None,
-                    objekt=r.objekt,
-                    einheit=None,
-                    hochgeladen_von=sys_user,
-                    revisionssicher=False,
-                    beleg_nummer=BelegnummerZaehler.naechste_nummer(),
-                )
+                # Anlage + Kopplung: gemeinsame Logik mit der Pipeline (Phase A)
+                dok = koppel_rechnungsbeleg(r, hochgeladen_von=sys_user)
                 # auto_now_add rückdatieren: Ablage soll den historischen Zeitpunkt tragen
                 Dokument.objects.filter(pk=dok.pk).update(
                     abgelegt_am=r.erstellt_am, hochgeladen_am=r.erstellt_am,
                 )
-                r.beleg_dokument = dok
-                r.save(update_fields=['beleg_dokument'])
                 Verarbeitungslog.objects.create(
                     rechnung=r, aktion='Beleg-Dokument migriert',
                     status=r.status, details=dok.beleg_nummer,

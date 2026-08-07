@@ -14,6 +14,7 @@ import re
 
 logger = logging.getLogger(__name__)
 
+from apps.dokumente.services.beleg_service import koppel_rechnungsbeleg
 from apps.rechnungen.models import Kreditor, KreditorRegel, Rechnung, Verarbeitungslog
 from apps.rechnungen.services.invoice_parser import (
     extract_invoice_data, get_file_hash,
@@ -24,6 +25,25 @@ PFLICHTFELDER = {
     'invoice_number': 'Rechnungsnummer',
     'gross_amount': 'Bruttobetrag',
 }
+
+
+# ---------------------------------------------------------------------------
+# Systembenutzer für automatische Beleg-Kopplung (v1_1 Phase A)
+# ---------------------------------------------------------------------------
+
+def _system_user():
+    """Löst den Systembenutzer für die automatische Beleg-Kopplung auf.
+
+    Reihenfolge wie migriere_rechnungsbelege._resolve_user / autopipeline_lauf:
+    'immocore-autopilot' > erster Superuser > None (Aufrufer muss die
+    Kopplung dann überspringen).
+    """
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+    user = User.objects.filter(username='immocore-autopilot').first()
+    if user:
+        return user
+    return User.objects.filter(is_superuser=True).order_by('pk').first()
 
 
 # ---------------------------------------------------------------------------
@@ -331,6 +351,23 @@ def verarbeite_datei(datei_pfad: str, archiv_root: Path) -> dict:
             vorgeschlagenes_konto=vorgeschlagenes_konto,
             ist_gutschrift=ist_gutschrift,
         )
+
+        # Beleg-Dokument koppeln (v1_1 Phase A) — darf den Rechnungseingang nie
+        # blockieren, daher eigener Savepoint (die äußere Transaktion bleibt
+        # sonst nach einer Exception "kaputt" und der Log-Eintrag/Commit unten
+        # würde ebenfalls scheitern).
+        try:
+            with transaction.atomic():
+                sys_user = _system_user()
+                if sys_user is None:
+                    raise ValueError("Kein Systembenutzer für Beleg-Kopplung gefunden.")
+                dok = koppel_rechnungsbeleg(rechnung, hochgeladen_von=sys_user)
+                Verarbeitungslog.objects.create(rechnung=rechnung, aktion='Beleg-Dokument angelegt',
+                                                status=rechnung.status, details=dok.beleg_nummer)
+        except Exception as exc:
+            logger.warning('Beleg-Kopplung fehlgeschlagen für Rechnung %s: %s', rechnung.id, exc)
+            Verarbeitungslog.objects.create(rechnung=rechnung, aktion='Beleg-Kopplung fehlgeschlagen',
+                                            status=rechnung.status, details=str(exc)[:500])
 
         Verarbeitungslog.objects.create(
             rechnung=rechnung,

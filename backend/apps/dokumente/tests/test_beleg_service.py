@@ -14,6 +14,7 @@ import shutil
 import tempfile
 from datetime import date
 from decimal import Decimal
+from pathlib import Path
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
@@ -23,9 +24,12 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
 
+from apps.buchhaltung.models import ImportOrdnerEinstellung
 from apps.dokumente.models import Dokument
 from apps.dokumente.services.beleg_service import (
+    koppel_rechnungsbeleg,
     lege_rechnungsbeleg_ab,
+    rechnungen_root,
     sperre_beleg_revisionssicher,
 )
 from apps.konten.models import Konto
@@ -102,6 +106,71 @@ class LegeRechnungsbelegAbTest(TestCase):
             lege_rechnungsbeleg_ab(
                 self.rechnung, self.datei_bytes, "rechnung-b.pdf", self.objekt, self.user,
             )
+
+
+class KoppelRechnungsbelegTest(TestCase):
+    """koppel_rechnungsbeleg: reine Referenz-Übernahme von Rechnung.pfad (v1_1 Phase A)."""
+
+    def setUp(self):
+        self._tmp = tempfile.mkdtemp(prefix="immocore_test_rechnungen_")
+        self.addCleanup(shutil.rmtree, self._tmp, ignore_errors=True)
+        self.archiv_dir = Path(self._tmp) / "archiv"
+        self.archiv_dir.mkdir(parents=True, exist_ok=True)
+        ImportOrdnerEinstellung.objects.create(
+            bereich="rechnungen", archiv_ordner=str(self.archiv_dir),
+        )
+        self.root = rechnungen_root()
+        self.objekt = _objekt()
+        self.user = _user("koppel-tester")
+
+    def _rechnung_mit_datei(self, name="re1.pdf", **kwargs):
+        pfad = self.archiv_dir / "2026" / "08" / name
+        pfad.parent.mkdir(parents=True, exist_ok=True)
+        pfad.write_bytes(b"%PDF-1.4 Testinhalt")
+        return self._create_rechnung(str(pfad), **kwargs)
+
+    def _create_rechnung(self, pfad, sha256="", betrag="1000.00"):
+        r = Rechnung.objects.create(
+            objekt=self.objekt, pfad=pfad, dateiname=Path(pfad).name,
+            sha256_hash=sha256, status="in_pruefung",
+            betrag_brutto=Decimal(betrag), rechnungsnummer="RE-KOPPEL-001",
+        )
+        return r
+
+    def test_koppelt_dokument_korrekt(self):
+        r = self._rechnung_mit_datei("re1.pdf", sha256="b" * 64)
+        dok = koppel_rechnungsbeleg(r, hochgeladen_von=self.user)
+
+        self.assertEqual(dok.ablage_wurzel, "rechnungen")
+        self.assertTrue(dok.datei.name.startswith("archiv/"))
+        self.assertFalse(dok.datei.name.startswith("/"))
+        self.assertEqual(dok.dokument_typ, "beleg")
+        self.assertEqual(dok.kategorie, "Beleg")
+        self.assertEqual(dok.verknuepfung_typ, "Rechnung")
+        self.assertEqual(dok.sha256, "b" * 64)
+        self.assertEqual(dok.objekt_id, self.objekt.id)
+        self.assertFalse(dok.revisionssicher)
+        self.assertRegex(dok.beleg_nummer, r"^[A-Z]{2}\d{8}$")
+
+        r.refresh_from_db()
+        self.assertEqual(r.beleg_dokument_id, dok.id)
+
+    def test_doppelaufruf_wirft_fehler(self):
+        r = self._rechnung_mit_datei("re2.pdf")
+        koppel_rechnungsbeleg(r, hochgeladen_von=self.user)
+        r.refresh_from_db()
+        with self.assertRaises(ValidationError):
+            koppel_rechnungsbeleg(r, hochgeladen_von=self.user)
+
+    def test_leerer_pfad_wirft_fehler(self):
+        r = self._create_rechnung(pfad="")
+        with self.assertRaises(ValidationError):
+            koppel_rechnungsbeleg(r, hochgeladen_von=self.user)
+
+    def test_fremde_wurzel_wirft_fehler(self):
+        r = self._create_rechnung(pfad="/anderswo/rechnung.pdf")
+        with self.assertRaises(ValidationError):
+            koppel_rechnungsbeleg(r, hochgeladen_von=self.user)
 
 
 @override_settings(MEDIA_ROOT=_MEDIA_TMP)
