@@ -291,9 +291,10 @@ class RechnungViewSet(viewsets.ModelViewSet):
         """OCR-Extraktion (Vorbefüllung) + Verifikations-Ampel (Spec 4.3/5)."""
         from .services.ocr import ki_ocr_rechnung, flache_extraktion
         from .services.erkennung_ampel_service import ampel_eingabe_aus_ocr, berechne_ampel
+        from .services.rechnung_datei_service import rechnung_datei_pfad
 
         rechnung = self.get_object()
-        if not rechnung.pdf_upload and not rechnung.pfad:
+        if not rechnung_datei_pfad(rechnung):
             return Response({'error': 'Kein PDF vorhanden'}, status=status.HTTP_400_BAD_REQUEST)
         try:
             felder = ki_ocr_rechnung(rechnung)
@@ -825,16 +826,17 @@ class RechnungViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'], url_path='pdf')
     def pdf(self, request, pk=None):
-        """PDF-Datei aus dem Dateisystem liefern."""
-        from pathlib import Path
+        """Rechnungsbeleg aus dem Dateisystem liefern (bevorzugt gekoppeltes
+        Beleg-Dokument, Fallback Alt-Feld rechnung.pfad)."""
+        import mimetypes
         from django.http import FileResponse
+        from .services.rechnung_datei_service import rechnung_datei_pfad
         rechnung = self.get_object()
-        pfad = Path(rechnung.pfad) if rechnung.pfad else None
-        if rechnung.pdf_upload:
-            pfad = Path(rechnung.pdf_upload.path)
+        pfad = rechnung_datei_pfad(rechnung)
         if not pfad or not pfad.exists():
             return Response({'error': 'PDF nicht gefunden'}, status=status.HTTP_404_NOT_FOUND)
-        return FileResponse(open(pfad, 'rb'), content_type='application/pdf')
+        content_type, _ = mimetypes.guess_type(str(pfad))
+        return FileResponse(open(pfad, 'rb'), content_type=content_type or 'application/pdf')
 
     # ------------------------------------------------------------------
     # Frontoffice Soft-Lock

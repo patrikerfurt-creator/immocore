@@ -69,15 +69,14 @@ def ki_ocr_rechnung(rechnung) -> dict:
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY nicht konfiguriert")
 
-    # PDF-Quelle: hochgeladenes FileField oder Ordner-Import-Pfad (rechnung.pfad)
-    if rechnung.pdf_upload:
-        with rechnung.pdf_upload.open("rb") as f:
-            roh = f.read()
-    elif rechnung.pfad:
-        with open(rechnung.pfad, "rb") as f:
-            roh = f.read()
-    else:
-        raise RuntimeError("Kein PDF (weder pdf_upload noch pfad) vorhanden")
+    # PDF-Quelle: zentrale Auflösung (gekoppeltes Beleg-Dokument bevorzugt,
+    # Fallback Alt-Feld rechnung.pfad).
+    from .rechnung_datei_service import rechnung_datei_pfad
+    pfad = rechnung_datei_pfad(rechnung)
+    if not pfad:
+        raise RuntimeError("Kein PDF (weder Beleg-Dokument noch pfad) vorhanden")
+    with open(pfad, "rb") as f:
+        roh = f.read()
     pdf_data = base64.standard_b64encode(roh).decode("utf-8")
 
     client = anthropic.Anthropic(api_key=api_key)
