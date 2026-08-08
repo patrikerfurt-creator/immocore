@@ -149,6 +149,24 @@ class WKZVorlageViewSet(viewsets.ModelViewSet):
     # Lifecycle-Aktionen
     # -----------------------------------------------------------------------
 
+    @action(detail=True, methods=['post'], url_path='beleg-verknuepfen')
+    def beleg_verknuepfen(self, request, pk=None):
+        """Verknüpft eine Eingangsrechnung als Beleg/Bescheid der WKZ-Vorlage:
+        Bescheid gilt als erbracht, Rechnung wird aus dem Zahlweg genommen
+        (status='wkz_beleg'), ein evtl. Rechnungs-OP (Phase 1) wird aufgelöst.
+        Body: { "rechnung_id": "..." }"""
+        from apps.rechnungen.models import Rechnung
+        from .services.wkz.vorlage_service import verknuepfe_rechnung_als_wkz_beleg
+        vorlage = self.get_object()
+        rechnung = Rechnung.objects.filter(pk=request.data.get('rechnung_id')).first()
+        if not rechnung:
+            return Response({'detail': 'Rechnung nicht gefunden.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            verknuepfe_rechnung_als_wkz_beleg(vorlage, rechnung, request.user)
+        except Exception as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(WKZVorlageDetailSerializer(vorlage).data)
+
     @action(detail=True, methods=['post'], url_path='einreichen')
     def einreichen(self, request, pk=None):
         """Vorlage zur Freigabe einreichen."""
@@ -282,6 +300,10 @@ class WKZOPViewSet(viewsets.ReadOnlyModelViewSet):
             qs = qs.filter(vorlage__objekt_id=objekt_id)
         if s := params.get('status'):
             qs = qs.filter(status=s)
+        if zahlweg := params.get('zahlweg'):
+            qs = qs.filter(vorlage__zahlweg=zahlweg)
+        if params.get('offen'):
+            qs = qs.filter(status__in=('erzeugt', 'bescheid_fehlt'))
         return qs.order_by('-faellig_am')
 
     @action(detail=True, methods=['post'], url_path='verwerfen')
@@ -340,6 +362,132 @@ class WKZOPViewSet(viewsets.ReadOnlyModelViewSet):
             'wkz_op': WKZOPDetailSerializer(wkz_op).data,
             'buchung_id': str(buchung.id),
         })
+
+    @action(detail=False, methods=['post'], url_path='sepa-export')
+    def sepa_export(self, request):
+        """
+        Manuelle Überweisung für WKZ-OPs (Vorlagen mit zahlweg='ueberweisung') —
+        analog zum Rechnungs-Zahllauf: pain.001 erzeugen, OPs auf
+        'ueberweisung_veranlasst' setzen, Protokolleintrag schreiben.
+        Body: { "op_ids": [...], "faelligkeitsdatum": "YYYY-MM-DD" }
+        Die Verbuchung erfolgt später über den camt-Bankabgang (Match).
+        """
+        from collections import defaultdict
+        from datetime import datetime
+        from django.http import HttpResponse
+        from apps.buchhaltung.services.sepa_export import exportiere_sepa
+        from apps.buchhaltung.models import SepaZahlungslauf
+        from apps.objekte.models import Bankkonto
+
+        op_ids = request.data.get('op_ids', [])
+        faellig_str = request.data.get('faelligkeitsdatum')
+        if not op_ids:
+            return Response({'error': 'Keine WKZ-OPs ausgewählt'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            faelligkeitsdatum = (
+                datetime.strptime(faellig_str, '%Y-%m-%d').date() if faellig_str else date.today()
+            )
+        except ValueError:
+            faelligkeitsdatum = date.today()
+
+        ops = list(
+            WiederkehrendeBuchungOP.objects.filter(
+                id__in=op_ids,
+                vorlage__zahlweg='ueberweisung',
+                status__in=('erzeugt', 'bescheid_fehlt'),
+            ).select_related('vorlage__kreditor', 'vorlage__objekt', 'kreditor_op')
+        )
+        if not ops:
+            return Response(
+                {'error': 'Keine exportierbaren WKZ-OPs gefunden (Zahlweg Überweisung, Status offen).'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        by_objekt = defaultdict(list)
+        for op in ops:
+            by_objekt[op.vorlage.objekt_id].append(op)
+
+        sepa_gruppen = []
+        uebersprungen = []
+        exportierte = []
+        for objekt_id, gruppe in by_objekt.items():
+            zv_bk = Bankkonto.objects.select_related('objekt').filter(
+                objekt_id=objekt_id, zahlungsverkehr=True, aktiv=True
+            ).first()
+            if not zv_bk or not zv_bk.iban:
+                uebersprungen.extend(
+                    f'{op.vorlage.bezeichnung}: kein Zahlungsverkehrskonto' for op in gruppe
+                )
+                continue
+            zahlungen = []
+            for op in gruppe:
+                kreditor = op.vorlage.kreditor
+                betrag = (
+                    op.kreditor_op.betrag_offen if op.kreditor_op_id else op.vorlage.betrag_gesamt
+                )
+                if not kreditor or not kreditor.iban or not betrag or betrag <= 0:
+                    uebersprungen.append(f'{op.vorlage.bezeichnung}: Kreditor-IBAN oder Betrag fehlt')
+                    continue
+                zweck = (
+                    f"{op.vorlage.bezeichnung} {op.periode_von.strftime('%m/%Y')}"
+                    f" / {kreditor.name}"
+                )
+                zahlungen.append({
+                    'betrag': betrag,
+                    'empfaenger_name': kreditor.name,
+                    'empfaenger_iban': kreditor.iban,
+                    'empfaenger_bic': kreditor.bic or 'NOTPROVIDED',
+                    'verwendungszweck': zweck[:140],
+                    'faelligkeitsdatum': faelligkeitsdatum,
+                    'end_to_end_id': f'WKZ-{str(op.id)[:12].upper()}',
+                })
+                exportierte.append((op, betrag))
+            if zahlungen:
+                sepa_gruppen.append({
+                    'auftraggeber': {
+                        'name': zv_bk.kontoinhaber or zv_bk.objekt.bezeichnung,
+                        'iban': zv_bk.iban,
+                        'bic': zv_bk.bic or 'NOTPROVIDED',
+                        'bank_bezeichnung': zv_bk.bezeichnung,
+                    },
+                    'zahlungen': zahlungen,
+                })
+
+        if not sepa_gruppen:
+            msg = 'Keine WKZ-OPs exportierbar.'
+            if uebersprungen:
+                msg += ' ' + '; '.join(uebersprungen)
+            return Response({'error': msg}, status=status.HTTP_400_BAD_REQUEST)
+
+        xml_bytes = exportiere_sepa(gruppen=sepa_gruppen)
+
+        from .services.wkz.buchungs_service import verbuche_ueberweisung_veranlasst
+        for op, _ in exportierte:
+            # Aufwand + Kreditor-Verbindlichkeit buchen, Zahlung auf 13600 legen und
+            # die WKZ-OP abschließen (Status setzt der Service auf 'bankabgang_erfolgt').
+            verbuche_ueberweisung_veranlasst(op, faelligkeitsdatum, request.user)
+
+        dateiname = f"wkz_zahlungen_{faelligkeitsdatum.strftime('%Y%m%d')}.xml"
+        SepaZahlungslauf.objects.create(
+            faelligkeitsdatum=faelligkeitsdatum,
+            anzahl_rechnungen=len(exportierte),
+            summe=sum(b for _, b in exportierte),
+            dateiname=dateiname,
+            positionen=[{
+                'id': str(op.id),
+                'rechnungsnummer': f'WKZ {op.vorlage.bezeichnung} {op.periode_von.strftime("%m/%Y")}',
+                'kreditor': op.vorlage.kreditor.name if op.vorlage.kreditor_id else '',
+                'betrag': str(b),
+                'objekt': op.vorlage.objekt.bezeichnung if op.vorlage.objekt_id else '',
+            } for op, b in exportierte],
+            buchungs_fehler=[],
+            uebersprungen=uebersprungen,
+            erstellt_von=request.user,
+        )
+
+        response = HttpResponse(xml_bytes, content_type='application/xml')
+        response['Content-Disposition'] = f'attachment; filename="{dateiname}"'
+        return response
 
 
 # ---------------------------------------------------------------------------

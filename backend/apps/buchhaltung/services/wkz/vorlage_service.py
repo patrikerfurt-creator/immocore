@@ -102,7 +102,68 @@ def erstelle_vorlage(data: dict, splits_data: list[dict], user) -> 'Wiederkehren
     for split in vorlage.splits.all():
         validiere_split_kontonummer(split.kontonummer, vorlage.objekt)
 
+    # Aus Beleg angelegt: Rechnung gleich aus dem Zahlweg nehmen (kein Doppel).
+    if vorlage.rechnung_id:
+        _rechnung_als_wkz_beleg_markieren(vorlage.rechnung)
+
     logger.info("WKZ Vorlage %s angelegt von %s", vorlage.id, user)
+    return vorlage
+
+
+def _rechnung_als_wkz_beleg_markieren(rechnung):
+    """Nimmt die Rechnung aus dem normalen Zahlweg (status='wkz_beleg') und löst
+    einen bereits angelegten Rechnungs-Kreditor-OP (Phase 1, unbezahlt,
+    Buchung im Entwurf) auf, damit die Zahlung nicht doppelt läuft."""
+    from apps.buchhaltung.models import KreditorOP, Buchung
+
+    kop = KreditorOP.objects.filter(rechnung=rechnung).first()
+    phase1 = kop.buchung if (kop and kop.status in ('offen', 'teilbezahlt')) else None
+    if kop and kop.status in ('offen', 'teilbezahlt'):
+        kop.delete()
+
+    upd = ['status']
+    rechnung.status = 'wkz_beleg'
+    if phase1 is not None:
+        for feld in ('op_buchung', 'aufwand_buchung', 'buchung'):
+            if hasattr(rechnung, f'{feld}_id') and getattr(rechnung, f'{feld}_id') == phase1.id:
+                setattr(rechnung, f'{feld}_id', None)
+                upd.append(f'{feld}_id')
+    rechnung.save(update_fields=upd)
+
+    if phase1 is not None and phase1.status == 'entwurf':
+        Buchung.objects.filter(parent_buchung=phase1).delete()
+        phase1.delete()
+
+
+@transaction.atomic
+def verknuepfe_rechnung_als_wkz_beleg(vorlage, rechnung, user):
+    """
+    Verknüpft eine Eingangsrechnung als Beleg/Bescheid einer WKZ-Vorlage:
+      - vorlage.rechnung = rechnung
+      - Bescheid gilt als erbracht: offene WKZ-OPs verlassen 'bescheid_fehlt',
+        bescheid_hochgeladen_am/von werden gesetzt.
+      - Rechnung wird aus dem normalen Zahlweg genommen (status='wkz_beleg').
+      - Ein bereits angelegter Kreditor-OP der Rechnung (Phase 1, unbezahlt,
+        Buchung im Entwurf) wird aufgelöst, damit die Zahlung nicht doppelt läuft.
+    """
+    vorlage.rechnung = rechnung
+    vorlage.save(update_fields=['rechnung'])
+
+    jetzt = timezone.now()
+    for op in vorlage.ops.all():
+        felder = []
+        if op.status == 'bescheid_fehlt':
+            op.status = 'erzeugt'
+            felder.append('status')
+        if op.bescheid_hochgeladen_am is None:
+            op.bescheid_hochgeladen_am = jetzt
+            op.bescheid_hochgeladen_von = user
+            felder += ['bescheid_hochgeladen_am', 'bescheid_hochgeladen_von']
+        if felder:
+            op.save(update_fields=felder)
+
+    _rechnung_als_wkz_beleg_markieren(rechnung)
+    logger.info("Rechnung %s als WKZ-Beleg mit Vorlage %s verknüpft", rechnung.id, vorlage.id)
     return vorlage
 
 

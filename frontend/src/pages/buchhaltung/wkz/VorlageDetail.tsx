@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { wkzApi, type WKZOP } from '../../../api/wkz'
+import { rechnungenApi } from '../../../api/rechnungen'
+import type { RechnungList } from '../../../types'
 import { Badge } from '../../../components/ui/Badge'
 import { Button } from '../../../components/ui/Button'
 
@@ -130,6 +132,26 @@ export default function VorlageDetail() {
       setFehler((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? 'Fehler'),
   })
 
+  // Beleg/Bescheid: Eingangsrechnung des Kreditors verknüpfen
+  const [belegRechnungId, setBelegRechnungId] = useState('')
+  const { data: belegKandidaten = [] } = useQuery({
+    queryKey: ['rechnungen-kreditor', vorlage?.kreditor],
+    queryFn: () => rechnungenApi.list({ kreditor: vorlage!.kreditor }),
+    enabled: !!vorlage?.kreditor && !vorlage?.rechnung_id,
+    select: (rs: RechnungList[]) => rs.filter(r => r.status !== 'wkz_beleg' && r.status !== 'storniert'),
+  })
+  const belegMutation = useMutation({
+    mutationFn: () => wkzApi.belegVerknuepfen(id!, belegRechnungId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['wkz-vorlage', id] })
+      qc.invalidateQueries({ queryKey: ['wkz-ops', id] })
+      setBelegRechnungId('')
+      setFehler('')
+    },
+    onError: (e: unknown) =>
+      setFehler((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? 'Verknüpfen fehlgeschlagen'),
+  })
+
   const bearbeitenMutation = useMutation({
     mutationFn: (splits: typeof editSplits) => {
       const betragGesamt = splits.reduce((s, r) => s + (parseFloat(r.betrag) || 0), 0).toFixed(2)
@@ -219,6 +241,36 @@ export default function VorlageDetail() {
             <div className="flex gap-2">
               <dt className="text-gray-500 w-36">Typ</dt>
               <dd>{vorlage.typ === 'bescheid' ? 'Bescheid' : 'Vertrag'}</dd>
+            </div>
+            <div className="flex gap-2 items-start">
+              <dt className="text-gray-500 w-36">Beleg / Bescheid</dt>
+              <dd className="flex-1">
+                {vorlage.rechnung_id ? (
+                  <span className="text-green-700">✓ Rechnung als Beleg/Bescheid verknüpft</span>
+                ) : (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      value={belegRechnungId}
+                      onChange={e => setBelegRechnungId(e.target.value)}
+                      className="border rounded px-2 py-1 text-sm"
+                    >
+                      <option value="">— Rechnung wählen —</option>
+                      {belegKandidaten.map((r: RechnungList) => (
+                        <option key={r.id} value={r.id}>
+                          {(r.rechnungsnummer || r.id.slice(0, 8))} · {r.betrag_brutto != null ? EUR(r.betrag_brutto) : '—'} · {r.status}
+                        </option>
+                      ))}
+                    </select>
+                    <Button
+                      size="sm"
+                      disabled={!belegRechnungId || belegMutation.isPending}
+                      onClick={() => belegMutation.mutate()}
+                    >
+                      {belegMutation.isPending ? '…' : 'Als Beleg verknüpfen'}
+                    </Button>
+                  </div>
+                )}
+              </dd>
             </div>
             <div className="flex gap-2">
               <dt className="text-gray-500 w-36">Rhythmus</dt>

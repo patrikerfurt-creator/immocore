@@ -95,7 +95,7 @@ def finde_kandidaten(kontoumsatz) -> list:
     # Basis-Filterprimär über Objekt + Kreditor + Status
     qs = WiederkehrendeBuchungOP.objects.filter(
         vorlage__kreditor=kreditor,
-        status__in=('erzeugt', 'bescheid_fehlt'),
+        status__in=('erzeugt', 'bescheid_fehlt', 'ueberweisung_veranlasst'),
     ).select_related('vorlage', 'kreditor_op')
 
     # Objekt einschränken über bankkonto

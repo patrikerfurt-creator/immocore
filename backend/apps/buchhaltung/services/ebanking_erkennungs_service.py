@@ -454,6 +454,70 @@ def fuehre_erkennung_aus(ku):
         except Exception as exc:
             logger.warning("E-Banking Stufe 1b2 (Sammellastschrift) Fehler: %s", exc)
 
+    # ---- Stufe 1b3: Sammelüberweisung (Ausgang) → 13600 ----
+    # Spiegel zur Sammellastschrift: ein ausgehender Batch (Rechnungen + WKZ-
+    # Überweisungen) wird gegen das Zahlungsausgang-Clearing 13600 gebucht.
+    # Textbasiert, weil eine Sammelüberweisung mehrere Zahlläufe bündelt und der
+    # Betrag nie exakt zu einem einzelnen passt.
+    if ku.betrag < 0 and ku.objekt:
+        try:
+            vz = (ku.verwendungszweck or '').lower()
+            ist_sammel = 'sammel' in vz and ('ueberw' in vz or 'überw' in vz or 'uberw' in vz)
+            if ist_sammel:
+                konto_13600 = _ermittle_konto(ku.objekt, '13600', ku.buchungsdatum)
+                if konto_13600:
+                    ku.erkannt_gegenkonto     = konto_13600
+                    ku.erkennungs_quelle      = 'sammelueberweisung'
+                    ku.erkennungs_konfidenz   = Decimal('0.90')
+                    ku.erkennungs_begruendung = (
+                        'SEPA-Sammelüberweisung (Verwendungszweck) → Zahlungsausgang-Clearing 13600. '
+                        'Bitte gegen die offenen 13600-Posten (bezahlte Rechnungen / veranlasste '
+                        'WKZ-Überweisungen) plausibilisieren.'
+                    )
+                    ku.status = 'vorschlag'
+                    log.stufe_erreicht = '1b3'
+                    log.quelle         = 'sammelueberweisung'
+                    log.konfidenz      = Decimal('0.90')
+                    _save_all(ku, log)
+                    return ku
+        except Exception as exc:
+            logger.warning("E-Banking Stufe 1b3 (Sammelüberweisung) Fehler: %s", exc)
+
+    # ---- Stufe 1c0: WKZ-Lastschrift-Bankabgang → WKZ-OP schließen ----
+    # Ein Bankabgang, der zu einer offenen Lastschrift-WKZ-OP des Kreditors passt
+    # (Betrag/Fälligkeit in Toleranz), schließt die WKZ-OP und bucht den Aufwand
+    # (Kassenprinzip). Vorrang vor dem generischen iban_kreditor-Match.
+    if ku.betrag < 0 and ku.objekt:
+        try:
+            from apps.buchhaltung.services.wkz.bank_match_service import (
+                finde_kandidaten, ist_eindeutiger_auto_match,
+            )
+            from apps.buchhaltung.services.wkz.buchungs_service import (
+                verbuche_wkz_lastschrift_bankabgang,
+            )
+            kand = [k for k in finde_kandidaten(ku) if k.vorlage.zahlweg == 'lastschrift']
+            eindeutig = [k for k in kand if ist_eindeutiger_auto_match(k, ku)]
+            if len(eindeutig) == 1:
+                op = eindeutig[0]
+                buchung = verbuche_wkz_lastschrift_bankabgang(op, ku, _get_system_user())
+                ku.status                 = 'verbucht'
+                ku.buchung                = buchung
+                ku.verbucht_am            = timezone.now()
+                ku.erkennungs_quelle      = 'wkz_bankabgang'
+                ku.erkennungs_konfidenz   = Decimal('1.00')
+                ku.erkennungs_begruendung = (
+                    f"WKZ-Lastschrift '{op.vorlage.bezeichnung}' ({op.periode_von.strftime('%m/%Y')}) "
+                    f"→ Aufwand gebucht, WKZ-OP geschlossen."
+                )
+                log.stufe_erreicht = '1c0'
+                log.quelle         = 'wkz_bankabgang'
+                log.konfidenz      = Decimal('1.00')
+                log.auto_verbucht  = True
+                _save_all(ku, log)
+                return ku
+        except Exception as exc:
+            logger.warning("E-Banking Stufe 1c0 (WKZ-Lastschrift-Bankabgang) Fehler: %s", exc)
+
     # ---- Stufe 1c: Kreditor-OP Rechnungsnummer-Match ----
     if ku.betrag < 0:
         try:

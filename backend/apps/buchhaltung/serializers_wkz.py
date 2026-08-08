@@ -31,7 +31,7 @@ class WKZVorlageSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'objekt', 'objekt_bezeichnung',
             'kreditor', 'kreditor_name',
-            'bezeichnung', 'typ', 'status',
+            'bezeichnung', 'typ', 'status', 'zahlweg',
             'betrag_gesamt', 'rhythmus',
             'erste_faelligkeit', 'gueltig_ab', 'gueltig_bis',
             'jahresbetrag', 'perioden_pro_jahr',
@@ -66,7 +66,7 @@ class WKZVorlageDetailSerializer(serializers.ModelSerializer):
             'betrag_gesamt', 'rhythmus',
             'erste_faelligkeit', 'bei_wochenende', 'vorlauf_tage',
             'toleranz_betrag', 'toleranz_tage',
-            'sepa_mandat_id', 'bescheid_pflicht',
+            'zahlweg', 'sepa_mandat_id', 'bescheid_pflicht',
             'gueltig_ab', 'gueltig_bis',
             'jahresbetrag', 'perioden_pro_jahr',
             'freigegeben_am', 'freigegeben_von_name', 'freigabe_jahresbetrag',
@@ -96,6 +96,9 @@ class WKZVorlageCreateSerializer(serializers.Serializer):
         max_digits=14, decimal_places=2, default='5.00'
     )
     toleranz_tage = serializers.IntegerField(default=14)
+    zahlweg = serializers.ChoiceField(
+        choices=['lastschrift', 'ueberweisung'], default='lastschrift'
+    )
     sepa_mandat_id = serializers.CharField(max_length=35, allow_blank=True, default='')
     bescheid_pflicht = serializers.BooleanField(required=False)
     gueltig_ab = serializers.DateField()
@@ -116,6 +119,10 @@ class WKZVorlageCreateSerializer(serializers.Serializer):
 class WKZOPSerializer(serializers.ModelSerializer):
     vorlage_bezeichnung = serializers.CharField(source='vorlage.bezeichnung', read_only=True)
     kreditor_name = serializers.CharField(source='vorlage.kreditor.name', read_only=True)
+    kreditor_iban = serializers.CharField(source='vorlage.kreditor.iban', read_only=True)
+    zahlweg = serializers.CharField(source='vorlage.zahlweg', read_only=True)
+    objekt_id = serializers.UUIDField(source='vorlage.objekt_id', read_only=True)
+    objekt_bezeichnung = serializers.CharField(source='vorlage.objekt.bezeichnung', read_only=True)
     op_nummer = serializers.IntegerField(source='kreditor_op.op_nummer', read_only=True)
     erwarteter_betrag = serializers.DecimalField(
         source='kreditor_op.betrag_ursprung', max_digits=14, decimal_places=2, read_only=True
@@ -125,7 +132,8 @@ class WKZOPSerializer(serializers.ModelSerializer):
         model = WiederkehrendeBuchungOP
         fields = [
             'id', 'vorlage', 'vorlage_bezeichnung',
-            'kreditor_name', 'op_nummer',
+            'kreditor_name', 'kreditor_iban', 'zahlweg',
+            'objekt_id', 'objekt_bezeichnung', 'op_nummer',
             'periode_von', 'periode_bis', 'faellig_am',
             'status', 'erwarteter_betrag',
             'abweichung_betrag', 'erzeugt_am',

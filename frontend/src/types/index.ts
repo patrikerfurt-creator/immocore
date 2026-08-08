@@ -713,7 +713,7 @@ export type RechnungStatus =
   | 'erkannt' | 'pruefung_match' | 'nicht_erkannt'
   | 'in_buchhaltung' | 'zur_freigabe'                      // v1.1 zweistufig
   | 'in_pruefung' | 'freigegeben'
-  | 'teilbezahlt' | 'bezahlt' | 'abgelehnt' | 'storniert' | 'fehler'
+  | 'teilbezahlt' | 'bezahlt' | 'wkz_beleg' | 'abgelehnt' | 'storniert' | 'fehler'
 
 export type Ampel = 'gruen' | 'gelb' | 'rot'
 

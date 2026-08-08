@@ -162,14 +162,16 @@ def erzeuge_einzelnen_op(vorlage, periode: Periode) -> 'WiederkehrendeBuchungOP'
         herkunft='wkz_vorlage',
     )
 
-    wkz_status = 'bescheid_fehlt' if vorlage.bescheid_pflicht else 'erzeugt'
+    # Bescheid gilt als erbracht, wenn eine Rechnung als Beleg verknüpft ist.
+    bescheid_da = (not vorlage.bescheid_pflicht) or bool(vorlage.rechnung_id)
     wkz_op = WiederkehrendeBuchungOP.objects.create(
         vorlage=vorlage,
         kreditor_op=kreditor_op,
         periode_von=periode.periode_von,
         periode_bis=periode.periode_bis,
         faellig_am=periode.faellig_am,
-        status=wkz_status,
+        status='erzeugt' if bescheid_da else 'bescheid_fehlt',
+        bescheid_hochgeladen_am=(timezone.now() if (vorlage.bescheid_pflicht and vorlage.rechnung_id) else None),
     )
 
     if vorlage.bescheid_pflicht:

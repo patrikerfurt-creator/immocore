@@ -175,6 +175,165 @@ def _erzeuge_teilbuchung(parent, soll_konto, haben_konto, betrag, text, erstellt
 # ---------------------------------------------------------------------------
 
 @transaction.atomic
+def verbuche_ueberweisung_veranlasst(wkz_op, faelligkeitsdatum, user=None) -> 'Buchung':
+    """
+    Überweisungs-WKZ: bei Zahlungsveranlassung (Zahlungslauf) wird der Aufwand
+    erfasst und der Ausgang aufs Zahlungsausgang-Clearing 13600 gelegt:
+
+        Soll <Aufwand je Split> / Haben 13600
+
+    Der spätere Bankabgang der Sammelüberweisung stellt 13600 glatt
+    (Soll 13600 / Haben Bank). Strikt im WJ des Fälligkeitsdatums.
+    Idempotent: tut nichts, wenn der KreditorOP bereits ausgeglichen ist.
+
+    Returns: die erzeugte Parent-Buchung (oder die bestehende bei Idempotenz).
+    """
+    from apps.buchhaltung.models import Buchung
+    from apps.konten.models import Konto
+    from apps.objekte.models import Wirtschaftsjahr
+
+    vorlage = wkz_op.vorlage
+    objekt = vorlage.objekt
+    kop = wkz_op.kreditor_op
+    if kop and kop.status == 'bezahlt':
+        return kop.zahlung_buchung  # bereits veranlasst/gebucht
+
+    jahr = faelligkeitsdatum.year
+    wj = Wirtschaftsjahr.objects.filter(objekt=objekt, jahr=jahr).first()
+    if not wj:
+        raise ValueError(f'Kein Wirtschaftsjahr {jahr} am Objekt {objekt} — Überweisung nicht buchbar.')
+
+    def _konto(nr):
+        k = Konto.objects.filter(wirtschaftsjahr=wj, kontonummer=nr, aktiv=True).first()
+        if not k:
+            raise KontoNichtImWJException(f'Konto {nr} nicht im WJ {jahr} des Objekts.')
+        return k
+
+    k13600 = _konto('13600')
+    # Kreditorkonto (70xxx) — wie bei Rechnungen bei Bedarf im WJ anlegen
+    from apps.rechnungen.services.rechnung_op_service import get_or_create_kreditor_konto
+    k_kreditor = get_or_create_kreditor_konto(vorlage.kreditor, objekt, jahr=jahr)
+
+    splits = list(vorlage.splits.all().order_by('reihenfolge'))
+    if not splits:
+        raise ValueError(f'Vorlage {vorlage.id} hat keine Splits — Verbuchung nicht möglich.')
+    split_konten = [(s, _konto(s.kontonummer)) for s in splits]
+
+    belegnr = _naechste_belegnr_wkz(objekt, faelligkeitsdatum)
+    erstellt_von = user or _system_user()
+    gesamt = sum(s.betrag for s in splits)
+    periode = wkz_op.periode_von.strftime('%m/%Y')
+
+    def _buchung(soll, haben, betrag, text):
+        return Buchung.objects.create(
+            objekt=objekt, soll_konto=soll, haben_konto=haben, betrag=betrag,
+            buchungsdatum=faelligkeitsdatum, belegdatum=faelligkeitsdatum, belegnr=belegnr,
+            buchungstext=text, wirtschaftsjahr=wj, wirtschaftsjahr_nr=jahr,
+            status='festgeschrieben', erstellt_von=erstellt_von,
+        )
+
+    # 1) Aufwand + Kreditor-Verbindlichkeit je Split: Soll Aufwand / Haben 70xxx
+    verbindlichkeit = None
+    for split, soll_konto in split_konten:
+        b = _buchung(soll_konto, k_kreditor, split.betrag,
+                     f"{vorlage.bezeichnung} {periode} — {split.bezeichnung or soll_konto.kontoname}")
+        verbindlichkeit = verbindlichkeit or b
+    # 2) Zahlung: Soll 70xxx / Haben 13600 — gleicht den Kreditor-OP aus
+    zahlung = _buchung(k_kreditor, k13600, gesamt,
+                       f"{vorlage.bezeichnung} {periode} — Überweisung veranlasst (Ausgleich {k_kreditor.kontonummer})")
+
+    if kop:
+        kop.betrag_offen = Decimal('0')
+        kop.status = 'bezahlt'
+        kop.buchung = kop.buchung or verbindlichkeit
+        kop.zahlung_buchung = zahlung
+        kop.save(update_fields=['betrag_offen', 'status', 'buchung', 'zahlung_buchung'])
+
+    # Überweisungs-WKZ gilt mit gebuchtem Aufwand + Zahlung (→13600) als erledigt.
+    # Der aggregierte Bankabgang (Sammelüberweisung) ist reine Treasury-Sache und
+    # klärt 13600, nicht die einzelne WKZ-OP. Terminal setzen, damit sie nicht als
+    # offen erscheint und nicht erneut per Bank-Match gezogen wird.
+    wkz_op.status = 'bankabgang_erfolgt'
+    wkz_op.bank_match_buchung = zahlung
+    wkz_op.save(update_fields=['status', 'bank_match_buchung'])
+
+    logger.info('WKZ-Überweisung veranlasst: WKZ-OP %s, %s €, WJ %s — Soll Aufwand/Haben %s, Soll %s/Haben 13600',
+                wkz_op.id, gesamt, jahr, k_kreditor.kontonummer, k_kreditor.kontonummer)
+    return zahlung
+
+
+@transaction.atomic
+def verbuche_wkz_lastschrift_bankabgang(wkz_op, kontoumsatz, user=None) -> 'Buchung':
+    """
+    Lastschrift-WKZ: Der Bankabgang aus dem camt bucht den Aufwand nach
+    Kassenprinzip und schließt die OP:
+        Soll <Aufwand je Split> / Haben Bank (18xxx)
+    Strikt im WJ des Umsatzdatums; schließt WKZ-OP + KreditorOP.
+    (Eigene, WJ-saubere Variante zu verbuche_bankabgang.)
+    """
+    from apps.buchhaltung.models import Buchung
+    from apps.konten.models import Konto
+    from apps.objekte.models import Wirtschaftsjahr
+
+    vorlage = wkz_op.vorlage
+    objekt = vorlage.objekt
+    datum = kontoumsatz.buchungsdatum
+    jahr = datum.year
+    wj = Wirtschaftsjahr.objects.filter(objekt=objekt, jahr=jahr).first()
+    if not wj:
+        raise ValueError(f'Kein Wirtschaftsjahr {jahr} am Objekt {objekt}.')
+
+    def _k(nr):
+        k = Konto.objects.filter(wirtschaftsjahr=wj, kontonummer=nr, aktiv=True).first()
+        if not k:
+            raise KontoNichtImWJException(f'Konto {nr} nicht im WJ {jahr} des Objekts.')
+        return k
+
+    bk = kontoumsatz.bankkonto
+    bank_nr = '18911' if (bk and bk.konto_typ == 'ruecklage') else '18000'
+    bank = _k(bank_nr)
+
+    splits = list(vorlage.splits.all().order_by('reihenfolge'))
+    if not splits:
+        raise ValueError(f'Vorlage {vorlage.id} hat keine Splits — Verbuchung nicht möglich.')
+    belegnr = _naechste_belegnr_wkz(objekt, datum)
+    erstellt_von = user or _system_user()
+    gesamt = sum(s.betrag for s in splits)
+    text = f"{vorlage.bezeichnung} {wkz_op.periode_von.strftime('%m/%Y')} — Lastschrift-Bankabgang"
+
+    parent = Buchung.objects.create(
+        objekt=objekt, betrag=gesamt, soll_konto=None, haben_konto=bank,
+        buchungsdatum=datum, belegdatum=datum, belegnr=belegnr,
+        buchungstext=text, verwendungszweck=text,
+        wirtschaftsjahr=wj, wirtschaftsjahr_nr=jahr,
+        status='festgeschrieben', erstellt_von=erstellt_von,
+    )
+    for s in splits:
+        Buchung.objects.create(
+            objekt=objekt, parent_buchung=parent,
+            soll_konto=_k(s.kontonummer), haben_konto=None, betrag=s.betrag,
+            buchungsdatum=datum, belegdatum=datum, belegnr=belegnr,
+            buchungstext=s.bezeichnung or text,
+            wirtschaftsjahr=wj, wirtschaftsjahr_nr=jahr,
+            status='festgeschrieben', erstellt_von=erstellt_von,
+        )
+
+    wkz_op.status = 'bankabgang_erfolgt'
+    wkz_op.bank_match_buchung = parent
+    wkz_op.save(update_fields=['status', 'bank_match_buchung'])
+    kop = wkz_op.kreditor_op
+    if kop:
+        kop.betrag_offen = Decimal('0')
+        kop.status = 'bezahlt'
+        kop.zahlung_buchung = parent
+        kop.save(update_fields=['betrag_offen', 'status', 'zahlung_buchung'])
+
+    logger.info('WKZ-Lastschrift-Bankabgang: WKZ-OP %s, %s €, WJ %s (Soll Aufwand / Haben %s)',
+                wkz_op.id, gesamt, jahr, bank.kontonummer)
+    return parent
+
+
+@transaction.atomic
 def verbuche_bankabgang(wkz_op, kontoumsatz, user=None) -> 'Buchung':
     """
     Erzeugt die Kassenprinzip-Aufwandsbuchung beim Bankabgang.

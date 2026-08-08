@@ -65,6 +65,7 @@ export default function VorlageWizard() {
   // Bank-Match
   const [toleranzBetrag, setToleranzBetrag] = useState('5.00')
   const [toleranzTage, setToleranzTage] = useState('14')
+  const [zahlweg, setZahlweg] = useState<'lastschrift' | 'ueberweisung'>('lastschrift')
   const [sepaMandatId, setSepaMandatId] = useState('')
 
   const [fehler, setFehler] = useState('')
@@ -122,7 +123,8 @@ export default function VorlageWizard() {
       bei_wochenende: beiWochenende,
       toleranz_betrag: toleranzBetrag,
       toleranz_tage: parseInt(toleranzTage),
-      sepa_mandat_id: sepaMandatId,
+      zahlweg,
+      sepa_mandat_id: zahlweg === 'lastschrift' ? sepaMandatId : '',
       bescheid_pflicht: bescheidPflicht,
       gueltig_ab: gueltigAb,
       gueltig_bis: gueltigBis || null,
@@ -362,10 +364,39 @@ export default function VorlageWizard() {
         </div>
       )}
 
-      {/* Schritt 4: Bank-Match */}
+      {/* Schritt 4: Zahlweg & Bank-Match */}
       {schritt === 4 && (
         <div className="space-y-4">
-          <h2 className="font-medium">Bank-Match Konfiguration</h2>
+          <h2 className="font-medium">Zahlweg & Bank-Match</h2>
+
+          {/* Zahlweg */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Zahlweg <span className="text-red-500">*</span>
+            </label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setZahlweg('lastschrift')}
+                className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${zahlweg === 'lastschrift' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}
+              >
+                Lastschrift
+              </button>
+              <button
+                type="button"
+                onClick={() => setZahlweg('ueberweisung')}
+                className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${zahlweg === 'ueberweisung' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}
+              >
+                Überweisung
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              {zahlweg === 'lastschrift'
+                ? 'Der Kreditor zieht den Betrag per Lastschrift ein. Der fällige Posten wird automatisch dem passenden Bankabgang zugeordnet.'
+                : 'Die Zahlung wird manuell über den Zahlungsverkehr veranlasst (SEPA-Überweisung), wie bei einer Rechnung.'}
+            </p>
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -393,28 +424,32 @@ export default function VorlageWizard() {
               />
             </div>
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              SEPA-Mandats-ID (optional)
-            </label>
-            <input
-              type="text"
-              value={sepaMandatId}
-              onChange={e => setSepaMandatId(e.target.value)}
-              maxLength={35}
-              className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
-              placeholder="DE98ZZZ09999999999"
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              Ohne Mandats-ID erfolgt der Bank-Match nur über IBAN+Betrag+Periode.
-            </p>
-          </div>
+
+          {zahlweg === 'lastschrift' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                SEPA-Mandats-ID (optional)
+              </label>
+              <input
+                type="text"
+                value={sepaMandatId}
+                onChange={e => setSepaMandatId(e.target.value)}
+                maxLength={35}
+                className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                placeholder="DE98ZZZ09999999999"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Ohne Mandats-ID erfolgt der Bank-Match nur über IBAN+Betrag+Periode.
+              </p>
+            </div>
+          )}
 
           {/* Vorschau */}
           <div className="bg-gray-50 rounded p-4 text-sm space-y-2">
             <p className="font-medium">Zusammenfassung</p>
             <p><span className="text-gray-500">Bezeichnung:</span> {bezeichnung || '–'}</p>
             <p><span className="text-gray-500">Rhythmus:</span> {rhythmus}</p>
+            <p><span className="text-gray-500">Zahlweg:</span> {zahlweg === 'lastschrift' ? 'Lastschrift' : 'Überweisung (manuell)'}</p>
             <p><span className="text-gray-500">Gesamtbetrag:</span>{' '}
               {Number(gesamtbetrag).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })}
             </p>

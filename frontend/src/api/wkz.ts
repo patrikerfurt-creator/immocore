@@ -20,6 +20,7 @@ export interface WKZVorlage {
   bezeichnung: string
   typ: 'bescheid' | 'vertrag'
   status: 'entwurf' | 'eingereicht' | 'aktiv' | 'pausiert' | 'beendet'
+  zahlweg: 'lastschrift' | 'ueberweisung'
   betrag_gesamt: string
   rhythmus: string
   erste_faelligkeit: string
@@ -56,6 +57,7 @@ export interface WKZVorlageCreate {
   vorlauf_tage?: number
   toleranz_betrag?: string
   toleranz_tage?: number
+  zahlweg?: 'lastschrift' | 'ueberweisung'
   sepa_mandat_id?: string
   bescheid_pflicht?: boolean
   gueltig_ab: string
@@ -74,11 +76,15 @@ export interface WKZOP {
   vorlage: string
   vorlage_bezeichnung: string
   kreditor_name: string
+  kreditor_iban?: string
+  zahlweg?: 'lastschrift' | 'ueberweisung'
+  objekt_id?: string
+  objekt_bezeichnung?: string
   op_nummer: number
   periode_von: string
   periode_bis: string
   faellig_am: string
-  status: 'erzeugt' | 'bescheid_fehlt' | 'bankabgang_erfolgt' | 'abweichend_geklaert' | 'verworfen'
+  status: 'erzeugt' | 'bescheid_fehlt' | 'ueberweisung_veranlasst' | 'bankabgang_erfolgt' | 'abweichend_geklaert' | 'verworfen'
   erwarteter_betrag: string
   abweichung_betrag: string | null
   erzeugt_am: string
@@ -117,6 +123,11 @@ export const wkzApi = {
   // Vorlage bearbeiten (nur entwurf)
   vorlageBearbeiten: (id: string, data: Partial<WKZVorlageCreate>) =>
     client.patch<WKZVorlage>(`/wkz-vorlagen/${id}/`, data).then(r => r.data),
+
+  // Eingangsrechnung als Beleg/Bescheid mit dieser Vorlage verknüpfen
+  belegVerknuepfen: (id: string, rechnungId: string) =>
+    client.post<WKZVorlage>(`/wkz-vorlagen/${id}/beleg-verknuepfen/`, { rechnung_id: rechnungId })
+      .then(r => r.data),
 
   // Lifecycle-Aktionen
   vorlageEinreichen: (id: string) =>
@@ -175,6 +186,23 @@ export const wkzApi = {
         splits_override: splitsOverride,
       })
       .then(r => r.data),
+
+  // Offene Überweisungs-OPs eines Objekts (für Zahlungsverkehr)
+  opsOffeneUeberweisungen: (objektId: string) =>
+    client
+      .get<WKZOP[]>('/wkz-ops/', {
+        params: { objekt: objektId, zahlweg: 'ueberweisung', offen: '1' },
+      })
+      .then(r => r.data),
+
+  // SEPA-Überweisung (pain.001) für WKZ-OPs — analog Rechnungs-Zahllauf
+  opsSepaExport: (opIds: string[], faelligkeitsdatum: string) =>
+    client
+      .post('/wkz-ops/sepa-export/', {
+        op_ids: opIds,
+        faelligkeitsdatum,
+      }, { responseType: 'blob' })
+      .then(r => r.data as Blob),
 
   // Alle Vorlagen zu einer Rechnung
   vorlagenJeRechnung: (rechnungId: string) =>

@@ -4,6 +4,7 @@ import { useObjektStore } from '../../stores/objekt'
 import { rechnungenApi } from '../../api/rechnungen'
 import { zahlungsverkehrApi } from '../../api/zahlungsverkehr'
 import { buchhaltungApi } from '../../api/buchhaltung'
+import { wkzApi, type WKZOP } from '../../api/wkz'
 
 import { Badge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
@@ -125,6 +126,38 @@ export function Zahlungen() {
     new Date().toISOString().split('T')[0]
   )
   const [error, setError] = useState<string | null>(null)
+  const [wkzSelected, setWkzSelected] = useState<Set<string>>(new Set())
+
+  // Offene WKZ-Überweisungen des Objekts (Vorlagen mit zahlweg='ueberweisung')
+  const { data: wkzOps } = useQuery({
+    queryKey: ['wkz-ueberweisungen', objektId],
+    queryFn: () => wkzApi.opsOffeneUeberweisungen(objektId!),
+    enabled: !!objektId,
+  })
+
+  const wkzExportMut = useMutation({
+    mutationFn: (opIds: string[]) => wkzApi.opsSepaExport(opIds, faelligkeitsdatum),
+    onSuccess: (blob: Blob) => {
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `wkz_zahlungen_${faelligkeitsdatum.replace(/-/g, '')}.xml`
+      a.click()
+      URL.revokeObjectURL(url)
+      setError(null)
+      setWkzSelected(new Set())
+      qc.invalidateQueries({ queryKey: ['wkz-ueberweisungen'] })
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+      setError(msg || 'Fehler beim WKZ-Export')
+    },
+  })
+
+  const wkzListe = (wkzOps ?? [])
+  const wkzSummeSelected = wkzListe
+    .filter((op: WKZOP) => wkzSelected.has(op.id))
+    .reduce((s: number, op: WKZOP) => s + Number(op.erwarteter_betrag ?? 0), 0)
 
   // Alle freigegebenen Rechnungen laden (v1.1: ehem. Status 'gebucht') —
   // objektübergreifend wenn kein Objekt gewählt
@@ -319,6 +352,89 @@ export function Zahlungen() {
               </tr>
             </tfoot>
           </table>
+        </div>
+      )}
+
+      {/* ── WKZ-Überweisungen (wiederkehrende Zahlungen, Zahlweg Überweisung) ── */}
+      {wkzListe.length > 0 && (
+        <div className="mt-10">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h2 className="text-base font-semibold text-gray-800">Wiederkehrende Zahlungen — Überweisung</h2>
+              <p className="text-sm text-gray-500 mt-0.5">
+                Fällige WKZ-Posten mit Zahlweg „Überweisung" — manuell per SEPA veranlassen (wie eine Rechnung)
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-sm font-medium text-blue-800">
+                {wkzSelected.size > 0
+                  ? `${wkzSelected.size} ausgewählt — ${formatEuro(wkzSummeSelected)}`
+                  : 'Zeile(n) auswählen'}
+              </span>
+              <label className="text-xs text-gray-500 whitespace-nowrap">Zahldatum</label>
+              <input
+                type="date"
+                className="border rounded px-3 py-1.5 text-sm"
+                value={faelligkeitsdatum}
+                onChange={e => setFaelligkeitsdatum(e.target.value)}
+              />
+              <Button
+                onClick={() => wkzExportMut.mutate(Array.from(wkzSelected))}
+                disabled={wkzSelected.size === 0 || wkzExportMut.isPending}
+              >
+                {wkzExportMut.isPending ? 'Wird exportiert…' : 'SEPA XML herunterladen'}
+              </Button>
+            </div>
+          </div>
+          <div className="bg-white border rounded-lg overflow-hidden shadow-sm">
+            <table className="min-w-full text-sm">
+              <thead className="bg-gray-50 border-b">
+                <tr>
+                  <th className="px-4 py-3 text-left">
+                    <input
+                      type="checkbox"
+                      checked={wkzSelected.size === wkzListe.length && wkzListe.length > 0}
+                      onChange={() => setWkzSelected(
+                        wkzSelected.size === wkzListe.length ? new Set() : new Set(wkzListe.map((o: WKZOP) => o.id))
+                      )}
+                      className="rounded"
+                    />
+                  </th>
+                  <th className="px-4 py-3 text-left font-medium text-gray-700">Kreditor</th>
+                  <th className="px-4 py-3 text-left font-medium text-gray-700">Bezeichnung</th>
+                  <th className="px-4 py-3 text-left font-medium text-gray-700">Periode</th>
+                  <th className="px-4 py-3 text-left font-medium text-gray-700">Fällig</th>
+                  <th className="px-4 py-3 text-right font-medium text-gray-700">Betrag</th>
+                  <th className="px-4 py-3 text-left font-medium text-gray-700">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {wkzListe.map((op: WKZOP) => {
+                  const sel = wkzSelected.has(op.id)
+                  const toggle = () => setWkzSelected(prev => {
+                    const next = new Set(prev)
+                    if (next.has(op.id)) next.delete(op.id); else next.add(op.id)
+                    return next
+                  })
+                  return (
+                    <tr key={op.id} className={`hover:bg-gray-50 cursor-pointer ${sel ? 'bg-blue-50' : ''}`} onClick={toggle}>
+                      <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                        <input type="checkbox" checked={sel} onChange={toggle} className="rounded" />
+                      </td>
+                      <td className="px-4 py-3 font-medium">{op.kreditor_name || '—'}</td>
+                      <td className="px-4 py-3 text-gray-600">{op.vorlage_bezeichnung}</td>
+                      <td className="px-4 py-3 text-gray-600">
+                        {formatDatum(op.periode_von)} – {formatDatum(op.periode_bis)}
+                      </td>
+                      <td className="px-4 py-3 text-gray-600">{formatDatum(op.faellig_am)}</td>
+                      <td className="px-4 py-3 text-right font-mono">{formatEuro(op.erwarteter_betrag)}</td>
+                      <td className="px-4 py-3"><Badge value={op.status} /></td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

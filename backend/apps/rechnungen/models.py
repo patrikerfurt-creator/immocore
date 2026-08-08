@@ -74,6 +74,7 @@ class Rechnung(models.Model):
         ('freigegeben',   'Freigegeben (OP gebucht)'),
         ('teilbezahlt',   'Teilbezahlt'),
         ('bezahlt',       'Bezahlt'),
+        ('wkz_beleg',     'WKZ-Beleg (über WKZ abgewickelt)'),
         ('abgelehnt',     'Abgelehnt'),
         ('storniert',     'Storniert'),
         ('fehler',        'Fehler'),

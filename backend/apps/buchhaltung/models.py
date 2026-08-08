@@ -1151,6 +1151,10 @@ class WiederkehrendeBuchungVorlage(models.Model):
         ('pausiert',     'Pausiert'),
         ('beendet',      'Beendet'),
     ]
+    ZAHLWEG_CHOICES = [
+        ('lastschrift',  'Lastschrift (Kreditor zieht ein)'),
+        ('ueberweisung', 'Überweisung (manuell zahlen)'),
+    ]
 
     id                   = models.UUIDField(primary_key=True, default=uuid4, editable=False)
     objekt               = models.ForeignKey(
@@ -1170,6 +1174,11 @@ class WiederkehrendeBuchungVorlage(models.Model):
     vorlauf_tage         = models.IntegerField(default=7)
     toleranz_betrag      = models.DecimalField(max_digits=14, decimal_places=2, default='5.00')
     toleranz_tage        = models.IntegerField(default=14)
+    zahlweg              = models.CharField(
+        max_length=12, choices=ZAHLWEG_CHOICES, default='lastschrift',
+        help_text='lastschrift: Kreditor zieht ein (Match über camt). '
+                  'ueberweisung: Zahlung wird manuell über den Zahlungsverkehr veranlasst.',
+    )
     sepa_mandat_id       = models.CharField(max_length=35, blank=True)
     bescheid_pflicht     = models.BooleanField(default=True)
     gueltig_ab           = models.DateField()
@@ -1284,11 +1293,12 @@ class WiederkehrendeBuchungSplit(models.Model):
 
 class WiederkehrendeBuchungOP(models.Model):
     STATUS_CHOICES = [
-        ('erzeugt',             'Erzeugt'),
-        ('bescheid_fehlt',      'Bescheid fehlt'),
-        ('bankabgang_erfolgt',  'Bankabgang erfolgt'),
-        ('abweichend_geklaert', 'Abweichend (geklärt)'),
-        ('verworfen',           'Verworfen'),
+        ('erzeugt',                 'Erzeugt'),
+        ('bescheid_fehlt',          'Bescheid fehlt'),
+        ('ueberweisung_veranlasst', 'Überweisung veranlasst'),
+        ('bankabgang_erfolgt',      'Bankabgang erfolgt'),
+        ('abweichend_geklaert',     'Abweichend (geklärt)'),
+        ('verworfen',               'Verworfen'),
     ]
 
     id                         = models.UUIDField(primary_key=True, default=uuid4, editable=False)
@@ -1308,7 +1318,7 @@ class WiederkehrendeBuchungOP(models.Model):
         null=True, blank=True, related_name='wkz_bescheid_uploads',
     )
     status                     = models.CharField(
-        max_length=22, choices=STATUS_CHOICES, default='erzeugt',
+        max_length=25, choices=STATUS_CHOICES, default='erzeugt',
     )
     bank_match_buchung         = models.ForeignKey(
         Buchung, on_delete=models.PROTECT,

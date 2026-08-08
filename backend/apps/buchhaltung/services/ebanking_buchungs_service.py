@@ -136,14 +136,20 @@ def verbuche(ku, verbucht_von,
     # Kreditorkonten (70xxx) sind über den OP-Ausgleich buchbar (siehe unten,
     # _versuche_op_ausgleich) — auch wenn direktes_buchen=False. Daher zulassen.
     # Ebenso buchbar: Aufwandskonten 50000–55999 (gleiche Konvention wie im
-    # Rechnungs-Modul, siehe rechnungen/views.py).
+    # Rechnungs-Modul, siehe rechnungen/views.py) sowie die Bank-Verrechnungs-
+    # konten 13600 (Zahlungsausgang) und 13650 (Zahlungseingang): sie werden
+    # gerade über die Bankseite gebucht (Sammelüberweisung → 13600, Sammel-
+    # lastschrift → 13650).
     _gk_nr = int(gk.kontonummer) if gk.kontonummer.isdigit() else None
+    CLEARING_KONTEN = {'13600', '13650'}
     if not (gk.direktes_buchen
             or gk.kontonummer.startswith('70')
-            or (_gk_nr is not None and 50000 <= _gk_nr <= 55999)):
+            or (_gk_nr is not None and 50000 <= _gk_nr <= 55999)
+            or gk.kontonummer in CLEARING_KONTEN):
         raise ValidationError(
             f"Konto {gk.kontonummer} ist nicht direkt buchbar "
-            f"(direktes_buchen=False, kein Kreditorkonto 70xxx, außerhalb 50000–55999)."
+            f"(direktes_buchen=False, kein Kreditorkonto 70xxx, außerhalb 50000–55999, "
+            f"kein Verrechnungskonto 13600/13650)."
         )
     if ku.objekt:
         from apps.konten.models import Konto
