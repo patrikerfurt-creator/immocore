@@ -1423,6 +1423,7 @@ class HausgeldSollstellung(models.Model):
         ('sonderumlage',        'Sonderumlage'),
         ('abrechnungsergebnis', 'Abrechnungsergebnis'),
         ('korrektur',           'Korrektur'),
+        ('saldovortrag',        'Saldovortrag'),
     ]
     KORREKTUR_GRUND_CHOICES = [
         ('eigentuemerwechsel',        'Eigentümerwechsel'),
@@ -1486,10 +1487,11 @@ class HausgeldSollstellung(models.Model):
             models.CheckConstraint(
                 name='negative_betrag_nur_korrektur',
                 check=(
-                    # Negativ erlaubt bei Korrektur und Abrechnungsergebnis
+                    # Negativ erlaubt bei Korrektur, Abrechnungsergebnis
                     # (Guthaben aus Jahresabrechnung, HGA-Spec Kap. 6.2)
+                    # und Saldovortrag (Guthaben-Anfangssaldo)
                     Q(soll_betrag__gte=0)
-                    | Q(sollstellungs_typ__in=['korrektur', 'abrechnungsergebnis'])
+                    | Q(sollstellungs_typ__in=['korrektur', 'abrechnungsergebnis', 'saldovortrag'])
                 ),
             ),
             models.CheckConstraint(

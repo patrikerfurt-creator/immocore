@@ -619,6 +619,56 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
             'nachricht': f'Abgang {float(betrag):.2f} EUR erfolgreich gebucht.',
         }, status=status.HTTP_201_CREATED)
 
+    @action(detail=True, methods=['post'], url_path='saldovortrag')
+    def saldovortrag(self, request, pk=None):
+        """
+        Bucht einen Saldovortrag (Debitoren-Anfangssaldo) auf ein Personenkonto.
+        Erzeugt offenen Posten (typ='saldovortrag', BA 99) + Sachkontenbuchung je
+        Abrechnungsart gegen 90080. richtung='soll' (Nachforderung) | 'haben' (Guthaben).
+        Body: { richtung, buchungsdatum, buchungstext?, wirtschaftsjahr_id?,
+                zeilen: [{ ba_nr, betrag }, ...] }
+        """
+        from django.core.exceptions import ValidationError
+        from apps.buchhaltung.services.saldovortrag_service import buche_saldovortrag
+        from apps.objekte.models import Wirtschaftsjahr
+
+        pk_obj        = self.get_object()
+        richtung      = request.data.get('richtung')
+        buchungsdatum = request.data.get('buchungsdatum')
+        buchungstext  = request.data.get('buchungstext', '')
+        wj_id         = request.data.get('wirtschaftsjahr_id')
+        zeilen        = request.data.get('zeilen') or []
+
+        if not richtung or not buchungsdatum or not zeilen:
+            return Response(
+                {'error': 'richtung, buchungsdatum und mindestens eine Zeile sind erforderlich'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        wj = Wirtschaftsjahr.objects.filter(pk=wj_id).first() if wj_id else None
+
+        try:
+            ergebnis = buche_saldovortrag(
+                personenkonto=pk_obj,
+                stichtag=buchungsdatum,
+                richtung=richtung,
+                zeilen=zeilen,
+                user=request.user,
+                wirtschaftsjahr=wj,
+                buchungstext=buchungstext,
+            )
+        except ValidationError as exc:
+            return Response({'error': '; '.join(exc.messages)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            **ergebnis,
+            'soll_betrag': float(ergebnis['soll_betrag']),
+            'nachricht': f'Saldovortrag ({richtung}) gebucht — OPOS {ergebnis["opos_nr"]}, '
+                         f'{ergebnis["anzahl_buchungen"]} Buchung(en) gegen 90080.',
+        }, status=status.HTTP_201_CREATED)
+
 
 class UnterkontoViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class   = UnterkontoSerializer

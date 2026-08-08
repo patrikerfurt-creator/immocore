@@ -143,6 +143,11 @@ export function Dialogbuchhaltung() {
   const [aktuellerStapelId, setAktuellerStapelId] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [selectedWjId, setSelectedWjId] = useState<string | null>(null)
+  const [savoRichtung, setSavoRichtung] = useState<'soll' | 'haben'>('soll')
+  const [savoZeilen, setSavoZeilen] = useState<{ ba_nr: string; betrag: string }[]>([{ ba_nr: '900', betrag: '' }])
+  // Sachkonto-Saldovortrag (z.B. Bank 18000 gegen 90000)
+  const [savoSkKontoId, setSavoSkKontoId] = useState('')
+  const [savoSkRichtung, setSavoSkRichtung] = useState<'soll' | 'haben'>('soll')
 
   const { data: offeneStapel } = useQuery({
     queryKey: ['buchungsstapel', objektId, 'offen'],
@@ -174,6 +179,13 @@ export function Dialogbuchhaltung() {
   const { data: buchungsarten } = useQuery({
     queryKey: ['buchungsarten-manuell', modus],
     queryFn: () => buchhaltungApi.buchungsartenManuell(modus),
+    enabled: !!objektId,
+  })
+
+  // Alle Buchungsarten — für die Abrechnungsart-Auswahl beim Saldovortrag
+  const { data: alleBuchungsarten } = useQuery({
+    queryKey: ['buchungsarten-alle'],
+    queryFn: () => buchhaltungApi.buchungsarten(),
     enabled: !!objektId,
   })
 
@@ -225,8 +237,15 @@ export function Dialogbuchhaltung() {
   })
 
   // Richtung aus gewählter Buchungsart ableiten
-  const selectedBa = (buchungsarten ?? []).find((ba: Buchungsart) => ba.id === zeForm.buchungsart)
+  const selectedBa = (buchungsarten ?? []).find((ba: Buchungsart) => String(ba.id) === String(zeForm.buchungsart))
   const zeRichtung: 'eingang' | 'abgang' | null = (selectedBa as (Buchungsart & { richtung?: string }))?.richtung as 'eingang' | 'abgang' | null ?? null
+  // Saldovortrag: BA 99 → gegen 90080 statt Bank, Soll/Haben-Wahl
+  const istSavo = selectedBa?.nr === '99'
+  const abrechnungsarten = (alleBuchungsarten ?? []).filter((ba: Buchungsart) => !['70', '71', '72', '99'].includes(ba.nr))
+  const savoSumme = savoZeilen.reduce((s, z) => s + (Number(z.betrag) || 0), 0)
+  // Sachkonto-Saldovortrag: BA 99 im Sachkonto-Tab → Gegenkonto 90000 fest
+  const selectedFormBa = (buchungsarten ?? []).find((ba: Buchungsart) => String(ba.id) === String(form.buchungsart))
+  const istSachkontoSavo = modus === 'sachkonto' && selectedFormBa?.nr === '99'
 
   // Offene Sollstellungen für ausgewähltes Personenkonto (nur bei Eingang + Betrag)
   const { data: offeneSollstellungen } = useQuery({
@@ -244,6 +263,10 @@ export function Dialogbuchhaltung() {
     qc.invalidateQueries({ queryKey: ['buchungen'] })
     qc.invalidateQueries({ queryKey: ['buchungsstapel', objektId] })
     qc.invalidateQueries({ queryKey: ['personenkonten-saldo', objektId] })
+    // offene Posten (eBanking-Debitor + Zahlungseingang) nach Savo/Buchung aktualisieren
+    qc.invalidateQueries({ queryKey: ['hg-sollstellungen-ebanking', objektId] })
+    qc.invalidateQueries({ queryKey: ['ze-sollstellungen'] })
+    qc.invalidateQueries({ queryKey: ['hausgeld-sollstellungen'] })
   }
 
   function buildPayload(f: FormState) {
@@ -343,6 +366,30 @@ export function Dialogbuchhaltung() {
     Number(zeForm.betrag) > 0 &&
     !!zeForm.buchungsdatum
 
+  const savoMut = useMutation({
+    mutationFn: () => buchhaltungApi.saldovortrag(zeForm.personenkonto_id, {
+      richtung: savoRichtung,
+      buchungsdatum: zeForm.buchungsdatum,
+      buchungstext: zeForm.buchungstext || undefined,
+      wirtschaftsjahr_id: aktivesWj?.id,
+      zeilen: savoZeilen
+        .filter(z => z.ba_nr && Number(z.betrag) > 0)
+        .map(z => ({ ba_nr: z.ba_nr, betrag: Number(z.betrag) })),
+    }),
+    onSuccess: () => {
+      invalidateAll()
+      setSavoZeilen([{ ba_nr: '900', betrag: '' }])
+      setZeForm(prev => ({ ...ZE_EMPTY, buchungsart: prev.buchungsart, buchungsdatum: prev.buchungsdatum }))
+      setZeSuccess(true)
+      setTimeout(() => setZeSuccess(false), 4000)
+    },
+  })
+
+  const kannSavoBuchen =
+    !!zeForm.personenkonto_id &&
+    !!zeForm.buchungsdatum &&
+    savoZeilen.some(z => z.ba_nr && Number(z.betrag) > 0)
+
   function handleEditClick(buchungId: string) {
     buchhaltungApi.getBuchung(buchungId).then((b) => {
       setEditingId(buchungId)
@@ -417,6 +464,50 @@ export function Dialogbuchhaltung() {
     Number(form.betrag) > 0
 
   const isPending = buchenMut.isPending || aktualisierenMut.isPending
+
+  // ── Sachkonto-Saldovortrag (Bank etc. gegen 90000) ──
+  const gegen90000 = aktiveKonten.find((k: Konto) => k.kontonummer === '90000')
+  const kannBankSavoBuchen =
+    !!objektId &&
+    !!aktivesWj &&
+    aktivesWj.status !== 'abgeschlossen' &&
+    !!form.buchungsdatum &&
+    !!savoSkKontoId &&
+    !!gegen90000 &&
+    !!form.betrag &&
+    Number(form.betrag) > 0
+
+  const bankSavoMut = useMutation({
+    mutationFn: async () => {
+      let stapelId = aktuellerStapel?.id ?? null
+      if (!stapelId) {
+        const neu = await buchhaltungApi.stapelAnlegen(objektId!) as { id: string }
+        stapelId = neu.id
+        setAktuellerStapelId(stapelId)
+      }
+      const kontoId = savoSkKontoId
+      const gegenId = gegen90000?.id
+      return buchhaltungApi.createBuchung({
+        objekt: objektId!,
+        buchungsart: form.buchungsart || undefined,
+        buchungsdatum: form.buchungsdatum,
+        belegnr: form.belegnr,
+        buchungstext: form.buchungstext || `Saldovortrag ${aktivesWj?.jahr ?? ''}`.trim(),
+        betrag: Number(form.betrag),
+        soll_konto: savoSkRichtung === 'soll' ? kontoId : gegenId,
+        haben_konto: savoSkRichtung === 'soll' ? gegenId : kontoId,
+        wirtschaftsjahr: aktivesWj?.id ?? undefined,
+        stapel: stapelId,
+      } as never)
+    },
+    onSuccess: () => {
+      invalidateAll()
+      setForm(prev => ({ ...EMPTY, buchungsdatum: prev.buchungsdatum, buchungsart: prev.buchungsart }))
+      setSavoSkKontoId('')
+      setSuccess(true)
+      setTimeout(() => setSuccess(false), 3000)
+    },
+  })
 
   if (!objektId) {
     return <div className="p-6 text-gray-500">Bitte zuerst ein Objekt auswählen.</div>
@@ -508,6 +599,10 @@ export function Dialogbuchhaltung() {
             onClick={() => {
               setModus(key)
               setZeForm(ZE_EMPTY)
+              setSavoZeilen([{ ba_nr: '900', betrag: '' }])
+              setSavoRichtung('soll')
+              setSavoSkKontoId('')
+              setSavoSkRichtung('soll')
               setForm({
                 ...EMPTY,
                 soll_typ: 'sachkonto',
@@ -540,6 +635,128 @@ export function Dialogbuchhaltung() {
             </select>
           </div>
 
+          {/* ── Saldovortrag (BA 99) — gegen 90080, Soll/Haben-Wahl, mehrere Abrechnungsarten ── */}
+          {istSavo && (
+            <div>
+              {/* Personenkonto */}
+              <div className="mb-5">
+                <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Personenkonto *</label>
+                <select
+                  value={zeForm.personenkonto_id}
+                  onChange={e => setZeForm(prev => ({ ...prev, personenkonto_id: e.target.value }))}
+                  className="border rounded-lg px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">— Eigentümer wählen —</option>
+                  {(personenkonten ?? []).map((pk: { id: string; eigentuemer_name: string; einheit_nr: string }) => (
+                    <option key={pk.id} value={pk.id}>{pk.eigentuemer_name} — {pk.einheit_nr}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Richtung + Gegenkonto */}
+              <div className="grid grid-cols-2 gap-4 mb-5">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Betrag aufs Personenkonto *</label>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setSavoRichtung('soll')}
+                      className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${savoRichtung === 'soll' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}>
+                      Soll (Nachforderung)
+                    </button>
+                    <button type="button" onClick={() => setSavoRichtung('haben')}
+                      className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${savoRichtung === 'haben' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}>
+                      Haben (Guthaben)
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Gegenkonto</label>
+                  <input readOnly value="90080 — Saldenvorträge Debitoren"
+                    className="border rounded-lg px-3 py-2 text-sm w-full bg-gray-50 text-gray-500" />
+                </div>
+              </div>
+
+              {/* Buchungsdatum */}
+              <div className="grid grid-cols-2 gap-4 mb-5">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Buchungsdatum (Stichtag) *</label>
+                  <input type="date" value={zeForm.buchungsdatum} onChange={setZe('buchungsdatum')}
+                    className="border rounded-lg px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+              </div>
+
+              {/* Abrechnungsart-Zeilen */}
+              <div className="mb-5">
+                <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Abrechnungsarten *</label>
+                {savoZeilen.map((z, i) => (
+                  <div key={i} className="flex gap-2 mb-2">
+                    <select
+                      value={z.ba_nr}
+                      onChange={e => setSavoZeilen(rows => rows.map((r, ri) => ri === i ? { ...r, ba_nr: e.target.value } : r))}
+                      className="border rounded-lg px-3 py-2 text-sm flex-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">— Abrechnungsart —</option>
+                      {abrechnungsarten.map((ba: Buchungsart) => (
+                        <option key={ba.id} value={ba.nr}>{ba.nr} {ba.kuerzel} — {ba.bezeichnung}</option>
+                      ))}
+                    </select>
+                    <input type="number" step="0.01" min="0" value={z.betrag} placeholder="0,00"
+                      onChange={e => setSavoZeilen(rows => rows.map((r, ri) => ri === i ? { ...r, betrag: e.target.value } : r))}
+                      className="border rounded-lg px-3 py-2 text-sm w-32 text-right tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    <button type="button" onClick={() => setSavoZeilen(rows => rows.filter((_, ri) => ri !== i))}
+                      disabled={savoZeilen.length === 1}
+                      className="px-3 text-gray-400 hover:text-red-600 disabled:opacity-30 disabled:hover:text-gray-400">✕</button>
+                  </div>
+                ))}
+                <button type="button" onClick={() => setSavoZeilen(rows => [...rows, { ba_nr: '', betrag: '' }])}
+                  className="text-sm text-blue-600 hover:underline">+ Abrechnungsart hinzufügen</button>
+              </div>
+
+              {/* Buchungstext */}
+              <div className="mb-5">
+                <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Buchungstext</label>
+                <input type="text" value={zeForm.buchungstext} onChange={setZe('buchungstext')}
+                  placeholder="z.B. Saldovortrag 2025"
+                  className="border rounded-lg px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+
+              {/* Vorschau */}
+              {savoSumme > 0 && zeForm.personenkonto_id && (
+                <div className="mb-4 px-4 py-3 bg-blue-50 rounded-lg text-sm text-blue-800 border border-blue-100">
+                  {savoRichtung === 'soll' ? (
+                    <>Soll <span className="font-mono font-semibold">PK</span> / Haben <span className="font-mono font-semibold">90080</span></>
+                  ) : (
+                    <>Soll <span className="font-mono font-semibold">90080</span> / Haben <span className="font-mono font-semibold">PK</span></>
+                  )}
+                  {' '}— <span className="font-semibold tabular-nums">{EUR(savoSumme)}</span>
+                  <span className="ml-2 text-xs text-blue-600">+ offener Posten (BA 99)</span>
+                </div>
+              )}
+
+              {savoMut.isError && (
+                <div className="mb-4 text-sm text-red-600 bg-red-50 rounded-lg px-4 py-2 border border-red-200">
+                  {(savoMut.error as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Fehler beim Buchen.'}
+                </div>
+              )}
+              {zeSuccess && (
+                <div className="mb-4 text-sm text-green-700 bg-green-50 rounded-lg px-4 py-2 border border-green-200">
+                  Saldovortrag erfolgreich gebucht.
+                </div>
+              )}
+
+              <div className="flex justify-between items-center">
+                <button type="button"
+                  onClick={() => { setSavoZeilen([{ ba_nr: '900', betrag: '' }]); setZeForm(prev => ({ ...ZE_EMPTY, buchungsart: prev.buchungsart, buchungsdatum: prev.buchungsdatum })) }}
+                  className="text-sm text-gray-400 hover:text-gray-600 transition-colors">
+                  Felder leeren
+                </button>
+                <Button onClick={() => savoMut.mutate()} disabled={!kannSavoBuchen || savoMut.isPending}>
+                  {savoMut.isPending ? 'Buche…' : 'Saldovortrag buchen'}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {!istSavo && (<>
           {/* Personenkonto + Bankkonto */}
           <div className="grid grid-cols-2 gap-4 mb-5">
             <div>
@@ -699,6 +916,7 @@ export function Dialogbuchhaltung() {
               {zeMut.isPending ? 'Buche…' : zeRichtung === 'abgang' ? 'Abgang buchen' : 'Eingang buchen'}
             </Button>
           </div>
+          </>)}
         </div>
       )}
 
@@ -756,6 +974,7 @@ export function Dialogbuchhaltung() {
           </div>
         </div>
 
+        {!istSachkontoSavo && (<>
         {/* Zeile 2: Soll / Betrag / Haben — T-Konten-Layout */}
         <div className="grid grid-cols-[1fr_auto_1fr] gap-3 items-start mb-5">
 
@@ -834,6 +1053,64 @@ export function Dialogbuchhaltung() {
             )}
           </div>
         </div>
+        </>)}
+
+        {/* ── Saldovortrag Sachkonto (BA 99) — gegen 90000, Soll/Haben, reine Bestandsbuchung ── */}
+        {istSachkontoSavo && (
+          <div className="mb-5">
+            <div className="mb-3 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+              Saldovortrag (BA 99): reine Bestandsbuchung gegen <span className="font-mono font-semibold">90000</span> — kein offener Posten.
+            </div>
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Konto (Vortrag) *</label>
+                <select value={savoSkKontoId} onChange={e => setSavoSkKontoId(e.target.value)}
+                  className="border rounded-lg px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <option value="">— Sachkonto wählen (z.B. 18000) —</option>
+                  {aktiveKonten.filter((k: Konto) => k.kontonummer !== '90000').map((k: Konto) => (
+                    <option key={k.id} value={k.id}>{k.kontonummer} — {k.kontoname}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Gegenkonto</label>
+                <input readOnly value={gegen90000 ? `90000 — ${gegen90000.kontoname}` : '90000 — fehlt im WJ'}
+                  className={`border rounded-lg px-3 py-2 text-sm w-full bg-gray-50 ${gegen90000 ? 'text-gray-500' : 'text-red-600'}`} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Betrag aufs Konto *</label>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setSavoSkRichtung('soll')}
+                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${savoSkRichtung === 'soll' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}>Soll</button>
+                  <button type="button" onClick={() => setSavoSkRichtung('haben')}
+                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${savoSkRichtung === 'haben' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}>Haben</button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Betrag (EUR) *</label>
+                <input type="number" step="0.01" min="0" value={form.betrag} onChange={set('betrag')} placeholder="0,00"
+                  className="border rounded-lg px-3 py-2 text-sm w-full text-right tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+            </div>
+            {savoSkKontoId && gegen90000 && Number(form.betrag) > 0 && (
+              <div className="px-4 py-3 bg-blue-50 rounded-lg text-sm text-blue-800 border border-blue-100">
+                {savoSkRichtung === 'soll' ? (
+                  <>Soll <span className="font-mono font-semibold">{aktiveKonten.find((k: Konto) => k.id === savoSkKontoId)?.kontonummer}</span> / Haben <span className="font-mono font-semibold">90000</span></>
+                ) : (
+                  <>Soll <span className="font-mono font-semibold">90000</span> / Haben <span className="font-mono font-semibold">{aktiveKonten.find((k: Konto) => k.id === savoSkKontoId)?.kontonummer}</span></>
+                )}
+                {' — '}<span className="font-semibold tabular-nums">{EUR(form.betrag)}</span>
+              </div>
+            )}
+            {bankSavoMut.isError && (
+              <div className="mt-3 text-sm text-red-600 bg-red-50 rounded-lg px-4 py-2 border border-red-200">
+                {(bankSavoMut.error as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Fehler beim Buchen des Saldovortrags.'}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Buchungstext */}
         <div className="mb-5">
@@ -880,13 +1157,20 @@ export function Dialogbuchhaltung() {
         <div className="flex justify-between items-center">
           <button
             type="button"
-            onClick={editingId ? handleEditAbbrechen : () => setForm(EMPTY)}
+            onClick={editingId ? handleEditAbbrechen : () => { setForm(EMPTY); setSavoSkKontoId(''); setSavoSkRichtung('soll') }}
             className="text-sm text-gray-400 hover:text-gray-600 transition-colors"
           >
             {editingId ? 'Abbrechen' : 'Felder leeren'}
           </button>
           <div className="flex gap-2">
-            {editingId ? (
+            {istSachkontoSavo ? (
+              <Button
+                onClick={() => bankSavoMut.mutate()}
+                disabled={!kannBankSavoBuchen || bankSavoMut.isPending}
+              >
+                {bankSavoMut.isPending ? 'Buche…' : 'Saldovortrag buchen'}
+              </Button>
+            ) : editingId ? (
               <Button
                 onClick={() => aktualisierenMut.mutate()}
                 disabled={!kannBuchen || isPending}

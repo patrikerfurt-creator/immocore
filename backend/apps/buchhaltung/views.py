@@ -60,13 +60,18 @@ class BuchungsartViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='manuell-waehlbar')
     def manuell_waehlbar(self, request):
-        """Manuell wählbare BAs, optional gefiltert nach ?buchungstyp=sachkonto|personenkonto|kreditor."""
+        """
+        Manuell wählbare BAs, optional gefiltert nach ?buchungstyp=sachkonto|personenkonto|kreditor.
+        BA 99 (Saldovortrag) ist in jedem Modus wählbar — Vorträge gibt es für
+        Personenkonten, Kreditoren und Sachkonten (z.B. Bank 18000 gegen 90000).
+        """
+        from django.db.models import Q
         qs = self.get_queryset().filter(system_buchungsart=False, aktiv=True)
         buchungstyp = request.query_params.get('buchungstyp')
         if buchungstyp:
-            qs = qs.filter(buchungstyp=buchungstyp)
+            qs = qs.filter(Q(buchungstyp=buchungstyp) | Q(nr='99'))
         else:
-            qs = qs.filter(buchungstyp__isnull=False)
+            qs = qs.filter(Q(buchungstyp__isnull=False) | Q(nr='99'))
         return Response(BuchungsartSerializer(qs, many=True).data)
 
 

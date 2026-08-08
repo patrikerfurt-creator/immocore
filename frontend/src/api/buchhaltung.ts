@@ -77,6 +77,14 @@ export const buchhaltungApi = {
     buchungsart_id?: string
   }) =>
     client.post(`/personenkonten/${personenkontoId}/abgang/`, data).then(r => r.data),
+  saldovortrag: (personenkontoId: string, data: {
+    richtung: 'soll' | 'haben'
+    buchungsdatum: string
+    buchungstext?: string
+    wirtschaftsjahr_id?: string
+    zeilen: { ba_nr: string; betrag: number }[]
+  }) =>
+    client.post(`/personenkonten/${personenkontoId}/saldovortrag/`, data).then(r => r.data),
 
   // Sachkonto-Kontoauszug
   bebuchteKonten: (objektId: string, params?: { wirtschaftsjahr?: string }) =>

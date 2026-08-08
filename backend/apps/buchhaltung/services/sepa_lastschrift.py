@@ -181,6 +181,7 @@ def commite_lastschriftlauf(
     kandidaten: list,
     user,
     lauf_quelle: str = 'manuell',
+    zweck_prefix: str = 'Hausgeld',
 ):
     """
     Erstellt einen LastschriftLauf aus einer Liste von HausgeldSollstellungen.
@@ -249,7 +250,7 @@ def commite_lastschriftlauf(
         if data['betrag'] <= 0:
             continue
         verwendungszweck = (
-            f"Hausgeld {periode_str} - {data['einheit_nr']} - Objekt {objekt_kurz}"
+            f"{zweck_prefix} {periode_str} - {data['einheit_nr']} - Objekt {objekt_kurz}"
         )
         pos = {
             'sollstellung_ids':   data['sollstellung_ids'],
@@ -271,7 +272,7 @@ def commite_lastschriftlauf(
         positionen.append(pos)
         gesamt += data['betrag']
 
-    bezeichnung = f'Hausgeld {periode_str}'
+    bezeichnung = f'{zweck_prefix} {periode_str}'
     lauf = LastschriftLauf.objects.create(
         objekt=objekt,
         hausgeld_sollstellungslauf=sollstellungslauf,
@@ -324,10 +325,54 @@ def generiere_pain008(lastschriftlauf) -> str:
     return xml_bytes.decode('utf-8')
 
 
+def _tilge_sollstellungen(sollstellung_ids, buchung, user):
+    """
+    Tilgt die Nebenbuch-Sollstellungen (HausgeldSollstellung) einer eingezogenen
+    Lastschrift-Position vollständig: ist_betrag = soll_betrag, Splits voll,
+    SollstellungZahlung je Split, status_cached = 'ausgeglichen'.
+    Gibt die Anzahl getilgter Sollstellungen zurück.
+    """
+    from apps.buchhaltung.models import HausgeldSollstellung, SollstellungZahlung
+
+    getilgt = 0
+    for ss_id in sollstellung_ids:
+        ss = (HausgeldSollstellung.objects
+              .filter(id=ss_id, storniert_am__isnull=True)
+              .exclude(status_cached='ausgeglichen')
+              .first())
+        if not ss:
+            continue
+        splits = list(ss.splits.all())
+        if splits:
+            for split in splits:
+                rest_split = split.betrag - split.ist_betrag_split
+                if rest_split == 0:
+                    continue
+                SollstellungZahlung.objects.create(
+                    sollstellung=ss, split=split, buchung=buchung,
+                    betrag=rest_split, tilgungsstufe='hauptforderung', erstellt_von=user,
+                )
+                split.ist_betrag_split = split.betrag
+                split.save(update_fields=['ist_betrag_split'])
+        else:
+            rest = ss.soll_betrag - ss.ist_betrag
+            if rest != 0:
+                SollstellungZahlung.objects.create(
+                    sollstellung=ss, split=None, buchung=buchung,
+                    betrag=rest, tilgungsstufe='hauptforderung', erstellt_von=user,
+                )
+        ss.ist_betrag = ss.soll_betrag
+        ss.status_cached = 'ausgeglichen'
+        ss.save(update_fields=['ist_betrag', 'status_cached'])
+        getilgt += 1
+    return getilgt
+
+
 def erstelle_lastschrift_buchungen(lastschriftlauf, user):
     """
-    Erstellt Buchungen (Soll 13650 / Haben Personenkonto) und gleicht alle
-    offenen OPOS des jeweiligen Personenkontos aus.
+    Erstellt Buchungen (Soll 13650 / Haben Personenkonto), gleicht alle offenen
+    OPOS des jeweiligen Personenkontos (Legacy) UND die Nebenbuch-Sollstellungen
+    der eingezogenen Positionen aus.
 
     Idempotent: tut nichts, wenn buchungen_erstellt bereits True ist.
     Wird von der Auto-Pipeline direkt nach generiere_pain008() aufgerufen
@@ -404,7 +449,7 @@ def erstelle_lastschrift_buchungen(lastschriftlauf, user):
                 erstellt_von=user,
             )
 
-            # Alle offenen OPOS des Personenkontos ausgleichen
+            # Alle offenen OPOS des Personenkontos ausgleichen (Legacy-Modell)
             opos = list(OffenerPosten.objects.filter(
                 personenkonto=pk_obj,
                 status__in=['offen', 'teilverrechnet'],
@@ -414,11 +459,17 @@ def erstelle_lastschrift_buchungen(lastschriftlauf, user):
                 op.status = 'verrechnet'
                 op.save(update_fields=['betrag_offen', 'status'])
 
+            # Nebenbuch (HausgeldSollstellung) der eingezogenen Positionen tilgen —
+            # das Hauptbuch bucht bereits Soll 13650 / Haben PK, also muss der
+            # offene Posten im Nebenbuch mitziehen (sonst bleibt er fälschlich offen).
+            ss_getilgt = _tilge_sollstellungen(p.get('sollstellung_ids') or [], buchung, user)
+
             positionen_updated.append({
                 **p,
                 'buchung_id': str(buchung.id),
                 'belegnr': belegnr,
                 'opos_ausgeglichen': len(opos),
+                'sollstellungen_getilgt': ss_getilgt,
             })
 
         lastschriftlauf.buchungen_erstellt = True
