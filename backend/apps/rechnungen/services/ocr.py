@@ -34,8 +34,12 @@ Felder:
 - betrag_netto, betrag_brutto (Zahl), mwst_satz (Prozent als Zahl)
 - leistungsbeschreibung
 - betrag_haushaltsnah: Lohn-/Arbeitskostenanteil gem. §35a EStG
-  ("Lohnanteil", "Arbeitskosten", "darin enthaltene Lohnkosten"). Wenn NICHT
-  ausgewiesen: wert=null (nicht schätzen).
+  ("Lohnanteil", "Arbeitskosten", "darin enthaltene Lohnkosten"). Diese
+  Angabe steht oft NICHT bei den Kopfdaten, sondern als eigene kleine
+  Tabelle/Zeile unterhalb der Summen oder des MwSt.-Nachweises — auch auf
+  einer Folgeseite eines mehrseitigen Dokuments. Prüfe ALLE Seiten,
+  besonders den Bereich nach dem Bruttoendbetrag. Wenn NICHT ausgewiesen:
+  wert=null (nicht schätzen).
 - skonto_prozent, skonto_betrag, skonto_frist_tage, skonto_faellig_bis:
   aus Zahlungsbedingungen ("2% Skonto bei Zahlung innerhalb 14 Tagen").
 - ist_schlussrechnung: true bei "Schlussrechnung"/"Endabrechnung"/"Schlussrg.".
