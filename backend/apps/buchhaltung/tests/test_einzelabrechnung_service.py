@@ -293,8 +293,10 @@ class PdfServiceTest(EinzelAbrechnungServiceTestBase):
         )
         ea = self._ea()
         dokument = rendere_und_speichere(ea, user=self.user)
-        self.assertEqual(dokument.verknuepfung_typ, 'einzelabrechnung')
-        self.assertEqual(dokument.objekt, self.objekt)
+        self.assertEqual(dokument.kategorie, 'Jahresabrechnung')
+        # Owner-Regel B-Hybrid (Vorgang & DMS Kap. 1.6): höchstens ein Kontext-FK —
+        # hier nur einheit, objekt bleibt bewusst leer.
+        self.assertIsNone(dokument.objekt)
         self.assertEqual(dokument.einheit, self.e1)
         self.assertIn('WE01', dokument.dateiname)
         self.assertIn('2025', dokument.dateiname)

@@ -29,11 +29,14 @@ const variants: Record<string, string> = {
   // Prozess
   abgeschlossen:  'bg-green-100 text-green-800',
   abgebrochen:    'bg-red-100 text-red-700',
-  // Ticket
+  // Vorgang
   offen:          'bg-blue-100 text-blue-700',
   in_bearbeitung: 'bg-yellow-100 text-yellow-800',
   erledigt:       'bg-green-100 text-green-800',
   geschlossen:    'bg-gray-100 text-gray-600',
+  wartet_extern:  'bg-orange-100 text-orange-700',
+  wiedervorlage:  'bg-purple-100 text-purple-700',
+  fehlgeschlagen: 'bg-red-100 text-red-700',
   // WKZ Vorlage
   eingereicht:       'bg-orange-100 text-orange-800',
   pausiert:          'bg-yellow-100 text-yellow-800',
@@ -44,9 +47,15 @@ const variants: Record<string, string> = {
   bankabgang_erfolgt:'bg-green-100 text-green-800',
   abweichend_geklaert:'bg-yellow-100 text-yellow-800',
   verworfen:         'bg-gray-100 text-gray-500',
+  // Handwerkerauftrag (entwurf/abgelehnt/storniert/abgeschlossen s.o. bereits vorhanden)
+  versendet:      'bg-blue-100 text-blue-700',
+  angenommen:     'bg-green-100 text-green-800',
+  in_arbeit:      'bg-indigo-100 text-indigo-700',
+  abgelaufen:     'bg-orange-100 text-orange-700',
   // Priorität
   niedrig:        'bg-gray-100 text-gray-600',
   mittel:         'bg-yellow-100 text-yellow-700',
+  normal:         'bg-blue-100 text-blue-700',
   hoch:           'bg-orange-100 text-orange-700',
   kritisch:       'bg-red-100 text-red-700',
 }

@@ -312,6 +312,7 @@ export interface MitarbeiterZuordnung {
 
 export interface Mitarbeiter {
   id: string
+  user_id: number
   vorname: string
   nachname: string
   vollname: string
@@ -696,6 +697,11 @@ export interface Kreditor {
   aktiv: boolean
   erstellt_am: string
   rechnungen_anzahl: number
+  // Handwerker-Erweiterung (apps.handwerker)
+  gewerke: string[]
+  gewerke_bezeichnungen: string[]
+  ist_handwerker: boolean
+  kontakt_person: string
 }
 
 export interface DublettKandidat {
@@ -916,27 +922,161 @@ export interface ObjektDokument {
   rechnung_id: string | null
 }
 
-// ── Tickets ───────────────────────────────────────────────────────────
-export type TicketTyp = 'maengelmeldung' | 'anfrage' | 'aufgabe' | 'sonstiges'
-export type TicketStatus = 'offen' | 'in_bearbeitung' | 'erledigt' | 'geschlossen'
-export type TicketPrioritaet = 'niedrig' | 'mittel' | 'hoch' | 'kritisch'
+// ── Vorgänge (Ticket-Ablösung, Spec CLAUDE_CODE_ANLEITUNG_VORGANG_DMS_v1_0) ──
+export type VorgangStatus =
+  | 'offen' | 'in_bearbeitung' | 'wartet_extern' | 'wiedervorlage' | 'erledigt' | 'storniert'
+export type VorgangPrioritaet = 'niedrig' | 'normal' | 'hoch'
+export type VorgangQuelle = 'manuell' | 'mail' | 'telefon' | 'beschluss' | 'portal'
+export type VorgangEreignisTyp =
+  | 'kommentar' | 'statuswechsel' | 'zuweisung_geaendert'
+  | 'dokument_verknuepft' | 'system_wiedervorlage_faellig'
+  | 'antwort_vorschlag_erzeugt' | 'antwort_vorschlag_bearbeitet'
+  | 'antwort_vorschlag_freigegeben' | 'antwort_vorschlag_verworfen'
+  | 'handwerker_beauftragt' | 'handwerker_angenommen' | 'handwerker_abgelehnt'
+  | 'handwerker_abgeschlossen' | 'handwerker_abgelaufen'
 
-export interface TicketList {
+export interface VorgangTyp {
   id: string
-  titel: string
-  ticket_typ: TicketTyp
-  status: TicketStatus
-  prioritaet: TicketPrioritaet
-  objekt: string
+  code: string
+  bezeichnung: string
+  standard_prioritaet: VorgangPrioritaet
+  aktiv: boolean
+  sortierung: number
+  antwort_vorschlag_aktiv: boolean
+  erstellt_am: string
+  erstellt_von: number | null
+}
+
+// ── KI-Antwortvorschlag am Vorgang ─────────────────────────────────────
+export type VorgangAntwortVorschlagStatus = 'entwurf' | 'freigegeben' | 'verworfen' | 'fehlgeschlagen'
+
+export interface VorgangAntwortVorschlag {
+  id: string
+  vorgang: string
+  text_ki: string
+  text: string
+  status: VorgangAntwortVorschlagStatus
+  modell: string
+  fehler: string
+  erzeugt_am: string
+  erzeugt_von: number | null
+  erzeugt_von_name: string | null
+  bearbeitet_am: string | null
+  bearbeitet_von: number | null
+  bearbeitet_von_name: string | null
+  freigegeben_am: string | null
+  freigegeben_von: number | null
+  freigegeben_von_name: string | null
+}
+
+export interface VorgangList {
+  id: string
+  nummer: string
+  typ: string
+  typ_bezeichnung: string
+  quelle: VorgangQuelle
+  objekt: string | null
+  objekt_bezeichnung: string | null
+  einheit: string | null
+  einheit_nr: string | null
+  person: string | null
+  person_name: string | null
+  betreff: string
+  status: VorgangStatus
+  prioritaet: VorgangPrioritaet
+  zugewiesen_an: number | null
+  zugewiesen_an_name: string | null
+  faellig_am: string | null
+  wiedervorlage_am: string | null
   erstellt_am: string
 }
 
-export interface Ticket extends TicketList {
-  einheit: string | null
-  beschreibung: string
-  zuweisung: number | null
-  aktualisiert_am: string
+export interface VorgangEreignis {
+  id: string
+  typ: VorgangEreignisTyp
+  text: string | null
+  alter_wert: string | null
+  neuer_wert: string | null
+  /** true (Default) = nur intern sichtbar; false = für den Eigentümer sichtbar. */
+  intern: boolean
+  erstellt_am: string
+  erstellt_von: number | null
+  erstellt_von_name: string | null
 }
+
+export interface VorgangDokument {
+  id: string
+  dateiname: string
+  kategorie: string
+  dokument_typ: string
+  beschreibung: string
+  version: number
+  vorgaenger_version: string | null
+  sha256: string | null
+  hochgeladen_am: string
+  hochgeladen_von: number
+  hochgeladen_von_name: string | null
+}
+
+export interface VorgangDetail extends VorgangList {
+  beschreibung: string | null
+  mail_referenz: string | null
+  telefon_rufnummer: string | null
+  portal_sichtbar: boolean
+  erstellt_von: number
+  erstellt_von_name: string | null
+  geschlossen_am: string | null
+  geschlossen_von: number | null
+  geschlossen_von_name: string | null
+  ereignisse: VorgangEreignis[]
+  dokumente: VorgangDokument[]
+  antwort_vorschlag: VorgangAntwortVorschlag | null
+}
+
+export interface VorgangCreatePayload {
+  typ: string
+  objekt?: string | null
+  einheit?: string | null
+  person?: string | null
+  betreff: string
+  beschreibung?: string
+  prioritaet?: VorgangPrioritaet
+  faellig_am?: string | null
+  zugewiesen_an?: number | null
+  mail_referenz?: string
+  telefon_rufnummer?: string
+  portal_sichtbar?: boolean
+}
+
+export interface VorgangDokumentUploadErgebnis {
+  dokument: VorgangDokument
+  duplikat_warnung: boolean
+}
+
+/** Antwort von GET /vorgaenge/{id}/portal-vorschau/ — Mitarbeiter-Vorschau
+ * ("was sieht der Eigentümer?"). Enthält bewusst KEINE Dokument-ID/-Link und
+ * keinen zugewiesenen Mitarbeiter — es gibt (noch) kein Eigentümer-Portal. */
+export interface VorgangPortalAnsichtEreignis {
+  typ: VorgangEreignisTyp
+  typ_anzeige: string
+  text: string | null
+  erstellt_am: string
+}
+
+export type VorgangPortalAnsicht =
+  | { sichtbar: false }
+  | {
+      sichtbar: true
+      nummer: string
+      betreff: string
+      beschreibung: string | null
+      status: VorgangStatus
+      status_anzeige: string
+      erstellt_am: string
+      objekt_bezeichnung: string | null
+      einheit_nr: string | null
+      ereignisse: VorgangPortalAnsichtEreignis[]
+    }
 
 // ── Zahlungsverkehr ─────────────────────────────────────────────────
 export interface LastschriftPosition {
@@ -1142,4 +1282,148 @@ export interface EWAbschlussErgebnis {
   auszahlungslauf_id: string | null
   nachhol_count: number
   storniert_count: number
+}
+
+// ── Handwerker (Handwerkerauftrag, Phase D — Spec
+// CLAUDE_CODE_ANLEITUNG_HANDWERKERAUFTRAG_v1_0) ────────────────────────
+export interface Gewerk {
+  id: string
+  code: string
+  bezeichnung: string
+  aktiv: boolean
+  sortierung: number
+  erstellt_am: string
+  erstellt_von: number | null
+}
+
+export interface ObjektHandwerker {
+  id: string
+  objekt: string
+  kreditor: string
+  kreditor_name: string
+  gewerke_bezeichnung: string | null
+  prioritaet: number
+  notiz: string
+  erstellt_am: string
+}
+
+export type HandwerkerauftragStatus =
+  | 'entwurf' | 'versendet' | 'angenommen' | 'abgelehnt'
+  | 'in_arbeit' | 'abgeschlossen' | 'storniert' | 'abgelaufen'
+
+export type HandwerkerauftragEreignisTyp =
+  | 'statuswechsel' | 'versand' | 'versand_fehlgeschlagen'
+  | 'kommentar' | 'rechnung_zugeordnet' | 'system_abgelaufen'
+
+export interface HandwerkerauftragList {
+  id: string
+  nummer: string
+  titel: string
+  status: HandwerkerauftragStatus
+  prioritaet: VorgangPrioritaet
+  geschaetzte_kosten: string | null
+  objekt: string
+  objekt_bezeichnung: string | null
+  kreditor: string
+  kreditor_name: string
+  kreditor_gewerke_bezeichnung: string | null
+  erstellt_am: string
+  versendet_am: string | null
+  angenommen_am: string | null
+  abgelehnt_am: string | null
+  abgeschlossen_am: string | null
+  rechnungen_anzahl: number
+}
+
+export interface HandwerkerauftragEreignis {
+  id: string
+  typ: HandwerkerauftragEreignisTyp
+  text: string | null
+  alter_wert: string | null
+  neuer_wert: string | null
+  erstellt_am: string
+  erstellt_von: number | null
+  erstellt_von_name: string | null
+}
+
+export interface HandwerkerauftragRechnung {
+  id: string
+  rechnungsnummer: string
+  rechnungsdatum: string | null
+  betrag_brutto: string | null
+}
+
+export interface HandwerkerauftragTokenStatus {
+  gueltig_bis: string
+  verbraucht_am: string | null
+}
+
+export interface HandwerkerauftragVorgangRef {
+  id: string
+  nummer: string
+  betreff: string
+}
+
+export interface HandwerkerauftragDetail {
+  id: string
+  nummer: string
+  titel: string
+  beschreibung: string
+  status: HandwerkerauftragStatus
+  prioritaet: VorgangPrioritaet
+  gewuenscht_ab: string | null
+  geschaetzte_kosten: string | null
+  objekt: string
+  objekt_bezeichnung: string | null
+  kreditor: string
+  kreditor_name: string
+  kreditor_gewerke_bezeichnung: string | null
+  vorgang: HandwerkerauftragVorgangRef | null
+  ablehnung_grund: string
+  abschluss_notiz: string
+  erstellt_am: string
+  erstellt_von: number | null
+  erstellt_von_name: string | null
+  versendet_am: string | null
+  angenommen_am: string | null
+  abgelehnt_am: string | null
+  abgeschlossen_am: string | null
+  geaendert_am: string
+  ereignisse: HandwerkerauftragEreignis[]
+  rechnungen: HandwerkerauftragRechnung[]
+  token_status: HandwerkerauftragTokenStatus | null
+}
+
+export interface HandwerkerauftragCreatePayload {
+  kreditor: string
+  objekt?: string | null
+  titel: string
+  beschreibung?: string
+  gewuenscht_ab?: string | null
+  prioritaet?: VorgangPrioritaet
+  geschaetzte_kosten?: number | string | null
+}
+
+// ── Öffentliche Auftragsbestätigung (kein Login, Token-Link) ───────────
+export interface OeffentlicherAuftrag {
+  nummer: string
+  objekt_bezeichnung: string
+  objekt_adresse: string
+  titel: string
+  beschreibung: string
+  prioritaet: VorgangPrioritaet
+  gewuenscht_ab: string | null
+  geschaetzte_kosten: string | null
+  kreditor_name: string
+  gueltig_bis: string
+  aktion: 'annehmen' | 'ablehnen'
+  status: HandwerkerauftragStatus
+  bereits_verwendet: boolean
+  abgelaufen: boolean
+}
+
+export interface OeffentlicherAuftragBestaetigungErgebnis {
+  nummer: string
+  status: HandwerkerauftragStatus
+  aktion: 'annehmen' | 'ablehnen'
 }

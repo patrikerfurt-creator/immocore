@@ -236,7 +236,7 @@ class SperrenTest(_RechnungenWurzelMixin, TestCase):
         return Dokument.objects.create(
             datei="archiv/2026/08/re.pdf", ablage_wurzel="rechnungen",
             dateiname="re.pdf", kategorie="Beleg", dokument_typ="beleg",
-            verknuepfung_typ="Rechnung", objekt=self.objekt,
+            objekt=self.objekt,
             hochgeladen_von=self.user, revisionssicher=False,
         )
 
@@ -302,7 +302,7 @@ class RueckabwicklungTest(_RechnungenWurzelMixin, TestCase):
         return Dokument.objects.create(
             datei="archiv/2026/08/re.pdf", ablage_wurzel="rechnungen",
             dateiname="re.pdf", kategorie="Beleg", dokument_typ="beleg",
-            verknuepfung_typ="Rechnung", objekt=self.objekt,
+            objekt=self.objekt,
             hochgeladen_von=self.user, revisionssicher=revisionssicher,
         )
 
@@ -353,7 +353,7 @@ class DokumentPfadTest(_RechnungenWurzelMixin, TestCase):
         dok = Dokument.objects.create(
             datei="sub/testfile.pdf", ablage_wurzel="media",
             dateiname="testfile.pdf", kategorie="Beleg", dokument_typ="beleg",
-            verknuepfung_typ="Rechnung", objekt=self.objekt, hochgeladen_von=self.user,
+            objekt=self.objekt, hochgeladen_von=self.user,
         )
         self.assertEqual(dokument_pfad(dok), Path(settings.MEDIA_ROOT) / "sub/testfile.pdf")
 
@@ -361,6 +361,6 @@ class DokumentPfadTest(_RechnungenWurzelMixin, TestCase):
         dok = Dokument.objects.create(
             datei="archiv/2026/08/testfile.pdf", ablage_wurzel="rechnungen",
             dateiname="testfile.pdf", kategorie="Beleg", dokument_typ="beleg",
-            verknuepfung_typ="Rechnung", objekt=self.objekt, hochgeladen_von=self.user,
+            objekt=self.objekt, hochgeladen_von=self.user,
         )
         self.assertEqual(dokument_pfad(dok), self.root / "archiv/2026/08/testfile.pdf")

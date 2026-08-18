@@ -41,7 +41,8 @@ LOCAL_APPS = [
     'apps.rechnungen',
     'apps.prozesse',
     'apps.dokumente',
-    'apps.tickets',
+    'apps.vorgaenge',
+    'apps.handwerker',
     'apps.massenimport',
     'apps.mitarbeiter',
     'apps.abrechnung_wp',
@@ -121,6 +122,17 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
+    # Bewusst KEIN 'DEFAULT_THROTTLE_CLASSES' — sonst würde jeder bestehende
+    # Endpunkt gethrottelt. Nur der neue öffentliche Auftragsbestätigungs-
+    # Endpunkt (Phase C) nutzt ScopedRateThrottle mit throttle_scope
+    # 'auftrag_token', explizit an der jeweiligen View gesetzt.
+    'DEFAULT_THROTTLE_RATES': {
+        'auftrag_token': '30/hour',
+    },
+    # Bewusst KEIN globales 'DEFAULT_PAGINATION_CLASS' — würde die
+    # Antwortform ALLER bestehenden Endpunkte ändern (Frontend erwartet
+    # dort reine Listen ohne count/results). Pagination nur am neuen
+    # Handwerkerauftrags-Dashboard-ViewSet gesetzt.
 }
 
 # Simple JWT
@@ -151,6 +163,23 @@ CSRF_TRUSTED_ORIGINS = [
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
 ANTHROPIC_MODEL = os.environ.get('ANTHROPIC_MODEL', 'claude-sonnet-4-5')
 
+# ---------------------------------------------------------------------------
+# E-Mail (Handwerkerauftrag Phase B, Patrik-Entscheidung)
+# ---------------------------------------------------------------------------
+# Default: Konsolen-Backend — lokal wird nichts versendet, sondern nur
+# protokolliert. Per Env auf SMTP umstellbar (Live-Betrieb).
+EMAIL_BACKEND = os.environ.get('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
+EMAIL_HOST = os.environ.get('EMAIL_HOST', '')
+EMAIL_PORT = int(os.environ.get('EMAIL_PORT', '587'))
+EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
+EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'True') == 'True'
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'info@demme-immobilien.de')
+# Empfangsadresse für den Rechnungsrücklauf von Handwerkern (Hinweis im Mailtext).
+RECHNUNG_EMPFANG_EMAIL = os.environ.get('RECHNUNG_EMPFANG_EMAIL', 'rechnungen@demme-immobilien.de')
+# Basis-URL des Frontends für Links in E-Mails (z.B. Auftragsbestätigung).
+FRONTEND_BASE_URL = os.environ.get('FRONTEND_BASE_URL', 'http://localhost:3000')
+
 # Celery
 CELERY_BROKER_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
 CELERY_RESULT_BACKEND = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
@@ -158,6 +187,24 @@ CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
+
+# ---------------------------------------------------------------------------
+# Cache (Phase C — Rate-Limiting für die ersten öffentlichen Endpunkte)
+# ---------------------------------------------------------------------------
+# Ohne diese Konfiguration greift Djangos Default 'LocMemCache' — der ist
+# PRO PROZESS/Gunicorn-Worker, DRF-Throttling (das den Cache als Zähler-
+# Backend nutzt) wäre damit bei mehreren Workern praktisch wirkungslos.
+# Eigener Redis-DB-Index (1), NICHT der Celery-Broker-Index (0) oben —
+# getrennte Nutzung, damit z.B. ein 'redis-cli FLUSHDB' auf dem Cache
+# niemals die Celery-Queue mit trifft. Env-überschreibbar.
+_redis_basis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+_redis_cache_default_url = _redis_basis_url.rsplit('/', 1)[0] + '/1'
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+        'LOCATION': os.environ.get('CACHE_REDIS_URL', _redis_cache_default_url),
+    }
+}
 
 # Vier-Augen-Prinzip für Hausgeld-Sollstellungsläufe.
 # Auf False setzen wenn nur ein Benutzer aktiv ist (Demo/Einzelbetrieb).
@@ -209,5 +256,13 @@ CELERY_BEAT_SCHEDULE = {
     'archiviere-alte-pain-dateien': {
         'task': 'buchhaltung.archiviere_alte_pain_dateien',
         'schedule': crontab(day_of_week=1, hour=3, minute=0),
+    },
+    'vorgaenge-pruefe-wiedervorlagen-taeglich-06uhr': {
+        'task': 'vorgaenge.pruefe_wiedervorlagen',
+        'schedule': crontab(hour=6, minute=0),
+    },
+    'handwerker-pruefe-abgelaufene-auftraege-taeglich-07uhr': {
+        'task': 'handwerker.pruefe_abgelaufene_auftraege',
+        'schedule': crontab(hour=7, minute=0),
     },
 }

@@ -1,8 +1,58 @@
+from itertools import combinations
 from uuid import uuid4
 from django.conf import settings
-from django.core.exceptions import ValidationError
+from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db import models
+from django.db.models import Q
 from apps.objekte.models import Objekt, Einheit
+from apps.personen.models import Person
+
+
+# Kontext-FKs, von denen ein Dokument höchstens eines gesetzt haben darf
+# (Owner-Regel B-Hybrid, siehe Dokument.clean() und die DB-Constraint unten).
+_KONTEXT_FELDER = ['objekt', 'einheit', 'vorgang', 'person']
+
+
+class DokumentQuerySet(models.QuerySet):
+    """Zentrale Abfrage-API: löst den Beziehungsgraphen auf (Objekt/Einheit/
+    Vorgang/Person/Rechnung), statt dass Aufrufer einzelne FKs verodern.
+    """
+
+    def fuer_objekt(self, objekt):
+        return self.filter(
+            Q(objekt=objekt)
+            | Q(einheit__objekt=objekt)
+            | Q(vorgang__objekt=objekt)
+            | Q(rechnung__objekt=objekt)
+        ).distinct()
+
+    def fuer_einheit(self, einheit):
+        # Rechnung hat kein einheit-Feld — daher hier bewusst kein Q(rechnung__einheit=einheit).
+        return self.filter(
+            Q(einheit=einheit)
+            | Q(vorgang__einheit=einheit)
+        ).distinct()
+
+    def fuer_person(self, person):
+        return self.filter(
+            Q(person=person)
+            | Q(vorgang__person=person)
+        ).distinct()
+
+
+DokumentManager = models.Manager.from_queryset(DokumentQuerySet)
+
+
+def _max_ein_kontext_check() -> Q:
+    """Baut die DB-CheckConstraint 'höchstens einer der vier Kontext-FKs gesetzt'
+    rein aus Q-Objekten (kein Raw-SQL): für jedes Paar von Kontext-Feldern gilt
+    NICHT (beide gesetzt) — das entspricht in Summe 'Anzahl gesetzter Felder <= 1'.
+    """
+    check = Q()
+    for a, b in combinations(_KONTEXT_FELDER, 2):
+        paar_nicht_beide = ~(Q(**{f'{a}__isnull': False}) & Q(**{f'{b}__isnull': False}))
+        check &= paar_nicht_beide
+    return check
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -71,7 +121,6 @@ class Dokument(models.Model):
     dateiname = models.CharField(max_length=255)
     kategorie = models.CharField(max_length=100)  # z.B. Teilungserklärung, Versicherung, Protokoll
     beschreibung = models.TextField(blank=True)
-    verknuepfung_typ = models.CharField(max_length=50)  # Objekt / Einheit / Ticket / Rechnung
     objekt = models.ForeignKey(
         Objekt, on_delete=models.PROTECT, null=True, blank=True,
         related_name='dokumente'
@@ -79,6 +128,19 @@ class Dokument(models.Model):
     einheit = models.ForeignKey(
         Einheit, on_delete=models.PROTECT, null=True, blank=True,
         related_name='dokumente'
+    )
+    vorgang = models.ForeignKey(
+        'vorgaenge.Vorgang', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='dokumente'
+    )
+    person = models.ForeignKey(
+        Person, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='dokumente'
+    )
+    version = models.IntegerField(default=1)
+    vorgaenger_version = models.ForeignKey(
+        'self', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='nachfolger_versionen',
     )
     hochgeladen_von = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
@@ -105,10 +167,41 @@ class Dokument(models.Model):
         help_text='Globale Belegnummer (AA00000001 …), Vergabe über BelegnummerZaehler',
     )
 
+    objects = DokumentManager()
+
     class Meta:
         verbose_name = 'Dokument'
         verbose_name_plural = 'Dokumente'
         ordering = ['-hochgeladen_am']
+        # HINWEIS Migrations-Reihenfolge (Live-Sicherheit): das CheckConstraint wurde
+        # bewusst in einer separaten, späteren Migration aktiviert (siehe
+        # 0008_dokument_max_ein_kontext_constraint.py) — NICHT in derselben
+        # Migration wie die additiven Felder (0006). Dazwischen läuft die
+        # Datenmigration 0007, die für alle über Rechnung.beleg_dokument
+        # gekoppelten Dokumente objekt/einheit auf NULL setzt.
+        constraints = [
+            models.CheckConstraint(
+                name='dokument_max_ein_kontext',
+                check=_max_ein_kontext_check(),
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        anzahl = sum(1 for f in _KONTEXT_FELDER if getattr(self, f'{f}_id'))
+        if anzahl > 1:
+            raise ValidationError(
+                'Dokument darf höchstens einen Kontext-FK (objekt/einheit/vorgang/person) '
+                'gesetzt haben — der Owner muss eindeutig sein.'
+            )
+        if anzahl == 0:
+            try:
+                self.rechnung
+            except ObjectDoesNotExist:
+                raise ValidationError(
+                    'Dokument ohne Kontext-FK ist nur zulässig, wenn es über '
+                    'Rechnung.beleg_dokument gekoppelt ist.'
+                )
 
     def save(self, *args, **kwargs):
         # GoBD: bei revisionssicherem Dokument darf die Datei nicht ausgetauscht werden

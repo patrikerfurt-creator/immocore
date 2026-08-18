@@ -66,7 +66,7 @@ class RechnungDateiPfadTest(TestCase):
         dok = Dokument.objects.create(
             datei=ContentFile(b"%PDF-1.4 Beleg", name="beleg.pdf"),
             dateiname="beleg.pdf", kategorie="Beleg", dokument_typ="beleg",
-            verknuepfung_typ="Rechnung", objekt=self.objekt,
+            objekt=self.objekt,
             hochgeladen_von=self.user, ablage_wurzel="media",
         )
         rechnung = _rechnung(self.objekt, pfad="/app/rechnungen/altablage.pdf", beleg_dokument=dok)
@@ -105,7 +105,7 @@ class RechnungPdfEndpointTest(TestCase):
         dok = Dokument.objects.create(
             datei=ContentFile(b"%PDF-1.4 Inhalt gekoppelt", name="gekoppelt.pdf"),
             dateiname="gekoppelt.pdf", kategorie="Beleg", dokument_typ="beleg",
-            verknuepfung_typ="Rechnung", objekt=self.objekt,
+            objekt=self.objekt,
             hochgeladen_von=self.user, ablage_wurzel="media",
         )
         rechnung = _rechnung(self.objekt, beleg_dokument=dok)

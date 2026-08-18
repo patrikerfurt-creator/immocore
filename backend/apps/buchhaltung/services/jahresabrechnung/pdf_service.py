@@ -226,8 +226,8 @@ def rendere_und_speichere(ea: EinzelAbrechnung, user=None) -> Dokument:
             f"Einzelabrechnung {ja.wirtschaftsjahr.jahr} — "
             f"Einheit {ea.einheit.einheit_nr}, {ea.eigentuemer}"
         ),
-        verknuepfung_typ='einzelabrechnung',
-        objekt=ja.objekt,
+        # Owner-Regel B-Hybrid (Vorgang & DMS Kap. 1.6): höchstens ein Kontext-FK —
+        # hier bewusst nur einheit, NICHT zusätzlich objekt.
         einheit=ea.einheit,
         hochgeladen_von=user or ja.erstellt_von,
     )

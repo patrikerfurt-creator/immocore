@@ -138,10 +138,14 @@ export function DokumenteListe() {
               {dokumente?.map(d => (
                 <tr key={d.id} className="border-b border-gray-100 hover:bg-gray-50">
                   <td className="px-4 py-3">
-                    <a href={d.datei} target="_blank" rel="noopener noreferrer"
-                       className="text-primary-600 hover:underline">
+                    {/* Auslieferung über /dokumente/{id}/datei/ — der direkte MEDIA-Link
+                        greift nicht, wenn ablage_wurzel='rechnungen' ist. */}
+                    <button
+                      onClick={() => dokumenteApi.openDatei(d.id)}
+                      className="text-primary-600 hover:underline text-left"
+                    >
                       {d.dateiname}
-                    </a>
+                    </button>
                   </td>
                   <td className="px-4 py-3 text-gray-600">{d.kategorie}</td>
                   <td className="px-4 py-3 text-gray-600">{d.beschreibung || '–'}</td>

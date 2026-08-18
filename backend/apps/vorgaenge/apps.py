@@ -1,7 +1,7 @@
 from django.apps import AppConfig
 
 
-class TicketsConfig(AppConfig):
+class VorgaengeConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
-    name = 'apps.tickets'
-    verbose_name = 'Tickets'
+    name = 'apps.vorgaenge'
+    verbose_name = 'Vorgänge'

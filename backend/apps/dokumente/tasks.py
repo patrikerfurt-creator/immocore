@@ -30,31 +30,20 @@ def scan_dokumente_einstellung(einst) -> dict:
 
     dateien = sorted([p for p in ordner.iterdir() if p.is_file()])
 
+    # STILLGELEGT (Vorgang & DMS Kap. 1.6, Owner-Regel B-Hybrid): Diese Schleife
+    # legte Dokumente bisher ganz OHNE Kontext-FK an (kein objekt/einheit/vorgang/
+    # person), was nach Einführung der DB-Constraint "höchstens ein Kontext-FK,
+    # 0 nur bei Rechnungskopplung" (clean()) fachlich falsch wäre — ein
+    # Auto-Import-Dokument ist nie über Rechnung.beleg_dokument gekoppelt.
+    # Der eigentliche DMS-Eingangskorb (mit sinnvoller Vorgangs-/Objekt-Zuordnung)
+    # wird separat spezifiziert (siehe Vorgang & DMS Kap. 0.2/7.2). Bis dahin
+    # KEINE automatische Dokumentenanlage aus diesem Ordner-Scan — nur zählen.
     importiert = fehler = 0
     for datei in dateien:
-        try:
-            with open(datei, 'rb') as f:
-                Dokument.objects.create(
-                    datei=File(f, name=datei.name),
-                    dateiname=datei.name,
-                    kategorie='auto-import',
-                    verknuepfung_typ='Objekt',
-                    hochgeladen_von=system_user,
-                )
-            importiert += 1
-            ziel = archiv / datei.name
-            if ziel.exists():
-                import time
-                ziel = archiv / f'{datei.stem}_{int(time.time())}{datei.suffix}'
-            datei.rename(ziel)
-        except Exception as exc:
-            logger.error("Dokumente-Import Fehler bei %s: %s", datei.name, exc)
-            fehler += 1
-            if fehler_dir and datei.exists():
-                try:
-                    datei.rename(fehler_dir / datei.name)
-                except Exception:
-                    pass
+        logger.info(
+            "Dokumente-Import: übersprungen (Pfad stillgelegt, siehe Kommentar): %s",
+            datei.name,
+        )
 
     return {'importiert': importiert, 'fehler': fehler, 'dateien': len(dateien)}
 

@@ -23,15 +23,14 @@ class DokumentViewSet(viewsets.ModelViewSet):
         objekt_id = self.request.query_params.get('objekt')
         einheit_id = self.request.query_params.get('einheit')
         kategorie = self.request.query_params.get('kategorie')
-        typ = self.request.query_params.get('typ')
         if objekt_id:
-            qs = qs.filter(objekt_id=objekt_id)
+            # fuer_objekt() akzeptiert auch eine reine PK (Django löst FK-Vergleiche
+            # gegen einen Roh-Wert genauso auf wie gegen eine Modell-Instanz).
+            qs = qs.fuer_objekt(objekt_id)
         if einheit_id:
-            qs = qs.filter(einheit_id=einheit_id)
+            qs = qs.fuer_einheit(einheit_id)
         if kategorie:
             qs = qs.filter(kategorie=kategorie)
-        if typ:
-            qs = qs.filter(verknuepfung_typ=typ)
         return qs
 
     def destroy(self, request, *args, **kwargs):

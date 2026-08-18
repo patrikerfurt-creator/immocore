@@ -73,8 +73,9 @@
 | Rechnung | ✅ | sha256_hash, duplikat-Erkennung, 10 Status, kostenstelle FK |
 | Freigabe | ✅ | Freigabe-Event mit Rolle + Entscheidung |
 | Prozess | ✅ | Wizard-Zustand, steps_data JSONField |
-| Dokument | ✅ | Datei-Upload, Kategorisierung |
-| Ticket | ✅ | Status-Workflow, Zuweisung |
+| Dokument | ✅ | Datei-Upload, Kategorisierung, DMS-Owner-FK (objekt/einheit/vorgang/person), sha256, GoBD-Sperre |
+| Ticket | ⚠️ ersetzt | Entfernt 2026-08-09 (Phase E Cleanup) — ersetzt durch `Vorgang`, siehe `CLAUDE_CODE_ANLEITUNG_VORGANG_DMS_v1_0.md` |
+| Vorgang | ✅ | Generische Fallakte (apps.vorgaenge), löst `Ticket` ab — Ereignisse, Status-Lifecycle, Wiedervorlage, Dokument-Kopplung |
 | Mietvertrag | ✅ | Model (ZH/SEV), Wizard Phase 2 🚫 |
 
 ### 2.2 Migrations-Stand
@@ -155,7 +156,8 @@
 | `/mitarbeiter-zuordnungen/` | GET + POST + PATCH (aufgabe) + DELETE | ✅ |
 | `/prozesse/` | start + schritte + schritt-speichern + abbrechen | ✅ |
 | `/dokumente/` | Upload + Liste | ✅ |
-| `/tickets/` | CRUD + Status-Workflow + zuweisen | ✅ |
+| `/vorgaenge/` | CRUD + status + kommentar + zuweisen + dokumente (ersetzt `/tickets/`, entfernt 2026-08-09) | ✅ |
+| `/vorgang-typen/` (+ `/admin`) | ReadOnly + Admin-CRUD der Vorgangstypen | ✅ |
 
 ---
 
@@ -213,7 +215,7 @@
 | | Eigentümerwechsel-Wizard | 🔄 | Schritte definiert; Abgrenzung fehlt |
 | | Jahresabrechnungs-Wizard | 🔄 | Schritte definiert; .950-Buchung + PDF fehlt |
 | **Sonstige** | DokumenteListe | ✅ | Upload + Liste |
-| | TicketsListe | ✅ | Status-Workflow |
+| | VorgaengeListe / VorgangDetail | ✅ | Ersetzt TicketsListe (entfernt 2026-08-09); Status-Workflow, Ereignisse, Dokument-Upload |
 | | MassenimportWEG | ✅ | CSV-Massenimport |
 | | Einstellungen | ✅ | Tabs: E-Banking, Rechnungen, Dokumente, **Freigabelimits (neu)** |
 | | Dashboard | ✅ | |
@@ -272,6 +274,7 @@
 | Abw. 002 | Freigabe-Workflow: Betragsstufen konfigurierbar (Standard + pro Objekt); automatische Enforcement beim `freigeben`-Endpunkt noch ausstehend | Mittel | Teilweise behoben 30.04.2026 |
 | Abw. 003 | Prozess-Wizards: Schritt-Logik (Abgrenzungsberechnung, .950-Buchungen, PDF-Vorschau) fehlt | Mittel | Offen |
 | Abw. 006 | PostgreSQL Port 5433 statt 5432 (lokal belegt) | Gering | Akzeptiert |
+| Abw. 007 | Vorgang & DMS-Modul (`CLAUDE_CODE_ANLEITUNG_VORGANG_DMS_v1_0.md`): `Ticket` ersetzt durch generischen `Vorgang` (apps.vorgaenge); Owner-Regel B-Hybrid (höchstens ein Kontext-FK aus objekt/einheit/vorgang/person statt fixem `verknuepfung_typ`-Feld); `sha256` statt `inhalt_hash` als Duplikat-Kennung; separate App `apps.vorgaenge` statt Erweiterung von `apps.tickets`; automatischer E-Mail-/Portal-Import für Vorgänge stillgelegt (nur manuelle Anlage im MVP) | Gering | Umgesetzt 2026-08-09 |
 
 ---
 
@@ -290,5 +293,5 @@
 
 ---
 
-*Zuletzt aktualisiert: 30.04.2026*
+*Zuletzt aktualisiert: 09.08.2026 (Vorgang & DMS-Modul: Ticket-Cleanup Phase E)*
 *Nächste Priorität: Mahnwesen Frontend-Page*

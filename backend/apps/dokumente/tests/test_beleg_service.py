@@ -89,7 +89,9 @@ class LegeRechnungsbelegAbTest(TestCase):
         self.assertEqual(dok.kategorie, "Beleg")
         self.assertEqual(dok.sha256, hashlib.sha256(self.datei_bytes).hexdigest())
         self.assertRegex(dok.beleg_nummer, r"^[A-Z]{2}\d{8}$")
-        self.assertEqual(dok.objekt_id, self.objekt.id)
+        # Owner-Regel B-Hybrid (Vorgang & DMS Kap. 1.6): Beleg-Dokumente haben
+        # KEINEN Kontext-FK — Owner ist die Rechnung über beleg_dokument.
+        self.assertIsNone(dok.objekt_id)
         self.assertFalse(dok.revisionssicher)
 
         self.rechnung.refresh_from_db()
@@ -146,9 +148,9 @@ class KoppelRechnungsbelegTest(TestCase):
         self.assertFalse(dok.datei.name.startswith("/"))
         self.assertEqual(dok.dokument_typ, "beleg")
         self.assertEqual(dok.kategorie, "Beleg")
-        self.assertEqual(dok.verknuepfung_typ, "Rechnung")
         self.assertEqual(dok.sha256, "b" * 64)
-        self.assertEqual(dok.objekt_id, self.objekt.id)
+        # Owner-Regel B-Hybrid (Vorgang & DMS Kap. 1.6): kein Kontext-FK.
+        self.assertIsNone(dok.objekt_id)
         self.assertFalse(dok.revisionssicher)
         self.assertRegex(dok.beleg_nummer, r"^[A-Z]{2}\d{8}$")
 
@@ -185,7 +187,6 @@ class DokumentGobdSperreTest(TestCase):
             dateiname="dok.pdf",
             kategorie="Beleg",
             dokument_typ="beleg",
-            verknuepfung_typ="Rechnung",
             objekt=self.objekt,
             hochgeladen_von=self.user,
             revisionssicher=revisionssicher,
@@ -286,7 +287,6 @@ class DokumentApiGobdSperreTest(TestCase):
             dateiname="api-dok.pdf",
             kategorie="Beleg",
             dokument_typ="beleg",
-            verknuepfung_typ="Rechnung",
             objekt=self.objekt,
             hochgeladen_von=self.user,
             revisionssicher=True,

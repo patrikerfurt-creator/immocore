@@ -46,9 +46,12 @@ const abrechnungWpItems: NavItemDef[] = [
 const otherItems: NavItemDef[] = [
   { to: '/prozesse',        label: 'Prozesse',    icon: '⚙️' },
   { to: '/dokumente',       label: 'Dokumente',   icon: '📁', objektAware: true },
-  { to: '/tickets',         label: 'Tickets',     icon: '🎫', objektAware: true },
+  { to: '/vorgaenge',       label: 'Vorgänge',    icon: '🗒️', objektAware: true },
+  { to: '/handwerker/auftraege', label: 'Handwerkeraufträge', icon: '🔧' },
   { to: '/massenimport/weg', label: 'Massenimport', icon: '📥' },
   { to: '/mitarbeiter',     label: 'Mitarbeiter', icon: '👥' },
+  { to: '/admin/vorgang-typen', label: 'Vorgangs-Typen (Admin)', icon: '🛠️' },
+  { to: '/admin/gewerke',       label: 'Gewerke (Admin)', icon: '🛠️' },
 ]
 
 const stammdatenPaths = stammdatenItems.map(i => i.to)

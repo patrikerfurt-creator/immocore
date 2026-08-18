@@ -107,24 +107,6 @@ ABFRAGE_KATALOG = [
         "ergebnis_spalten": ["objekt", "einheit_nr", "periode", "soll_betrag", "ist_betrag", "rueckstand"],
     },
     {
-        "id": "tickets_offen",
-        "beschreibung": (
-            "Zeigt alle offenen Tickets (Aufgaben, Maengelmeldungen) eines Objekts, "
-            "optional nach Ticket-Typ oder zugewiesenem Bearbeiter filterbar."
-        ),
-        "endpunkt": "/api/v1/tickets/",
-        "methode": "GET",
-        "pflicht_parameter": ["objekt_nr"],
-        "optionale_parameter": ["ticket_typ", "zuweisung", "status"],
-        "parameter_schema": {
-            "objekt_nr": "integer",
-            "ticket_typ": "string — optional",
-            "zuweisung": "string — Username des Bearbeiters (optional)",
-            "status": "string — default: 'offen'",
-        },
-        "ergebnis_spalten": ["ticket_nr", "titel", "ticket_typ", "status", "zuweisung", "erstellt_am"],
-    },
-    {
         "id": "bankkonten_eines_objekts",
         "beschreibung": (
             "Zeigt alle Bankkonten (Bewirtschaftung + Ruecklagen) eines Objekts "

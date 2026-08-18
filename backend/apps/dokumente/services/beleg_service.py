@@ -21,6 +21,10 @@ def lege_rechnungsbeleg_ab(rechnung, datei_bytes: bytes, dateiname: str,
     if rechnung.beleg_dokument_id:
         raise ValidationError("Rechnung hat bereits einen Beleg.")
 
+    # Owner-Regel B-Hybrid (Vorgang & DMS Kap. 1.6): Beleg-Dokumente werden OHNE
+    # Kontext-FK (objekt/einheit/vorgang/person) angelegt — Owner ist ausschließlich
+    # die Rechnung über beleg_dokument. `objekt` bleibt Parameter für Aufrufer-
+    # Kompatibilität, wird aber bewusst NICHT mehr auf das Dokument gesetzt.
     dok = Dokument.objects.create(
         datei=ContentFile(datei_bytes, name=dateiname),
         dateiname=dateiname,
@@ -28,8 +32,6 @@ def lege_rechnungsbeleg_ab(rechnung, datei_bytes: bytes, dateiname: str,
         dokument_typ='beleg',
         sha256=hashlib.sha256(datei_bytes).hexdigest(),
         revisionssicher=False,   # Sperre erst bei Freigabe (OP-Buchung)
-        verknuepfung_typ='Rechnung',
-        objekt=objekt,
         hochgeladen_von=hochgeladen_von,
         beleg_nummer=BelegnummerZaehler.naechste_nummer(),
     )
@@ -76,16 +78,15 @@ def koppel_rechnungsbeleg(rechnung, hochgeladen_von) -> Dokument:
     except ValueError:
         raise ValidationError(f"Rechnung.pfad liegt außerhalb der Rechnungen-Wurzel '{root}'.")
 
+    # Owner-Regel B-Hybrid (Vorgang & DMS Kap. 1.6): kein Kontext-FK — Owner ist
+    # die Rechnung über beleg_dokument (siehe lege_rechnungsbeleg_ab).
     dok = Dokument.objects.create(
         datei=rel,                     # String-Zuweisung: Storage schreibt NICHTS
         ablage_wurzel='rechnungen',
         dateiname=rechnung.dateiname or Path(rechnung.pfad).name,
         kategorie='Beleg',
         dokument_typ='beleg',
-        verknuepfung_typ='Rechnung',
         sha256=rechnung.sha256_hash or None,
-        objekt=rechnung.objekt,
-        einheit=None,
         hochgeladen_von=hochgeladen_von,
         revisionssicher=False,
         beleg_nummer=BelegnummerZaehler.naechste_nummer(),

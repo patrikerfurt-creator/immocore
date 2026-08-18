@@ -60,7 +60,6 @@ class ObjektDokumenteListeTest(TestCase):
             dateiname="beleg.pdf",
             kategorie="Beleg",
             dokument_typ="beleg",
-            verknuepfung_typ="Rechnung",
             objekt=self.objekt,
             hochgeladen_von=self.user,
         )
@@ -69,7 +68,6 @@ class ObjektDokumenteListeTest(TestCase):
             dateiname="vertrag.pdf",
             kategorie="Vertrag",
             dokument_typ="vertrag",
-            verknuepfung_typ="Objekt",
             objekt=self.objekt,
             hochgeladen_von=self.user,
         )
@@ -79,7 +77,6 @@ class ObjektDokumenteListeTest(TestCase):
             dateiname="fremd.pdf",
             kategorie="Beleg",
             dokument_typ="beleg",
-            verknuepfung_typ="Rechnung",
             objekt=self.anderes_objekt,
             hochgeladen_von=self.user,
         )
@@ -139,7 +136,6 @@ class DokumentDateiEndpointTest(TestCase):
             dateiname="media-beleg.pdf",
             kategorie="Beleg",
             dokument_typ="beleg",
-            verknuepfung_typ="Rechnung",
             objekt=self.objekt,
             hochgeladen_von=self.user,
             ablage_wurzel="media",
@@ -166,7 +162,6 @@ class DokumentDateiEndpointTest(TestCase):
             dateiname="rechnungen-wurzel-beleg.png",
             kategorie="Beleg",
             dokument_typ="beleg",
-            verknuepfung_typ="Rechnung",
             objekt=self.objekt,
             hochgeladen_von=self.user,
             ablage_wurzel="rechnungen",
@@ -183,7 +178,6 @@ class DokumentDateiEndpointTest(TestCase):
             dateiname="nicht-vorhanden.pdf",
             kategorie="Beleg",
             dokument_typ="beleg",
-            verknuepfung_typ="Rechnung",
             objekt=self.objekt,
             hochgeladen_von=self.user,
             ablage_wurzel="media",

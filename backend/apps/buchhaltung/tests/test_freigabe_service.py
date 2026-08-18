@@ -72,7 +72,7 @@ class FreigabeAblaufTest(FreigabeTestBase):
                 ea.sollstellung.eigentumsverhaeltnis, ea.eigentumsverhaeltnis)
             # PDF als Dokument persistiert
             self.assertIsNotNone(ea.dokument)
-            self.assertEqual(ea.dokument.verknuepfung_typ, 'einzelabrechnung')
+            self.assertEqual(ea.dokument.kategorie, 'Jahresabrechnung')
 
     def test_guthaben_erzeugt_negative_sollstellung(self):
         """Kap. 6.2 + Constraint-Erweiterung 0045: Guthaben = negativer soll_betrag."""

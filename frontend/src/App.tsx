@@ -32,7 +32,9 @@ import RechnungErfassen from './pages/rechnungen/RechnungErfassen'
 import RechnungsFreigabe from './pages/rechnungen/RechnungsFreigabe'
 import { ProzessWizard } from './pages/prozesse/ProzessWizard'
 import { DokumenteListe } from './pages/dokumente/DokumenteListe'
-import { TicketsListe } from './pages/tickets/TicketsListe'
+import { VorgaengeListe } from './pages/vorgaenge/VorgaengeListe'
+import { VorgangDetail } from './pages/vorgaenge/VorgangDetail'
+import { VorgangTypenAdmin } from './pages/vorgaenge/VorgangTypenAdmin'
 import { AbrechnungsartenPage } from './pages/stammdaten/AbrechnungsartenPage'
 import { VerteilerschluesselPage } from './pages/stammdaten/VerteilerschluesselPage'
 import { KontenplanPage } from './pages/stammdaten/KontenplanPage'
@@ -51,6 +53,10 @@ import { WirtschaftsplanDetail } from './pages/abrechnung-wp/wirtschaftsplan/Wir
 import { WirtschaftsplanWizard } from './pages/abrechnung-wp/wirtschaftsplan/WirtschaftsplanWizard'
 import { JahresabrechnungListe } from './pages/abrechnung-wp/jahresabrechnung/JahresabrechnungListe'
 import { JahresabrechnungWizard } from './pages/abrechnung-wp/jahresabrechnung/JahresabrechnungWizard'
+import { HandwerkerauftraegeListe } from './pages/handwerker/HandwerkerauftraegeListe'
+import { HandwerkerauftragDetail } from './pages/handwerker/HandwerkerauftragDetail'
+import { GewerkeAdmin } from './pages/handwerker/GewerkeAdmin'
+import { AuftragBestaetigung } from './pages/oeffentlich/AuftragBestaetigung'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -67,6 +73,8 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
+          {/* Öffentlich, ohne Login — Handwerker bestätigen ihren Auftrag per Mail-Link. */}
+          <Route path="/auftrag-bestaetigung/:token" element={<AuftragBestaetigung />} />
           <Route
             element={
               <ProtectedRoute>
@@ -107,7 +115,12 @@ export default function App() {
             <Route path="admin/rechnungen/match-regeln" element={<MatchRegeln />} />
             <Route path="prozesse" element={<ProzessWizard />} />
             <Route path="dokumente" element={<DokumenteListe />} />
-            <Route path="tickets" element={<TicketsListe />} />
+            <Route path="vorgaenge" element={<VorgaengeListe />} />
+            <Route path="vorgaenge/:id" element={<VorgangDetail />} />
+            <Route path="admin/vorgang-typen" element={<VorgangTypenAdmin />} />
+            <Route path="handwerker/auftraege" element={<HandwerkerauftraegeListe />} />
+            <Route path="handwerker/auftraege/:id" element={<HandwerkerauftragDetail />} />
+            <Route path="admin/gewerke" element={<GewerkeAdmin />} />
             <Route path="massenimport/weg" element={<MassenimportWEG />} />
             <Route path="zahlungsverkehr/lastschrift" element={<Lastschrift />} />
             <Route path="zahlungsverkehr/zahlungen" element={<Zahlungen />} />

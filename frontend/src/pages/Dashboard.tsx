@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { objekteApi } from '../api/objekte'
-import { ticketsApi } from '../api/tickets'
+import { vorgaengeApi } from '../api/vorgaenge'
 import { rechnungenApi } from '../api/rechnungen'
 import { prozesseApi } from '../api/prozesse'
 import { useAuthStore } from '../stores/auth'
@@ -59,7 +59,7 @@ export function Dashboard() {
   const { username, istFrontoffice } = useAuthStore()
 
   const { data: objekte } = useQuery({ queryKey: ['objekte'], queryFn: objekteApi.list })
-  const { data: tickets } = useQuery({ queryKey: ['tickets'], queryFn: () => ticketsApi.list() })
+  const { data: vorgaenge } = useQuery({ queryKey: ['vorgaenge-dashboard'], queryFn: () => vorgaengeApi.list() })
   const { data: rechnungen } = useQuery({
     queryKey: ['rechnungen-offen-widget'],
     queryFn: () => rechnungenApi.list({ zugewiesen_an: 'me' }),
@@ -79,7 +79,7 @@ export function Dashboard() {
   })
   const { data: prozesse } = useQuery({ queryKey: ['prozesse'], queryFn: () => prozesseApi.list({ status: 'aktiv' }) })
 
-  const offeneTickets  = tickets?.filter(t => t.status === 'offen' || t.status === 'in_bearbeitung').length ?? 0
+  const offeneVorgaenge = vorgaenge?.filter(v => v.status === 'offen' || v.status === 'in_bearbeitung').length ?? 0
   const objektbetreuer = meineObjektbetreuer?.length ?? 0
   const freigaben      = meineFreigaben?.length ?? 0
   const frontoffice    = frontofficeQueue?.length ?? 0
@@ -94,7 +94,7 @@ export function Dashboard() {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <StatCard label="Verwaltete Objekte" value={objekte?.length ?? '–'} to="/objekte" color="bg-primary-600" />
-        <StatCard label="Offene Tickets" value={offeneTickets} to="/tickets" color="bg-amber-500" />
+        <StatCard label="Offene Vorgänge" value={offeneVorgaenge} to="/vorgaenge" color="bg-amber-500" />
         <RechnungenCard
           objektbetreuer={objektbetreuer}
           frontoffice={frontoffice}
@@ -105,22 +105,21 @@ export function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Letzte Tickets */}
+        {/* Letzte Vorgänge */}
         <div className="bg-white rounded-lg border border-gray-200 p-5">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="font-semibold text-gray-800">Aktuelle Tickets</h2>
-            <Link to="/tickets" className="text-xs text-primary-600 hover:underline">Alle anzeigen</Link>
+            <h2 className="font-semibold text-gray-800">Aktuelle Vorgänge</h2>
+            <Link to="/vorgaenge" className="text-xs text-primary-600 hover:underline">Alle anzeigen</Link>
           </div>
-          {tickets?.slice(0, 5).map(t => (
-            <div key={t.id} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
-              <span className="text-sm text-gray-700 truncate">{t.titel}</span>
+          {vorgaenge?.slice(0, 5).map(v => (
+            <div key={v.id} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+              <span className="text-sm text-gray-700 truncate">{v.betreff}</span>
               <span className={`text-xs px-2 py-0.5 rounded ml-2 shrink-0 ${
-                t.prioritaet === 'kritisch' ? 'bg-red-100 text-red-700' :
-                t.prioritaet === 'hoch' ? 'bg-orange-100 text-orange-700' :
+                v.prioritaet === 'hoch' ? 'bg-orange-100 text-orange-700' :
                 'bg-gray-100 text-gray-600'
-              }`}>{t.prioritaet}</span>
+              }`}>{v.prioritaet}</span>
             </div>
-          )) ?? <p className="text-sm text-gray-400">Keine Tickets</p>}
+          )) ?? <p className="text-sm text-gray-400">Keine Vorgänge</p>}
         </div>
 
         {/* Rechnungen */}

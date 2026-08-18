@@ -14,6 +14,9 @@ class MitarbeiterListSerializer(serializers.ModelSerializer):
     vollname = serializers.SerializerMethodField()
     email    = serializers.EmailField(source='user.email',    read_only=True)
     username = serializers.CharField(source='user.username',  read_only=True)
+    # user_id (nicht Mitarbeiter.id!) — wird u.a. für die Vorgangs-Zuweisung
+    # (Vorgang.zugewiesen_an, FK auf User) im Frontend benötigt.
+    user_id  = serializers.IntegerField(source='user.id', read_only=True)
 
     def get_vollname(self, obj):
         return obj.user.get_full_name()
@@ -21,7 +24,7 @@ class MitarbeiterListSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Mitarbeiter
         fields = [
-            'id', 'vorname', 'nachname', 'vollname', 'email', 'username',
+            'id', 'user_id', 'vorname', 'nachname', 'vollname', 'email', 'username',
             'abteilungen', 'telefon', 'aktiv', 'eingetreten_am', 'erstellt_am',
         ]
 

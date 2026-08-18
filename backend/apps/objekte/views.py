@@ -216,7 +216,7 @@ class ObjektViewSet(viewsets.ModelViewSet):
         # Query-Param 'typ' bereits als objekt_typ-Filter für die Objekt-Liste —
         # das würde hier mit unserem 'typ' (dokument_typ) kollidieren.
         objekt = get_object_or_404(Objekt, pk=pk)
-        qs = Dokument.objects.filter(objekt=objekt).select_related('rechnung')
+        qs = Dokument.objects.fuer_objekt(objekt).select_related('rechnung')
         typ = request.query_params.get('typ')
         if typ:
             qs = qs.filter(dokument_typ=typ)
@@ -488,8 +488,7 @@ def _objekt_einheiten_loeschbar(objekt_id) -> tuple[bool, list[str]]:
     werden dürfen. Blockierend sind abhängige Nutzdaten, deren Verlust nicht
     hinnehmbar ist bzw. die per PROTECT die Löschung verhindern würden.
 
-    Nicht blockierend: Verteilerschlüssel-Werte (werden beim Import neu erzeugt)
-    und Tickets (SET_NULL — bleiben erhalten).
+    Nicht blockierend: Verteilerschlüssel-Werte (werden beim Import neu erzeugt).
 
     Gibt (loeschbar, gruende) zurück.
     """

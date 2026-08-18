@@ -25,7 +25,6 @@ APP_LABELS = [
     'rechnungen',
     'prozesse',
     'dokumente',
-    'tickets',
     'massenimport',
 ]
 
