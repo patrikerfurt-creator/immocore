@@ -1,6 +1,16 @@
 from django.contrib import admin
 from .models import Objekt, Eingang, Bankkonto, Einheit
 
+from apps.handwerker.models import ObjektHandwerker
+
+
+class ObjektHandwerkerInline(admin.TabularInline):
+    model = ObjektHandwerker
+    extra = 0
+    fields = ['kreditor', 'prioritaet', 'notiz']
+    ordering = ['prioritaet']
+    raw_id_fields = ['kreditor']
+
 
 @admin.register(Objekt)
 class ObjektAdmin(admin.ModelAdmin):
@@ -8,6 +18,7 @@ class ObjektAdmin(admin.ModelAdmin):
     list_filter = ['objekt_typ', 'status', 'umsatzsteuer_pflichtig']
     search_fields = ['bezeichnung', 'strasse', 'ort', 'plz']
     ordering = ['bezeichnung']
+    inlines = [ObjektHandwerkerInline]
 
 
 @admin.register(Eingang)

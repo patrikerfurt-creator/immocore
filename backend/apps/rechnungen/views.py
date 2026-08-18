@@ -80,7 +80,28 @@ class KreditorViewSet(viewsets.ModelViewSet):
             qs = qs.filter(aktiv=False)
         else:
             qs = qs.filter(aktiv=True)
-        return qs
+
+        # --- Additive Filter für den Handwerker-Beauftragungsdialog (Phase C,
+        # Orchestrator-Vorgabe Schritt 3) — bestehendes Verhalten unverändert. ---
+        ist_handwerker = self.request.query_params.get('ist_handwerker')
+        if ist_handwerker is not None:
+            qs = qs.filter(ist_handwerker=ist_handwerker.lower() in ('1', 'true'))
+
+        gewerk = self.request.query_params.get('gewerk')
+        if gewerk:
+            qs = qs.filter(gewerke__id=gewerk)
+
+        objekt = self.request.query_params.get('objekt')
+        if objekt:
+            # Liefert die dem Objekt zugeordneten Handwerker (ObjektHandwerker),
+            # nach Priorität sortiert — Hausfirmen zuerst im Dialog.
+            qs = qs.filter(objekt_zuordnungen__objekt_id=objekt).order_by(
+                'objekt_zuordnungen__prioritaet', 'name',
+            )
+
+        # M2M-Filter (gewerke) kann in Kombination mit dem objekt-Filter
+        # (reverse FK) zu doppelten Zeilen führen — .distinct() schützt davor.
+        return qs.distinct()
 
     @action(detail=True, methods=['post'], url_path='deaktivieren')
     def deaktivieren(self, request, pk=None):

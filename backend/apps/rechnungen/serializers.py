@@ -16,6 +16,7 @@ class RechnungSplitPositionSerializer(serializers.ModelSerializer):
 
 class KreditorSerializer(serializers.ModelSerializer):
     rechnungen_anzahl = serializers.SerializerMethodField()
+    gewerke_bezeichnungen = serializers.SerializerMethodField()
 
     class Meta:
         model = Kreditor
@@ -24,6 +25,9 @@ class KreditorSerializer(serializers.ModelSerializer):
 
     def get_rechnungen_anzahl(self, obj):
         return obj.rechnungen.count()
+
+    def get_gewerke_bezeichnungen(self, obj):
+        return [g.bezeichnung for g in obj.gewerke.all()]
 
 
 class FreigabeSerializer(serializers.ModelSerializer):

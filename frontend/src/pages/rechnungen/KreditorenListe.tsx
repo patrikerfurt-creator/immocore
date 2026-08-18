@@ -2,9 +2,10 @@ import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { rechnungenApi } from '../../api/rechnungen'
+import { handwerkerApi } from '../../api/handwerker'
 import { Button } from '../../components/ui/Button'
 import { IbanInput } from '../../components/ui/IbanInput'
-import type { Kreditor } from '../../types'
+import type { Gewerk, Kreditor } from '../../types'
 
 // ---------------------------------------------------------------------------
 // Typen
@@ -366,6 +367,21 @@ function KreditorForm({
     (e: React.ChangeEvent<HTMLInputElement>) =>
       setForm(prev => ({ ...prev, [field]: e.target.value }))
 
+  const { data: gewerkeOptionen } = useQuery({
+    queryKey: ['gewerke'],
+    queryFn: handwerkerApi.gewerke,
+  })
+
+  const ausgewaehlteGewerke = form.gewerke ?? []
+  const toggleGewerk = (id: string) =>
+    setForm(prev => {
+      const bisher = prev.gewerke ?? []
+      const neu = bisher.includes(id) ? bisher.filter(g => g !== id) : [...bisher, id]
+      return { ...prev, gewerke: neu }
+    })
+
+  const zeigtHandwerkerHinweis = !!form.ist_handwerker && !form.email
+
   return (
     <div className="bg-white rounded-xl border shadow-sm p-6 mb-6">
       <h2 className="font-bold text-gray-800 mb-4">
@@ -418,7 +434,51 @@ function KreditorForm({
           <input type="text" value={form.telefon ?? ''} onChange={set('telefon')}
                  className="border rounded-lg px-3 py-2 text-sm w-full" />
         </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Ansprechpartner</label>
+          <input type="text" value={form.kontakt_person ?? ''} onChange={set('kontakt_person')}
+                 className="border rounded-lg px-3 py-2 text-sm w-full" />
+        </div>
       </div>
+
+      <div className="border-t mt-4 pt-4">
+        <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
+          <input
+            type="checkbox"
+            checked={!!form.ist_handwerker}
+            onChange={e => setForm(prev => ({ ...prev, ist_handwerker: e.target.checked }))}
+          />
+          Ist Handwerker
+        </label>
+
+        {form.ist_handwerker && (
+          <div className="mt-3">
+            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Gewerke</label>
+            <div className="flex flex-wrap gap-3">
+              {(gewerkeOptionen ?? []).map((g: Gewerk) => (
+                <label key={g.id} className="flex items-center gap-1.5 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={ausgewaehlteGewerke.includes(g.id)}
+                    onChange={() => toggleGewerk(g.id)}
+                  />
+                  {g.bezeichnung}
+                </label>
+              ))}
+              {(gewerkeOptionen ?? []).length === 0 && (
+                <p className="text-xs text-gray-400">Keine Gewerke gepflegt.</p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {zeigtHandwerkerHinweis && (
+          <p className="text-xs text-red-600 mt-2">
+            Ohne E-Mail-Adresse kann dieser Kreditor nicht als Handwerker beauftragt werden.
+          </p>
+        )}
+      </div>
+
       <div className="flex gap-3 justify-end mt-4">
         <Button variant="secondary" onClick={onCancel}>Abbrechen</Button>
         <Button onClick={() => onSave(form)} disabled={!form.name}>Speichern</Button>
@@ -432,8 +492,15 @@ function KreditorForm({
 // ---------------------------------------------------------------------------
 type KredSortKey = 'name' | 'kreditorennummer' | 'iban' | 'ort' | 'email' | 'rechnungen_anzahl'
 type KredSortDir = 'asc' | 'desc'
-interface KredFilters { name: string; kreditorennummer: string; iban: string; ort: string; email: string; rechnungen: string }
-const KRED_EMPTY: KredFilters = { name: '', kreditorennummer: '', iban: '', ort: '', email: '', rechnungen: '' }
+interface KredFilters {
+  name: string; kreditorennummer: string; iban: string; ort: string; email: string; rechnungen: string
+  ist_handwerker: '' | 'ja' | 'nein'
+  gewerk: string
+}
+const KRED_EMPTY: KredFilters = {
+  name: '', kreditorennummer: '', iban: '', ort: '', email: '', rechnungen: '',
+  ist_handwerker: '', gewerk: '',
+}
 type KredRow = Kreditor & { ort_str: string }
 
 function KredSortIcon({ active, dir }: { active: boolean; dir: KredSortDir }) {
@@ -452,6 +519,11 @@ export function KreditorenListe() {
   const { data: kreditoren, isLoading } = useQuery({
     queryKey: ['kreditoren'],
     queryFn: () => rechnungenApi.kreditoren(),
+  })
+
+  const { data: gewerkeOptionen } = useQuery({
+    queryKey: ['gewerke'],
+    queryFn: handwerkerApi.gewerke,
   })
 
   const saveMut = useMutation({
@@ -481,7 +553,9 @@ export function KreditorenListe() {
     (r.iban ?? '').toLowerCase().includes(filters.iban.toLowerCase()) &&
     r.ort_str.toLowerCase().includes(filters.ort.toLowerCase()) &&
     (r.email ?? '').toLowerCase().includes(filters.email.toLowerCase()) &&
-    (filters.rechnungen === '' || String(r.rechnungen_anzahl).includes(filters.rechnungen)),
+    (filters.rechnungen === '' || String(r.rechnungen_anzahl).includes(filters.rechnungen)) &&
+    (filters.ist_handwerker === '' || (filters.ist_handwerker === 'ja' ? r.ist_handwerker : !r.ist_handwerker)) &&
+    (filters.gewerk === '' || (r.gewerke ?? []).includes(filters.gewerk)),
   ), [rows, filters])
 
   const sorted = useMemo(() => [...filtered].sort((a, b) => {
@@ -567,6 +641,7 @@ export function KreditorenListe() {
                   <th className={thClass} onClick={() => handleSort('email')}>
                     E-Mail <KredSortIcon active={sortKey === 'email'} dir={sortDir} />
                   </th>
+                  <th className="text-left px-3 py-2 text-gray-500 font-medium whitespace-nowrap">Handwerker</th>
                   <th className={`${thClass} text-right`} onClick={() => handleSort('rechnungen_anzahl')}>
                     Rechnungen <KredSortIcon active={sortKey === 'rechnungen_anzahl'} dir={sortDir} />
                   </th>
@@ -578,6 +653,29 @@ export function KreditorenListe() {
                   <td className="px-3 py-1">{fi('iban')}</td>
                   <td className="px-3 py-1">{fi('ort')}</td>
                   <td className="px-3 py-1">{fi('email')}</td>
+                  <td className="px-3 py-1">
+                    <div className="flex flex-col gap-1">
+                      <select
+                        value={filters.ist_handwerker}
+                        onChange={e => setFilters(prev => ({ ...prev, ist_handwerker: e.target.value as KredFilters['ist_handwerker'] }))}
+                        className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-primary-400"
+                      >
+                        <option value="">Alle</option>
+                        <option value="ja">Nur Handwerker</option>
+                        <option value="nein">Keine Handwerker</option>
+                      </select>
+                      <select
+                        value={filters.gewerk}
+                        onChange={e => setFilter('gewerk', e.target.value)}
+                        className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-primary-400"
+                      >
+                        <option value="">Alle Gewerke</option>
+                        {(gewerkeOptionen ?? []).map((g: Gewerk) => (
+                          <option key={g.id} value={g.id}>{g.bezeichnung}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </td>
                   <td className="px-3 py-1">{fi('rechnungen')}</td>
                   <td />
                 </tr>
@@ -585,7 +683,7 @@ export function KreditorenListe() {
               <tbody>
                 {sorted.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="text-center py-10 text-gray-400">
+                    <td colSpan={8} className="text-center py-10 text-gray-400">
                       {hasFilters ? 'Keine Kreditoren entsprechen den Filterkriterien.' : 'Keine Kreditoren vorhanden — werden beim Import automatisch angelegt'}
                     </td>
                   </tr>
@@ -597,6 +695,23 @@ export function KreditorenListe() {
                       <td className="px-3 py-2.5 font-mono text-xs text-gray-500">{k.iban || '—'}</td>
                       <td className="px-3 py-2.5 text-gray-600">{k.ort_str || '—'}</td>
                       <td className="px-3 py-2.5 text-gray-600">{k.email || '—'}</td>
+                      <td className="px-3 py-2.5">
+                        {k.ist_handwerker ? (
+                          <div className="flex flex-col gap-1 items-start">
+                            <span className="text-xs bg-primary-100 text-primary-700 px-2 py-0.5 rounded-full">
+                              Handwerker
+                            </span>
+                            {k.gewerke_bezeichnungen.length > 0 && (
+                              <span className="text-xs text-gray-500">{k.gewerke_bezeichnungen.join(', ')}</span>
+                            )}
+                            {!k.email && (
+                              <span className="text-xs text-red-600">Ohne E-Mail nicht beauftragbar</span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-gray-300">—</span>
+                        )}
+                      </td>
                       <td className="px-3 py-2.5 text-right">
                         <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
                           {k.rechnungen_anzahl}

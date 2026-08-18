@@ -6,6 +6,7 @@ import { personenApi } from '../../api/personen'
 import { mitarbeiterApi, zuordnungApi } from '../../api/mitarbeiter'
 import { buchhaltungApi } from '../../api/buchhaltung'
 import { dokumenteApi } from '../../api/dokumente'
+import { handwerkerApi } from '../../api/handwerker'
 import { Badge } from '../../components/ui/Badge'
 import { IbanInput } from '../../components/ui/IbanInput'
 import { useObjektStore } from '../../stores/objekt'
@@ -228,6 +229,173 @@ function DokumenteSection({ objektId }: { objektId: string }) {
             </tbody>
           </table>
         </div>
+      )}
+    </div>
+  )
+}
+
+function HandwerkerZuordnungSection({ objektId }: { objektId: string }) {
+  const qc = useQueryClient()
+  const [neuerKreditor, setNeuerKreditor] = useState('')
+  const [neuePrioritaet, setNeuePrioritaet] = useState(1)
+  const [neueNotiz, setNeueNotiz] = useState('')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editPrioritaet, setEditPrioritaet] = useState(1)
+  const [editNotiz, setEditNotiz] = useState('')
+
+  const { data: zuordnungen = [] } = useQuery({
+    queryKey: ['objekt-handwerker', objektId],
+    queryFn: () => handwerkerApi.objektHandwerker.list(objektId),
+    enabled: !!objektId,
+  })
+
+  const { data: alleHandwerker = [] } = useQuery({
+    queryKey: ['handwerker-kreditoren-alle'],
+    queryFn: () => handwerkerApi.kreditorenHandwerker(),
+  })
+
+  const zugeordneteKreditorIds = new Set(zuordnungen.map(z => z.kreditor))
+  const verfuegbareHandwerker = alleHandwerker.filter(k => !zugeordneteKreditorIds.has(k.id))
+
+  const createMutation = useMutation({
+    mutationFn: () => handwerkerApi.objektHandwerker.create({
+      objekt: objektId, kreditor: neuerKreditor, prioritaet: neuePrioritaet, notiz: neueNotiz || undefined,
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['objekt-handwerker', objektId] })
+      setNeuerKreditor('')
+      setNeuePrioritaet(1)
+      setNeueNotiz('')
+    },
+  })
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, prioritaet, notiz }: { id: string; prioritaet: number; notiz: string }) =>
+      handwerkerApi.objektHandwerker.update(id, { prioritaet, notiz }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['objekt-handwerker', objektId] })
+      setEditingId(null)
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => handwerkerApi.objektHandwerker.delete(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['objekt-handwerker', objektId] }),
+  })
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 p-5 mb-4">
+      <h2 className="font-semibold text-gray-700 mb-3">Handwerkerzuordnung ({zuordnungen.length})</h2>
+
+      {zuordnungen.length === 0 ? (
+        <p className="text-sm text-gray-400 mb-4">Noch keine Handwerker zugeordnet.</p>
+      ) : (
+        <div className="flex flex-col gap-2 mb-5">
+          {zuordnungen.map(z => (
+            <div key={z.id} className="flex items-center justify-between p-2.5 bg-gray-50 rounded border border-gray-100">
+              <div className="flex-1 min-w-0">
+                <span className="text-sm font-medium text-gray-800">{z.kreditor_name}</span>
+                {z.gewerke_bezeichnung && <span className="ml-2 text-xs text-gray-400">({z.gewerke_bezeichnung})</span>}
+                {editingId === z.id ? (
+                  <div className="flex items-center gap-2 mt-1">
+                    <label className="text-xs text-gray-500">Prio</label>
+                    <input
+                      type="number"
+                      min={1}
+                      className="w-16 text-xs border border-gray-300 rounded px-2 py-1"
+                      value={editPrioritaet}
+                      onChange={e => setEditPrioritaet(Number(e.target.value) || 1)}
+                    />
+                    <input
+                      type="text"
+                      placeholder="Notiz"
+                      className="flex-1 text-xs border border-gray-300 rounded px-2 py-1"
+                      value={editNotiz}
+                      onChange={e => setEditNotiz(e.target.value)}
+                    />
+                    <button
+                      onClick={() => updateMutation.mutate({ id: z.id, prioritaet: editPrioritaet, notiz: editNotiz })}
+                      disabled={updateMutation.isPending}
+                      className="text-xs px-2 py-1 rounded bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50"
+                    >
+                      Speichern
+                    </button>
+                    <button onClick={() => setEditingId(null)} className="text-xs text-gray-400 hover:text-gray-600">
+                      Abbrechen
+                    </button>
+                  </div>
+                ) : (
+                  <div className="mt-1 flex items-center gap-2">
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-primary-600 text-white font-medium">Prio {z.prioritaet}</span>
+                    {z.notiz && <span className="text-xs text-gray-500">{z.notiz}</span>}
+                    <button
+                      onClick={() => { setEditingId(z.id); setEditPrioritaet(z.prioritaet); setEditNotiz(z.notiz) }}
+                      className="text-xs text-gray-400 hover:text-primary-600"
+                    >
+                      ändern
+                    </button>
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={() => deleteMutation.mutate(z.id)}
+                disabled={deleteMutation.isPending}
+                className="text-xs text-red-400 hover:text-red-600 ml-4 flex-shrink-0"
+              >
+                Entfernen
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {verfuegbareHandwerker.length > 0 ? (
+        <div className="border-t border-gray-100 pt-4 flex flex-wrap items-end gap-2">
+          <div className="flex-1 min-w-[180px]">
+            <label className="text-xs text-gray-500 block mb-1">Handwerker</label>
+            <select
+              value={neuerKreditor}
+              onChange={e => setNeuerKreditor(e.target.value)}
+              className="w-full text-sm border border-gray-300 rounded px-2.5 py-1.5"
+            >
+              <option value="">Handwerker wählen…</option>
+              {verfuegbareHandwerker.map(k => (
+                <option key={k.id} value={k.id}>{k.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-gray-500 block mb-1">Priorität</label>
+            <input
+              type="number"
+              min={1}
+              value={neuePrioritaet}
+              onChange={e => setNeuePrioritaet(Number(e.target.value) || 1)}
+              className="w-20 text-sm border border-gray-300 rounded px-2.5 py-1.5"
+            />
+          </div>
+          <div className="flex-1 min-w-[180px]">
+            <label className="text-xs text-gray-500 block mb-1">Notiz</label>
+            <input
+              type="text"
+              value={neueNotiz}
+              onChange={e => setNeueNotiz(e.target.value)}
+              className="w-full text-sm border border-gray-300 rounded px-2.5 py-1.5"
+            />
+          </div>
+          <button
+            onClick={() => createMutation.mutate()}
+            disabled={!neuerKreditor || createMutation.isPending}
+            className="text-xs px-3 py-1.5 rounded bg-primary-600 text-white font-medium hover:bg-primary-700 disabled:opacity-40 transition-colors"
+          >
+            Zuordnen
+          </button>
+        </div>
+      ) : (
+        <p className="text-xs text-gray-400">Alle als Handwerker markierten Kreditoren sind bereits zugeordnet.</p>
+      )}
+      {createMutation.isError && (
+        <p className="text-red-600 text-sm mt-2">Zuordnung fehlgeschlagen — Kreditor ist eventuell bereits zugeordnet.</p>
       )}
     </div>
   )
@@ -1199,6 +1367,9 @@ export function ObjektDetail() {
       {/* ── Mitarbeiter-Zuordnung ─────────────────────────────────── */}
       <MitarbeiterZuordnungSection objektId={id!} />
 
+      {/* ── Handwerkerzuordnung ───────────────────────────────────── */}
+      <HandwerkerZuordnungSection objektId={id!} />
+
       {/* ── Dokumente (minimaler DMS-Lesezugriff) ───────────────────── */}
       <DokumenteSection objektId={id!} />
 
@@ -1217,7 +1388,8 @@ export function ObjektDetail() {
         <Link to={`/stammdaten/kontenplan?objekt=${id}`} className="text-sm text-primary-600 hover:underline">Kontenplan →</Link>
         <Link to={`/stammdaten/verteilerschluessel?objekt=${id}`} className="text-sm text-primary-600 hover:underline">Verteilerschlüssel →</Link>
         <Link to={`/rechnungen?objekt=${id}`} className="text-sm text-primary-600 hover:underline">Rechnungen →</Link>
-        <Link to={`/tickets?objekt=${id}`} className="text-sm text-primary-600 hover:underline">Tickets →</Link>
+        <Link to={`/vorgaenge?objekt=${id}`} className="text-sm text-primary-600 hover:underline">Vorgänge →</Link>
+        <Link to={`/handwerker/auftraege?objekt=${id}`} className="text-sm text-primary-600 hover:underline">Handwerkeraufträge →</Link>
       </div>
     </div>
   )

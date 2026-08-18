@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <title>Handwerkerauftrag {{ auftrag.nummer }}</title>
+</head>
+<body style="font-family:Arial,Helvetica,sans-serif;color:#222;line-height:1.5;">
+  <h2>Handwerkerauftrag {{ auftrag.nummer }}</h2>
+
+  <p>Sehr geehrte Damen und Herren,</p>
+  <p>im Auftrag der <strong>Demme Immobilien Verwaltung GmbH</strong> übersenden wir Ihnen
+     folgenden Handwerkerauftrag:</p>
+
+  <table cellpadding="4" cellspacing="0" style="border-collapse:collapse;">
+    <tr>
+      <td style="font-weight:bold;">Objekt:</td>
+      <td>{{ objekt.bezeichnung }}</td>
+    </tr>
+    <tr>
+      <td style="font-weight:bold;">Adresse:</td>
+      <td>{{ objekt.strasse }}, {{ objekt.plz }} {{ objekt.ort }}</td>
+    </tr>
+    <tr>
+      <td style="font-weight:bold;">Titel:</td>
+      <td>{{ auftrag.titel }}</td>
+    </tr>
+    <tr>
+      <td style="font-weight:bold;">Priorität:</td>
+      <td>{{ auftrag.get_prioritaet_display }}</td>
+    </tr>
+    {% if auftrag.gewuenscht_ab %}
+    <tr>
+      <td style="font-weight:bold;">Gewünschter Starttermin:</td>
+      <td>{{ auftrag.gewuenscht_ab|date:"d.m.Y" }}</td>
+    </tr>
+    {% endif %}
+    {% if auftrag.geschaetzte_kosten %}
+    <tr>
+      <td style="font-weight:bold;">Geschätzte Kosten:</td>
+      <td>{{ auftrag.geschaetzte_kosten }} EUR</td>
+    </tr>
+    {% endif %}
+  </table>
+
+  {% if auftrag.beschreibung %}
+  <p style="font-weight:bold;margin-bottom:4px;">Beschreibung:</p>
+  <p>{{ auftrag.beschreibung|linebreaksbr }}</p>
+  {% endif %}
+
+  <p>Bitte bestätigen Sie den Auftrag über einen der folgenden Links:</p>
+
+  <p>
+    <a href="{{ accept_url }}"
+       style="display:inline-block;padding:10px 20px;margin-right:12px;background:#2e7d32;color:#fff;text-decoration:none;border-radius:4px;">
+      Auftrag annehmen
+    </a>
+    <a href="{{ reject_url }}"
+       style="display:inline-block;padding:10px 20px;background:#b71c1c;color:#fff;text-decoration:none;border-radius:4px;">
+      Auftrag ablehnen
+    </a>
+  </p>
+
+  <p>Diese Links sind gültig bis <strong>{{ gueltig_bis|date:"d.m.Y H:i" }} Uhr</strong>.</p>
+
+  {% include "email/_verbindlichkeitshinweis.html" %}
+
+  <p>
+    <strong>Rechnungsrücklauf:</strong> Bitte senden Sie Ihre Rechnung nach Abschluss der
+    Arbeiten an <a href="mailto:{{ rechnung_empfang_email }}">{{ rechnung_empfang_email }}</a>
+    und geben Sie dabei die Auftragsnummer <strong>{{ auftrag.nummer }}</strong> im Betreff an.
+  </p>
+
+  <p>Mit freundlichen Grüßen<br>Demme Immobilien Verwaltung GmbH</p>
+</body>
+</html>

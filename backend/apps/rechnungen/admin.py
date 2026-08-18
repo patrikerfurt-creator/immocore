@@ -1,5 +1,20 @@
 from django.contrib import admin
-from .models import Rechnung, Freigabe
+from .models import Rechnung, Freigabe, Kreditor
+
+
+@admin.register(Kreditor)
+class KreditorAdmin(admin.ModelAdmin):
+    list_display = [
+        'name', 'kreditorennummer', 'gewerke_liste', 'ist_handwerker', 'aktiv', 'ort',
+    ]
+    list_filter = ['gewerke', 'ist_handwerker', 'aktiv']
+    search_fields = ['name', 'kreditorennummer', 'iban', 'email']
+    ordering = ['name']
+    filter_horizontal = ['gewerke']
+
+    @admin.display(description='Gewerke')
+    def gewerke_liste(self, obj):
+        return ', '.join(g.bezeichnung for g in obj.gewerke.all())
 
 
 @admin.register(Rechnung)

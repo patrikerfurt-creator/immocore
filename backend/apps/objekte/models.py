@@ -57,6 +57,13 @@ class Objekt(models.Model):
         verbose_name='Bundesland',
         help_text='Bundesland für Feiertags-Berechnung (Auto-Pipeline)',
     )
+    # String-Referenzen statt Import, um einen zyklischen Import zwischen
+    # apps.objekte und apps.handwerker/apps.rechnungen zu vermeiden.
+    handwerker = models.ManyToManyField(
+        'rechnungen.Kreditor', through='handwerker.ObjektHandwerker',
+        related_name='objekte', blank=True,
+        verbose_name='Zugeordnete Handwerker',
+    )
 
     class Meta:
         verbose_name        = 'Objekt'

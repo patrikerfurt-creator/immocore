@@ -1,0 +1,34 @@
+Handwerkerauftrag {{ auftrag.nummer }}
+
+Sehr geehrte Damen und Herren,
+
+im Auftrag der Demme Immobilien Verwaltung GmbH übersenden wir Ihnen folgenden
+Handwerkerauftrag:
+
+Objekt:  {{ objekt.bezeichnung }}
+Adresse: {{ objekt.strasse }}, {{ objekt.plz }} {{ objekt.ort }}
+
+Titel: {{ auftrag.titel }}
+{% if auftrag.beschreibung %}
+Beschreibung:
+{{ auftrag.beschreibung }}
+{% endif %}
+Priorität: {{ auftrag.get_prioritaet_display }}
+{% if auftrag.gewuenscht_ab %}Gewünschter Starttermin: {{ auftrag.gewuenscht_ab|date:"d.m.Y" }}
+{% endif %}{% if auftrag.geschaetzte_kosten %}Geschätzte Kosten: {{ auftrag.geschaetzte_kosten }} EUR
+{% endif %}
+Bitte bestätigen Sie den Auftrag über einen der folgenden Links:
+
+Auftrag annehmen:  {{ accept_url }}
+Auftrag ablehnen:  {{ reject_url }}
+
+Diese Links sind gültig bis {{ gueltig_bis|date:"d.m.Y H:i" }} Uhr.
+
+{% include "email/_verbindlichkeitshinweis.txt" %}
+
+Rechnungsrücklauf: Bitte senden Sie Ihre Rechnung nach Abschluss der Arbeiten an
+{{ rechnung_empfang_email }} und geben Sie dabei die Auftragsnummer {{ auftrag.nummer }}
+im Betreff an.
+
+Mit freundlichen Grüßen
+Demme Immobilien Verwaltung GmbH

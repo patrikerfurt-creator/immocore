@@ -26,6 +26,17 @@ class Kreditor(models.Model):
     email = models.EmailField(blank=True)
     aktiv = models.BooleanField(default=True)
     erstellt_am = models.DateTimeField(auto_now_add=True)
+    # --- Handwerker-Verwaltung (apps.handwerker) ---------------------------
+    # String-Referenz statt Import, um einen zyklischen Import zwischen
+    # apps.rechnungen und apps.handwerker zu vermeiden (Handwerkerauftrag
+    # referenziert seinerseits Kreditor).
+    # Ein Kreditor kann einem oder mehreren Gewerken zugeordnet sein
+    # (Patrik-Vorgabe: Sanitär + Heizung in einer Firma ist der Normalfall).
+    gewerke = models.ManyToManyField(
+        'handwerker.Gewerk', related_name='kreditoren', blank=True,
+    )
+    ist_handwerker = models.BooleanField(default=False)
+    kontakt_person = models.CharField(max_length=200, blank=True)
 
     class Meta:
         verbose_name = 'Kreditor'
@@ -151,6 +162,12 @@ class Rechnung(models.Model):
         'dokumente.Dokument', on_delete=models.PROTECT, null=True, blank=True,
         related_name='rechnung',
         help_text='Physischer Beleg (PDF) im DMS — einzige Dateiablage (GoBD)',
+    )
+    handwerkerauftrag = models.ForeignKey(
+        'handwerker.Handwerkerauftrag', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='rechnungen',
+        help_text='n:1 — ein Auftrag kann mehrere Rechnungen haben '
+                  '(Abschlag/Schluss/Gutschrift), eine Rechnung höchstens einen Auftrag.',
     )
     kundennummer = models.CharField(max_length=50, blank=True)
     vorgeschlagenes_konto = models.ForeignKey(
