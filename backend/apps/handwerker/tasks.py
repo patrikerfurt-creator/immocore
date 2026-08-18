@@ -28,6 +28,34 @@ from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
+# Backends, die NIE tatsächlich versenden (Konsole/Dummy) oder ein
+# unvollständig konfiguriertes SMTP-Backend gelten als "nicht versandfähig".
+_NICHT_VERSANDFAEHIGE_BACKENDS = (
+    'django.core.mail.backends.console.EmailBackend',
+    'django.core.mail.backends.dummy.EmailBackend',
+)
+
+
+def _versand_konfiguriert() -> bool:
+    """Prüft, ob ``settings.EMAIL_BACKEND`` tatsächlich versendet.
+
+    Hintergrund (stille Falle): fehlt auf einem Produktionsserver die
+    SMTP-Konfiguration in ``.env.prod`` (kein ``EMAIL_BACKEND``/``EMAIL_HOST``),
+    greift in ``config/settings.py`` der Default — das Konsolen-Backend. Das
+    meldet ``mail.send()`` immer als erfolgreich, obwohl die Mail nur ins
+    Container-Log geschrieben wird. Ohne diese Prüfung würde ein
+    Handwerkerauftrag als ``versendet`` markiert, ohne dass der Handwerker je
+    davon erfährt.
+
+    ``locmem`` (von Django-Tests verwendet) gilt bewusst als versandfähig.
+    """
+    backend = settings.EMAIL_BACKEND
+    if backend in _NICHT_VERSANDFAEHIGE_BACKENDS:
+        return False
+    if backend == 'django.core.mail.backends.smtp.EmailBackend' and not settings.EMAIL_HOST:
+        return False
+    return True
+
 
 @shared_task(name='handwerker.versende_auftragsmail')
 def versende_auftragsmail(auftrag_id):
@@ -86,6 +114,29 @@ def versende_auftragsmail(auftrag_id):
         return
 
     try:
+        # Produktions-Sperre gegen die stille Falle (siehe _versand_konfiguriert):
+        # lokal (DEBUG=True) läuft der Versand wie bisher über das
+        # Konsolen-Backend durch, in Produktion (DEBUG=False) wird ein nicht
+        # versandfähig konfigurierter Mailserver hart blockiert statt einen
+        # Auftrag fälschlich als 'versendet' zu markieren.
+        if not settings.DEBUG and not _versand_konfiguriert():
+            logger.error(
+                "versende_auftragsmail: E-Mail-Versand ist nicht konfiguriert "
+                "(EMAIL_BACKEND=%r, EMAIL_HOST=%r) — Auftrag %s wird NICHT versendet.",
+                settings.EMAIL_BACKEND, settings.EMAIL_HOST, auftrag.nummer,
+            )
+            try:
+                auftrag_service.protokolliere_versandfehler(
+                    auftrag,
+                    "E-Mail-Versand ist auf diesem Server nicht konfiguriert (SMTP fehlt) — "
+                    "der Handwerker wurde NICHT benachrichtigt. Bitte an die Administration wenden.",
+                )
+            except Exception:
+                logger.exception(
+                    "Konnte Versandfehler für Auftrag %s nicht protokollieren.", auftrag.nummer,
+                )
+            return
+
         # Defensive Prüfung (Orchestrator-Korrektur, Schritt 0): der Kreditor kann
         # sich zwischen Anlage/Statuswechsel und diesem asynchronen Versand
         # geändert haben (ist_handwerker abgewählt oder E-Mail geleert). Ohne
@@ -235,6 +286,19 @@ def benachrichtige_intern(auftrag_id, art):
         logger.exception(
             "benachrichtige_intern: Empfängerermittlung/Textaufbau für Auftrag %s fehlgeschlagen.",
             auftrag_id,
+        )
+        return
+
+    # Gleiche Produktions-Sperre wie in versende_auftragsmail (siehe
+    # _versand_konfiguriert): es ist nur eine interne Info-Mail, kein
+    # Auftragszustand hängt daran — daher genügt hier ein Log statt eines
+    # Ereignisses.
+    if not settings.DEBUG and not _versand_konfiguriert():
+        logger.warning(
+            "benachrichtige_intern: E-Mail-Versand ist nicht konfiguriert "
+            "(EMAIL_BACKEND=%r, EMAIL_HOST=%r) — interne Benachrichtigung für "
+            "Auftrag %s wird NICHT versendet.",
+            settings.EMAIL_BACKEND, settings.EMAIL_HOST, auftrag.nummer,
         )
         return
 

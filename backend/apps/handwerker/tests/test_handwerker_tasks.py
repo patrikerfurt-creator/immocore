@@ -189,6 +189,113 @@ class VersendeAuftragsmailTest(TestCase):
         self.assertEqual(len(mail.outbox), 0)
 
 
+@override_settings(FRONTEND_BASE_URL="http://testserver.local")
+class VersendeAuftragsmailProduktionsSperreTest(TestCase):
+    """Deckt die Produktions-Sperre gegen die stille Konsolen-Backend-Falle ab
+    (siehe ``apps.handwerker.tasks._versand_konfiguriert``): auf einem
+    Live-Server ohne SMTP-Konfiguration darf ``versende_auftragsmail`` weder
+    tatsächlich versenden noch den Auftrag auf ``versendet`` setzen."""
+
+    def setUp(self):
+        self.user = _user()
+        self.objekt = _objekt()
+        self.kreditor = _kreditor()
+        self.auftrag = Handwerkerauftrag.objects.create(
+            objekt=self.objekt, kreditor=self.kreditor, titel="Wasserhahn undicht",
+            erstellt_von=self.user, status="entwurf",
+        )
+        self.token = AuftragsbestaetigungsToken.objects.create(auftrag=self.auftrag)
+
+    @override_settings(DEBUG=False, EMAIL_BACKEND="django.core.mail.backends.console.EmailBackend")
+    def test_konsolen_backend_in_produktion_versendet_nicht(self):
+        versende_auftragsmail(str(self.auftrag.id))  # darf nicht durchwerfen
+
+        self.assertEqual(len(mail.outbox), 0)
+        self.auftrag.refresh_from_db()
+        self.assertEqual(self.auftrag.status, "entwurf")
+
+        fehler_ereignisse = self.auftrag.ereignisse.filter(typ="versand_fehlgeschlagen")
+        self.assertEqual(fehler_ereignisse.count(), 1)
+        self.assertIn("nicht konfiguriert", fehler_ereignisse.first().text)
+
+    @override_settings(
+        DEBUG=False, EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend", EMAIL_HOST="",
+    )
+    def test_smtp_backend_ohne_email_host_in_produktion_versendet_nicht(self):
+        versende_auftragsmail(str(self.auftrag.id))  # darf nicht durchwerfen
+
+        self.assertEqual(len(mail.outbox), 0)
+        self.auftrag.refresh_from_db()
+        self.assertEqual(self.auftrag.status, "entwurf")
+
+        fehler_ereignisse = self.auftrag.ereignisse.filter(typ="versand_fehlgeschlagen")
+        self.assertEqual(fehler_ereignisse.count(), 1)
+        self.assertIn("nicht konfiguriert", fehler_ereignisse.first().text)
+
+    @override_settings(
+        DEBUG=False, EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        EMAIL_HOST="mail.example.com",
+    )
+    def test_locmem_in_produktion_gilt_als_versandfaehig(self):
+        """locmem muss weiterhin als versandfähig gelten, sonst würden alle
+        bestehenden Tests, die den Versand über locmem prüfen, brechen."""
+        versende_auftragsmail(str(self.auftrag.id))
+
+        self.assertEqual(len(mail.outbox), 1)
+        self.auftrag.refresh_from_db()
+        self.assertEqual(self.auftrag.status, "versendet")
+
+    @override_settings(
+        DEBUG=False, EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend",
+        EMAIL_HOST="mail.example.com",
+    )
+    @patch("django.core.mail.EmailMultiAlternatives.send")
+    def test_smtp_backend_mit_email_host_in_produktion_versucht_versand(self, mock_send):
+        versende_auftragsmail(str(self.auftrag.id))
+
+        mock_send.assert_called_once()
+        self.auftrag.refresh_from_db()
+        self.assertEqual(self.auftrag.status, "versendet")
+
+    @override_settings(DEBUG=True, EMAIL_BACKEND="django.core.mail.backends.console.EmailBackend")
+    def test_konsolen_backend_bei_debug_true_versendet_wie_bisher(self):
+        """Lokale Entwicklung (DEBUG=True) bleibt unverändert: das
+        Konsolen-Backend meldet Erfolg, der Auftrag wird 'versendet'."""
+        versende_auftragsmail(str(self.auftrag.id))  # darf nicht durchwerfen
+
+        self.auftrag.refresh_from_db()
+        self.assertEqual(self.auftrag.status, "versendet")
+        fehler_ereignisse = self.auftrag.ereignisse.filter(typ="versand_fehlgeschlagen")
+        self.assertEqual(fehler_ereignisse.count(), 0)
+
+
+class BenachrichtigeInternProduktionsSperreTest(TestCase):
+    def setUp(self):
+        self.user = _user()
+        self.objekt = _objekt()
+        self.kreditor = _kreditor()
+        self.auftrag = Handwerkerauftrag.objects.create(
+            objekt=self.objekt, kreditor=self.kreditor, titel="Wasserhahn undicht",
+            erstellt_von=self.user, status="entwurf",
+        )
+
+    @override_settings(DEBUG=False, EMAIL_BACKEND="django.core.mail.backends.console.EmailBackend")
+    def test_konsolen_backend_in_produktion_versendet_nicht(self):
+        benachrichtige_intern(str(self.auftrag.id), "angenommen")  # darf nicht durchwerfen
+        self.assertEqual(len(mail.outbox), 0)
+
+    @override_settings(
+        DEBUG=False, EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+    )
+    def test_locmem_in_produktion_versendet(self):
+        self.auftrag.erstellt_von.email = "chef@example.de"
+        self.auftrag.erstellt_von.save(update_fields=["email"])
+
+        benachrichtige_intern(str(self.auftrag.id), "angenommen")
+
+        self.assertEqual(len(mail.outbox), 1)
+
+
 class BenachrichtigeInternTest(TestCase):
     def setUp(self):
         self.user = _user()
