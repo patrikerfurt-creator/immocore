@@ -55,3 +55,12 @@ backend/staticfiles/
 # Lokale DB-Snapshots (enthalten echte Personendaten — niemals ins Git!)
 local_seed/*.sql
 local_seed/*.sql.gz
+
+# Betriebsdaten — echte Rechnungen, Bankauszuege und Importdateien gehoeren
+# nicht ins Repository (enthalten Kontodaten und Personendaten).
+/Rechnungen/
+/CamtDAT/
+/Testdateine IMPORT/
+
+# Celery-Laufzeitstand (wird beim Start neu erzeugt)
+backend/celerybeat-schedule
