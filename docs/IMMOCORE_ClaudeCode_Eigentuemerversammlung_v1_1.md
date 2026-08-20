@@ -867,10 +867,13 @@ Templates unter `backend/templates/versammlung/`:
 - Nur PDF-Anlagen werden angehängt (PyMuPDF `insert_pdf`).
 - Andere Dateitypen werden mit klarer Meldung abgelehnt, nicht stillschweigend
   weggelassen.
-- ⚠️ **Betriebsprüfung vor Live-Deploy:** PyMuPDF steht in
-  `backend/requirements.txt`, im Prod-Image war `fitz` nach früheren Deploys
-  aber nicht importierbar. Vor dem Go-Live in `immocore_backend`
-  `python -c "import fitz"` prüfen. Fällt der Import aus, wird die Anlage
+- ✅ **Auf Live geprüft (2026-08-20):** Im Prod-Container sind PyMuPDF 1.28.2
+  und WeasyPrint 65.1 vorhanden, der Merge-Pfad (`insert_pdf`) funktioniert.
+  Dabei fiel auf, dass der Alias `fitz` seit PyMuPDF 1.24 deprecated ist,
+  `requirements.txt` aber nur `>=1.24` pinnt. Der Service lädt deshalb zuerst
+  `pymupdf` und fällt nur für ältere Installationen auf `fitz` zurück — sonst
+  würde der Wegfall des Alias als "PyMuPDF ist nicht installiert" gemeldet,
+  also mit falscher Diagnose. Fehlt das Paket wirklich, wird die Anlage
   **nicht** verschluckt: `erzeuge_einladungs_pdf()` bricht mit klarer Meldung ab.
 
 ---

@@ -12,8 +12,11 @@ Deckt ab:
     Statuswechsel, nicht konfiguriertes Mailbackend, Plan-Override
 """
 import shutil
+import sys
 import tempfile
+import types
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.core import mail
 from django.core.exceptions import ValidationError
@@ -437,3 +440,47 @@ class VersandTest(TestCase):
         self.assertEqual(
             EVVersandprotokoll.objects.filter(ev=self.ev, person=self.mailer).count(), 2,
         )
+
+
+class PyMuPdfLadenTest(TestCase):
+    """Ladepfad für PyMuPDF (Prod-Prüfung 2026-08-20).
+
+    Der Alias ``fitz`` ist seit PyMuPDF 1.24 deprecated; ``requirements.txt``
+    pinnt nur ``>=1.24``. Fällt der Alias in einer künftigen Version weg, darf
+    das nicht als "nicht installiert" gemeldet werden.
+    """
+
+    def test_bevorzugt_aktuellen_modulnamen(self):
+        self.assertEqual(einladung_service._pymupdf().__name__, 'pymupdf')
+
+    def test_faellt_auf_fitz_zurueck(self):
+        # ``fitz`` ist bei aktuellem PyMuPDF selbst nur ein Shim, der intern
+        # ``pymupdf`` importiert — ein blockierter pymupdf-Import würde also
+        # auch den Fallback treffen. Deshalb liegt hier eine Attrappe in
+        # sys.modules, die ``import fitz`` ohne echten Ladevorgang findet.
+        attrappe = types.ModuleType('fitz')
+        echtes_import = __import__
+
+        def ohne_pymupdf(name, *args, **kwargs):
+            if name == 'pymupdf':
+                raise ImportError('simuliert: altes PyMuPDF ohne Modulnamen pymupdf')
+            return echtes_import(name, *args, **kwargs)
+
+        with patch.dict(sys.modules, {'fitz': attrappe}):
+            with patch('builtins.__import__', side_effect=ohne_pymupdf):
+                modul = einladung_service._pymupdf()
+        self.assertIs(modul, attrappe)
+
+    def test_klare_meldung_wenn_gar_nicht_installiert(self):
+        echtes_import = __import__
+
+        def ohne_pymupdf(name, *args, **kwargs):
+            if name in ('pymupdf', 'fitz'):
+                raise ImportError(f'simuliert: {name} fehlt')
+            return echtes_import(name, *args, **kwargs)
+
+        with patch('builtins.__import__', side_effect=ohne_pymupdf):
+            with self.assertRaises(ValidationError) as ctx:
+                einladung_service._pymupdf()
+        self.assertIn('PyMuPDF', str(ctx.exception))
+        self.assertIn('nicht installiert', str(ctx.exception))

@@ -148,27 +148,48 @@ def _anlagen_pruefen(anlagen_ids) -> list:
     return [nach_id[str(a)] for a in anlagen_ids]
 
 
+def _pymupdf():
+    """Lädt PyMuPDF — bevorzugt unter dem aktuellen Namen ``pymupdf``.
+
+    Der alte Alias ``fitz`` ist seit PyMuPDF 1.24 deprecated und wird in einer
+    künftigen Version entfernt; ``requirements.txt`` pinnt nur ``>=1.24``, ein
+    Major-Update käme also unbemerkt. Ohne diese Reihenfolge würde der Wegfall
+    des Alias als "PyMuPDF ist nicht installiert" gemeldet — eine irreführende
+    Diagnose, obwohl das Paket vorhanden ist. Der ``fitz``-Zweig bleibt für
+    Umgebungen mit älterem PyMuPDF.
+    """
+    try:
+        import pymupdf
+
+        return pymupdf
+    except ImportError:
+        pass
+    try:
+        import fitz
+
+        return fitz
+    except ImportError as fehler:
+        raise ValidationError(
+            'PDF-Anlagen können nicht angehängt werden: PyMuPDF ist in diesem '
+            'Container nicht installiert. Entweder das Image mit PyMuPDF bauen '
+            'oder die Einladung ohne Anlagen erzeugen und die Anlagen separat '
+            'versenden.'
+        ) from fehler
+
+
 def _haenge_anlagen_an(pdf_bytes: bytes, anlagen: list) -> bytes:
     """Hängt PDF-Anlagen an das gerenderte PDF an (PyMuPDF).
 
-    WeasyPrint kann bestehende PDFs nicht zusammenführen. Fehlt ``fitz`` im
-    Image (auf dem Prod-Image schon vorgekommen), bricht die Erzeugung mit
-    Betriebshinweis ab — die Anlage wird NICHT stillschweigend weggelassen.
+    WeasyPrint kann bestehende PDFs nicht zusammenführen. Fehlt PyMuPDF im
+    Image, bricht die Erzeugung mit Betriebshinweis ab — die Anlage wird NICHT
+    stillschweigend weggelassen.
     """
     if not anlagen:
         return pdf_bytes
 
-    try:
-        import fitz
-    except ImportError as fehler:
-        raise ValidationError(
-            'PDF-Anlagen können nicht angehängt werden: PyMuPDF (fitz) ist in '
-            'diesem Container nicht installiert. Entweder das Image mit '
-            'PyMuPDF bauen oder die Einladung ohne Anlagen erzeugen und die '
-            'Anlagen separat versenden.'
-        ) from fehler
+    pymupdf = _pymupdf()
 
-    ziel = fitz.open(stream=pdf_bytes, filetype='pdf')
+    ziel = pymupdf.open(stream=pdf_bytes, filetype='pdf')
     try:
         for dokument in anlagen:
             pfad = beleg_service.dokument_pfad(dokument)
@@ -177,7 +198,7 @@ def _haenge_anlagen_an(pdf_bytes: bytes, anlagen: list) -> bytes:
                     f'Datei der Anlage "{dokument.dateiname}" fehlt auf der '
                     f'Ablage ({pfad}).'
                 )
-            with fitz.open(str(pfad)) as anlage:
+            with pymupdf.open(str(pfad)) as anlage:
                 ziel.insert_pdf(anlage)
         return ziel.tobytes()
     finally:
