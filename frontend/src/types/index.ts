@@ -1427,3 +1427,323 @@ export interface OeffentlicherAuftragBestaetigungErgebnis {
   status: HandwerkerauftragStatus
   aktion: 'annehmen' | 'ablehnen'
 }
+
+// ---------------------------------------------------------------------------
+// Eigentümerversammlung (Spec v1.1, Phase B)
+// ---------------------------------------------------------------------------
+
+export type EVStatus =
+  | 'entwurf'
+  | 'in_bearbeitung'
+  | 'einladungen_versendet'
+  | 'durchgefuehrt'
+  | 'beschluesse_verarbeitet'
+  | 'archiviert'
+
+export type EVArt = 'ordentlich' | 'ausserordentl' | 'wiederholung'
+export type EVStimmprinzip = 'kopf' | 'verteilerschluessel'
+export type EVVersandkanal = 'portal' | 'email' | 'epost'
+
+export type EVAbstimmungsmodus =
+  | 'einfache_mehrheit'
+  | 'qualifizierte_mehrheit'
+  | 'einstimmigkeit'
+  | 'allstimmigkeit'
+  | 'kein_beschluss'
+
+export type EVAbstimmungsergebnis =
+  | 'offen' | 'angenommen' | 'abgelehnt' | 'vertagt' | 'entfallen'
+
+export interface EVTaskStatusEintrag {
+  erledigt: boolean
+  bezeichnung: string
+}
+
+export interface EVTaskStatus {
+  task1: EVTaskStatusEintrag
+  task2: EVTaskStatusEintrag
+  task3: EVTaskStatusEintrag
+  task4: EVTaskStatusEintrag
+  task5: EVTaskStatusEintrag
+  anzahl_erledigt: number
+}
+
+export interface EVLadungsfrist {
+  termin: string | null
+  tage_bis_termin: number | null
+  frist_tage: number
+  eingehalten: boolean
+  warnung: string
+}
+
+export interface Tagesordnungspunkt {
+  id: string
+  ev: string
+  nummer: number
+  titel: string
+  erlaeuterung: string
+  beschlussvorlage: string
+  abstimmungsmodus: EVAbstimmungsmodus
+  abstimmungsmodus_display: string
+  mehrheit_schwelle: string | null
+  abstimmung_ja: string
+  abstimmung_nein: string
+  abstimmung_enthaltung: string
+  abstimmungsergebnis: EVAbstimmungsergebnis
+  abstimmungsergebnis_display: string
+  ergebnis_bemerkung: string
+  triggert_vorgang: boolean
+  triggert_wirtschaftsplan: boolean
+}
+
+export interface TagesordnungspunktCreatePayload {
+  ev: string
+  titel: string
+  nummer?: number | null
+  erlaeuterung?: string
+  beschlussvorlage?: string
+  abstimmungsmodus?: EVAbstimmungsmodus
+  mehrheit_schwelle?: string | null
+  triggert_vorgang?: boolean
+  triggert_wirtschaftsplan?: boolean
+}
+
+export interface EVList {
+  id: string
+  objekt: string
+  objekt_bezeichnung: string
+  objektnummer: string
+  arbeitsname: string
+  art: EVArt
+  termin: string | null
+  ort: string
+  status: EVStatus
+  status_display: string
+  stimmprinzip: EVStimmprinzip
+  anzahl_tops: number
+  anzahl_teilnehmer: number
+  tasks_erledigt: number
+  einladung_versendet_am: string | null
+  durchgefuehrt_am: string | null
+  erstellt_am: string
+}
+
+export interface EVDetail {
+  id: string
+  objekt: string
+  objekt_bezeichnung: string
+  objektnummer: string
+  arbeitsname: string
+  art: EVArt
+  art_display: string
+  termin: string | null
+  ort: string
+  raum_buchung_notizen: string
+  terminvorschlaege: unknown[]
+  stimmprinzip: EVStimmprinzip
+  stimmprinzip_display: string
+  stimm_verteilerschluessel: string | null
+  stimm_verteilerschluessel_text: string | null
+  stimm_wirtschaftsjahr: number
+  status: EVStatus
+  status_display: string
+  task_status: EVTaskStatus
+  ladungsfrist: EVLadungsfrist
+  einladungstext: string
+  einladungs_pdf: string | null
+  einladungs_pdf_dateiname: string | null
+  protokoll_pdf: string | null
+  tagesordnung: Tagesordnungspunkt[]
+  versammlungsleiter: string
+  protokollfuehrer: string
+  einladung_versendet_am: string | null
+  durchgefuehrt_am: string | null
+  erstellt_am: string
+  erstellt_von: number | null
+  erstellt_von_name: string | null
+}
+
+export interface EVCreatePayload {
+  objekt: string
+  arbeitsname?: string
+  art?: EVArt
+  stimmprinzip?: EVStimmprinzip
+  stimm_verteilerschluessel?: string | null
+  stimm_wirtschaftsjahr?: number
+}
+
+export interface EVTeilnehmerAnteil {
+  id: string
+  eigentumsverhaeltnis: string
+  einheit_nr_snapshot: string
+  mea_wert_snapshot: string | null
+}
+
+export interface EVTeilnehmer {
+  id: string
+  ev: string
+  person: string
+  person_name: string
+  stimmkraft: string
+  zusage_status: 'offen' | 'zugesagt' | 'abgesagt'
+  zusage_am: string | null
+  zusage_quelle: string
+  ist_anwesend: boolean | null
+  anwesenheit_erfasst_am: string | null
+  vertreten_durch: string | null
+  vertreten_durch_name: string | null
+  vertreter_name: string
+  vollmacht_dokument: string | null
+  anteile: EVTeilnehmerAnteil[]
+}
+
+export interface EVStimmkraftErgebnis {
+  teilnehmer: number
+  neu: number
+  entfallen: number
+  gesamt_stimmkraft: string
+  ohne_stimmrecht: string[]
+  grundlage: string
+}
+
+export interface EVVersandplanEintrag {
+  teilnehmer_id: string
+  person_id: string
+  name: string
+  kanal: EVVersandkanal
+  empfaenger: string
+  hat_email: boolean
+  hat_portalzugang: boolean
+  stimmkraft: string
+  nicht_stimmberechtigt: boolean
+  hinweis: string
+}
+
+export interface EVVersandplan {
+  ev_id: string
+  eintraege: EVVersandplanEintrag[]
+  zusammenfassung: Record<EVVersandkanal, number>
+  anzahl: number
+  ladungsfrist: EVLadungsfrist
+  portal_verfuegbar: boolean
+  portal_hinweis: string
+}
+
+export interface EVVersandErgebnis {
+  gesamt: number
+  erfolgreich: number
+  fehlgeschlagen: number
+  uebersprungen: number
+  kanaele: Record<EVVersandkanal, number>
+  epost_ordner: string
+  fehler: { name: string; kanal: string; status: string; text: string }[]
+}
+
+export interface EVVersandprotokoll {
+  id: string
+  person: string
+  person_name: string
+  kanal: EVVersandkanal
+  kanal_display: string
+  status: 'erfolgreich' | 'fehlgeschlagen' | 'uebersprungen'
+  empfaenger: string
+  epost_pfad: string
+  fehlertext: string
+  versendet_am: string
+  versendet_von: number | null
+  versendet_von_name: string | null
+}
+
+export interface EVEreignis {
+  id: string
+  typ: string
+  typ_display: string
+  top: string | null
+  text: string
+  alter_wert: string
+  neuer_wert: string
+  erstellt_am: string
+  erstellt_von: number | null
+  erstellt_von_name: string | null
+}
+
+export interface EVEinladungPdfErgebnis {
+  dokument_id: string
+  dateiname: string
+  download_url: string
+}
+
+// --- Phase D: Durchführung und Beschlussfassung ---
+
+export interface EVQuorum {
+  gesamt_stimmkraft: string
+  anwesende_stimmkraft: string
+  anwesend_prozent: string
+  anzahl_teilnehmer: number
+  anzahl_anwesend: number
+  anzahl_anwesenheit_offen: number
+  hinweis: string
+}
+
+export type EVVotum = 'ja' | 'nein' | 'enthaltung'
+
+export interface EVStimme {
+  id: string
+  top: string
+  teilnehmer: string
+  person_name: string
+  votum: EVVotum
+  votum_display: string
+  stimmkraft: string
+  erfasst_am: string
+  erfasst_von: number | null
+}
+
+export type EVAnfechtungStatus = 'keine' | 'anhaengig' | 'abgewiesen' | 'aufgehoben'
+
+export interface EVBeschluss {
+  id: string
+  objekt: string
+  objekt_bezeichnung: string
+  nummer: number
+  ev: string | null
+  top: string | null
+  top_nummer: number | null
+  top_titel: string | null
+  beschluss_datum: string
+  ort: string
+  wortlaut: string
+  ergebnis_ja: string
+  ergebnis_nein: string
+  ergebnis_enthaltung: string
+  dokument: string | null
+  dokument_dateiname: string | null
+  vorgang: string | null
+  vorgang_nummer: string | null
+  anfechtung_status: EVAnfechtungStatus
+  anfechtung_status_display: string
+  anfechtung_notiz: string
+  aufgehoben_am: string | null
+  gerichtlicher_hinweis: string
+  erstellt_am: string
+  erstellt_von: number | null
+  erstellt_von_name: string | null
+}
+
+export interface EVUebernahmeErgebnis {
+  beschluesse: number
+  uebersprungen: number
+  vorgaenge: number
+  mit_vorgang_trigger: number
+  mit_wp_trigger: number
+  nummern: number[]
+  protokoll_dokument_id: string
+}
+
+export interface EVAnwesenheitPayload {
+  ist_anwesend?: boolean | null
+  vertreten_durch?: string | null
+  vertreter_name?: string
+  vollmacht_dokument?: string | null
+  zusage_status?: 'offen' | 'zugesagt' | 'abgesagt'
+}

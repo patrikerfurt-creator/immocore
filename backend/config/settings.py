@@ -46,6 +46,7 @@ LOCAL_APPS = [
     'apps.massenimport',
     'apps.mitarbeiter',
     'apps.abrechnung_wp',
+    'apps.versammlung',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS

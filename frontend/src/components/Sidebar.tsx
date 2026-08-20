@@ -48,6 +48,8 @@ const otherItems: NavItemDef[] = [
   { to: '/dokumente',       label: 'Dokumente',   icon: '📁', objektAware: true },
   { to: '/vorgaenge',       label: 'Vorgänge',    icon: '🗒️', objektAware: true },
   { to: '/handwerker/auftraege', label: 'Handwerkeraufträge', icon: '🔧' },
+  { to: '/versammlungen',   label: 'Versammlungen', icon: '🗳️', objektAware: true },
+  { to: '/versammlungen/beschluesse', label: 'Beschluss-Sammlung', icon: '📜', objektAware: true },
   { to: '/massenimport/weg', label: 'Massenimport', icon: '📥' },
   { to: '/mitarbeiter',     label: 'Mitarbeiter', icon: '👥' },
   { to: '/admin/vorgang-typen', label: 'Vorgangs-Typen (Admin)', icon: '🛠️' },
