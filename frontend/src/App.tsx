@@ -56,6 +56,9 @@ import { JahresabrechnungWizard } from './pages/abrechnung-wp/jahresabrechnung/J
 import { HandwerkerauftraegeListe } from './pages/handwerker/HandwerkerauftraegeListe'
 import { HandwerkerauftragDetail } from './pages/handwerker/HandwerkerauftragDetail'
 import { GewerkeAdmin } from './pages/handwerker/GewerkeAdmin'
+import { VersammlungenListe } from './pages/versammlungen/VersammlungenListe'
+import { VersammlungDetail } from './pages/versammlungen/VersammlungDetail'
+import { BeschlussSammlung } from './pages/versammlungen/BeschlussSammlung'
 import { AuftragBestaetigung } from './pages/oeffentlich/AuftragBestaetigung'
 
 const queryClient = new QueryClient({
@@ -120,6 +123,9 @@ export default function App() {
             <Route path="admin/vorgang-typen" element={<VorgangTypenAdmin />} />
             <Route path="handwerker/auftraege" element={<HandwerkerauftraegeListe />} />
             <Route path="handwerker/auftraege/:id" element={<HandwerkerauftragDetail />} />
+            <Route path="versammlungen" element={<VersammlungenListe />} />
+            <Route path="versammlungen/beschluesse" element={<BeschlussSammlung />} />
+            <Route path="versammlungen/:id" element={<VersammlungDetail />} />
             <Route path="admin/gewerke" element={<GewerkeAdmin />} />
             <Route path="massenimport/weg" element={<MassenimportWEG />} />
             <Route path="zahlungsverkehr/lastschrift" element={<Lastschrift />} />

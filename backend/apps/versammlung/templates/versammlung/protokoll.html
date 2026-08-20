@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Protokoll Eigentümerversammlung {{ objekt.bezeichnung }}</title>
+<style>
+  @page {
+    size: A4;
+    margin: 2cm 2cm 2.5cm 2cm;
+    @bottom-left {
+      content: element(page-footer-left);
+      font-size: 7pt;
+      color: #888;
+    }
+    @bottom-right {
+      content: "Seite " counter(page) " von " counter(pages);
+      font-size: 7pt;
+      color: #888;
+    }
+  }
+
+  body {
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 10pt;
+    color: #333;
+    margin: 0;
+    padding: 0;
+  }
+
+  #page-footer-left {
+    position: running(page-footer-left);
+    font-size: 7pt;
+    color: #888;
+  }
+
+  .letterhead {
+    display: table;
+    width: 100%;
+    border-bottom: 2px solid #1a3c5e;
+    padding-bottom: 8pt;
+    margin-bottom: 16pt;
+  }
+  .letterhead-left  { display: table-cell; vertical-align: bottom; }
+  .letterhead-right { display: table-cell; vertical-align: bottom; text-align: right; }
+  .company-name { font-size: 13pt; font-weight: bold; color: #1a3c5e; }
+  .company-meta { font-size: 8pt; color: #666; }
+
+  h1 { font-size: 14pt; color: #1a3c5e; margin: 0 0 4pt 0; }
+  h2 {
+    font-size: 11pt;
+    color: #1a3c5e;
+    margin: 18pt 0 6pt 0;
+    border-bottom: 1px solid #ccc;
+    padding-bottom: 2pt;
+  }
+
+  .kopf-box {
+    border: 1px solid #1a3c5e;
+    background: #f4f7fa;
+    padding: 8pt 10pt;
+    margin: 12pt 0 16pt 0;
+  }
+  .kopf-box table { border-collapse: collapse; width: 100%; }
+  .kopf-box td { padding: 2pt 8pt 2pt 0; vertical-align: top; }
+  .kopf-box .label { font-weight: bold; width: 4.5cm; }
+
+  table.liste { border-collapse: collapse; width: 100%; font-size: 9pt; }
+  table.liste th {
+    background: #eef2f6;
+    text-align: left;
+    padding: 3pt 4pt;
+    border-bottom: 1px solid #ccc;
+    font-size: 8pt;
+    text-transform: uppercase;
+    letter-spacing: .3pt;
+  }
+  table.liste td { padding: 3pt 4pt; border-bottom: 1px solid #eee; }
+  table.liste td.num, table.liste th.num { text-align: right; }
+  table.liste tfoot td { font-weight: bold; border-top: 1px solid #999; }
+  .abwesend { color: #999; }
+
+  .quorum-hinweis {
+    font-size: 8.5pt;
+    color: #555;
+    margin-top: 6pt;
+    font-style: italic;
+  }
+
+  .top {
+    margin: 0 0 14pt 0;
+    padding: 0 0 10pt 0;
+    border-bottom: 1px dotted #bbb;
+  }
+  .top:last-child { border-bottom: none; }
+  .top-titel { font-weight: bold; font-size: 10.5pt; color: #1a3c5e; }
+  .top-label {
+    font-size: 8pt;
+    text-transform: uppercase;
+    letter-spacing: .4pt;
+    color: #777;
+    margin-top: 4pt;
+  }
+  .beschlusstext {
+    border-left: 3px solid #1a3c5e;
+    padding: 4pt 0 4pt 8pt;
+    margin-top: 2pt;
+    white-space: pre-line;
+  }
+  .ergebnis { margin-top: 4pt; font-size: 9.5pt; }
+  .angenommen { color: #1b6e2f; font-weight: bold; }
+  .abgelehnt  { color: #a12020; font-weight: bold; }
+  .neutral    { color: #555;    font-weight: bold; }
+
+  .unterschriften {
+    margin-top: 28pt;
+    display: table;
+    width: 100%;
+  }
+  .unterschrift-feld {
+    display: table-cell;
+    width: 45%;
+    border-top: 1px solid #666;
+    padding-top: 3pt;
+    font-size: 8.5pt;
+    color: #555;
+  }
+  .unterschrift-luecke { display: table-cell; width: 10%; }
+</style>
+</head>
+<body>
+
+<div id="page-footer-left">
+  Protokoll Eigentümerversammlung — {{ objekt.bezeichnung }} — erstellt am {{ erstellt_am|date:"d.m.Y H:i" }}
+</div>
+
+<div class="letterhead">
+  <div class="letterhead-left">
+    <div class="company-name">Demme Immobilien Verwaltung GmbH</div>
+    <div class="company-meta">Hausverwaltung</div>
+  </div>
+  <div class="letterhead-right">
+    <div class="company-meta">
+      {{ objekt.bezeichnung }}<br>
+      Objekt-Nr. {{ objekt.objektnummer }}
+    </div>
+  </div>
+</div>
+
+<h1>Protokoll der {{ ev.get_art_display }}</h1>
+<div class="company-meta">
+  {{ objekt.bezeichnung }}, {{ objekt.strasse }}, {{ objekt.plz }} {{ objekt.ort }}
+</div>
+
+<div class="kopf-box">
+  <table>
+    <tr>
+      <td class="label">Datum und Uhrzeit</td>
+      <td>{{ ev.termin|date:"l, d. F Y" }}, {{ ev.termin|date:"H:i" }} Uhr</td>
+    </tr>
+    <tr>
+      <td class="label">Ort</td>
+      <td>{{ ev.ort }}</td>
+    </tr>
+    <tr>
+      <td class="label">Versammlungsleitung</td>
+      <td>{{ ev.versammlungsleiter|default:"Die Verwaltung" }}</td>
+    </tr>
+    <tr>
+      <td class="label">Protokollführung</td>
+      <td>{{ ev.protokollfuehrer|default:"Die Verwaltung" }}</td>
+    </tr>
+    <tr>
+      <td class="label">Stimmrecht</td>
+      <td>{{ ev.get_stimmprinzip_display }}</td>
+    </tr>
+  </table>
+</div>
+
+<h2>Anwesenheit und Stimmkraft</h2>
+
+<table class="liste">
+  <thead>
+    <tr>
+      <th>Eigentümer</th>
+      <th>Einheiten</th>
+      <th class="num">Stimmen</th>
+      <th>Anwesenheit</th>
+      <th>Vertreten durch</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for zeile in anwesenheit %}
+      <tr class="{% if not zeile.anwesend %}abwesend{% endif %}">
+        <td>{{ zeile.name }}</td>
+        <td>{{ zeile.einheiten|default:"—" }}</td>
+        <td class="num">{{ zeile.stimmkraft|floatformat:"-4" }}</td>
+        <td>
+          {% if zeile.anwesend %}anwesend{% elif zeile.anwesend == False %}abwesend{% else %}nicht erfasst{% endif %}
+        </td>
+        <td>
+          {{ zeile.vertretung|default:"—" }}{% if zeile.vertretung and zeile.hat_vollmacht_dokument %} (Vollmacht liegt vor){% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+  </tbody>
+  <tfoot>
+    <tr>
+      <td colspan="2">Anwesende Stimmkraft</td>
+      <td class="num">{{ quorum.anwesende_stimmkraft|floatformat:"-4" }}</td>
+      <td colspan="2">
+        von {{ quorum.gesamt_stimmkraft|floatformat:"-4" }} ({{ quorum.anwesend_prozent }} %)
+      </td>
+    </tr>
+  </tfoot>
+</table>
+
+<p class="quorum-hinweis">{{ quorum.hinweis }}</p>
+
+<h2>Tagesordnung und Beschlüsse</h2>
+
+{% for top in tagesordnung %}
+  <div class="top">
+    <div class="top-titel">TOP {{ top.nummer }}: {{ top.titel }}</div>
+
+    {% if top.erlaeuterung %}
+      <div class="top-label">Erläuterung</div>
+      <div>{{ top.erlaeuterung|linebreaksbr }}</div>
+    {% endif %}
+
+    {% if top.abstimmungsmodus == 'kein_beschluss' %}
+      <div class="ergebnis neutral">Ohne Beschlussfassung — Bericht bzw. Information.</div>
+    {% else %}
+      <div class="top-label">Beschlusstext</div>
+      <div class="beschlusstext">{{ top.beschlussvorlage }}</div>
+
+      <div class="ergebnis">
+        Abstimmung ({{ top.get_abstimmungsmodus_display }}{% if top.mehrheit_schwelle %}, Schwelle {{ top.mehrheit_schwelle|floatformat:"-2" }} %{% endif %}):
+        Ja {{ top.abstimmung_ja|floatformat:"-4" }},
+        Nein {{ top.abstimmung_nein|floatformat:"-4" }},
+        Enthaltung {{ top.abstimmung_enthaltung|floatformat:"-4" }}
+        —
+        <span class="{% if top.abstimmungsergebnis == 'angenommen' %}angenommen{% elif top.abstimmungsergebnis == 'abgelehnt' %}abgelehnt{% else %}neutral{% endif %}">
+          {{ top.get_abstimmungsergebnis_display|upper }}
+        </span>
+        {% if top.beschluss %}
+          <span class="neutral">(Beschluss-Sammlung Nr. {{ top.beschluss.nummer }})</span>
+        {% endif %}
+      </div>
+
+      {% if top.ergebnis_bemerkung %}
+        <div class="ergebnis">Bemerkung: {{ top.ergebnis_bemerkung }}</div>
+      {% endif %}
+    {% endif %}
+  </div>
+{% empty %}
+  <p>Für diese Versammlung ist kein Tagesordnungspunkt erfasst.</p>
+{% endfor %}
+
+{% if beschluesse %}
+  <h2>Übernommen in die Beschluss-Sammlung (§ 24 Abs. 7 WEG)</h2>
+  <table class="liste">
+    <thead>
+      <tr>
+        <th class="num">Nr.</th>
+        <th>TOP</th>
+        <th>Wortlaut (Anfang)</th>
+        <th class="num">Ja</th>
+        <th class="num">Nein</th>
+        <th class="num">Enth.</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for beschluss in beschluesse %}
+        <tr>
+          <td class="num">{{ beschluss.nummer }}</td>
+          <td>{% if beschluss.top %}TOP {{ beschluss.top.nummer }}{% else %}—{% endif %}</td>
+          <td>{{ beschluss.wortlaut|truncatechars:70 }}</td>
+          <td class="num">{{ beschluss.ergebnis_ja|floatformat:"-4" }}</td>
+          <td class="num">{{ beschluss.ergebnis_nein|floatformat:"-4" }}</td>
+          <td class="num">{{ beschluss.ergebnis_enthaltung|floatformat:"-4" }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endif %}
+
+<div class="unterschriften">
+  <div class="unterschrift-feld">
+    Versammlungsleitung — {{ ev.versammlungsleiter|default:"Die Verwaltung" }}
+  </div>
+  <div class="unterschrift-luecke"></div>
+  <div class="unterschrift-feld">
+    Protokollführung — {{ ev.protokollfuehrer|default:"Die Verwaltung" }}
+  </div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,22 @@
+{% if person.briefanrede %}{{ person.briefanrede }}{% else %}Sehr geehrte Damen und Herren,{% endif %}
+
+hiermit laden wir Sie zur {{ ev.get_art_display }} der Wohnungseigentuemergemeinschaft
+{{ objekt.bezeichnung }} ein.
+
+Termin: {{ ev.termin|date:"l, d.m.Y" }}, {{ ev.termin|date:"H:i" }} Uhr
+Ort:    {{ ev.ort }}
+
+Die vollstaendige Einladung mit Tagesordnung und Beschlussvorlagen finden Sie
+im PDF-Anhang dieser E-Mail.
+
+Tagesordnung im Ueberblick:
+{% for top in tagesordnung %}  TOP {{ top.nummer }}: {{ top.titel }}
+{% endfor %}
+{% if ladungsfrist.warnung %}
+Hinweis: {{ ladungsfrist.warnung }}
+{% endif %}
+Sollten Sie nicht persoenlich teilnehmen koennen, koennen Sie sich vertreten
+lassen. Bitte legen Sie in diesem Fall eine schriftliche Vollmacht vor.
+
+Mit freundlichen Gruessen
+Demme Immobilien Verwaltung GmbH
