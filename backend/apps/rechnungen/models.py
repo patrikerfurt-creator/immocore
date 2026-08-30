@@ -55,11 +55,142 @@ class Kreditor(models.Model):
                 )
                 numeric = [int(n) for n in existing if int(n) >= 70000] if existing else []
                 self.kreditorennummer = str((max(numeric) + 1) if numeric else 70000)
+
+        # 'name_normalisiert' wird IMMER aus 'name' abgeleitet, nie von
+        # außen gesetzt. Vorher gab es zwei Normalisierungsvarianten
+        # (Parser mit, manuelle Anlage ohne Rechtsform-Entfernung) — die
+        # Dubletten-Erkennung fand deshalb je nach Herkunft nicht, was sie
+        # hätte finden müssen.
+        from .normalisierung import normalisiere_kreditorname
+        self.name_normalisiert = normalisiere_kreditorname(self.name)
+
+        felder = kwargs.get('update_fields')
+        if felder is not None:
+            felder = set(felder)
+            if 'name' in felder:
+                kwargs['update_fields'] = felder | {'name_normalisiert'}
         super().save(*args, **kwargs)
 
     def __str__(self):
         nr = f" [{self.kreditorennummer}]" if self.kreditorennummer else ""
         return f"{self.name}{nr}" + (f" ({self.iban})" if self.iban else "")
+
+
+class KreditorBankverbindung(models.Model):
+    """Weitere Bankverbindungen eines Kreditors.
+
+    ``Kreditor.iban`` ist ein einzelnes Feld mit Unique-Constraint und
+    bleibt die primäre Bankverbindung (alle bestehenden Auswertungen und
+    die Zahlungserzeugung lesen sie dort). Eine Firma kann aber mehrere
+    Konten haben — ohne diese Tabelle müsste man beim Zuordnen einer
+    Rechnung mit abweichender IBAN entweder die bekannte überschreiben
+    oder die neue verwerfen. Beides verliert Information.
+
+    Hier landen die zusätzlichen Konten. Die Dubletten-Prüfung sucht in
+    beiden Quellen, damit eine Rechnung von der Zweit-IBAN nicht als
+    neuer Kreditor durchgeht.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    kreditor = models.ForeignKey(
+        Kreditor, on_delete=models.CASCADE, related_name='bankverbindungen',
+    )
+    iban = models.CharField(max_length=34, unique=True)
+    bic = models.CharField(max_length=11, blank=True)
+    bemerkung = models.CharField(
+        max_length=200, blank=True,
+        help_text='z.B. woher die Bankverbindung stammt (Rechnung, Mitteilung)',
+    )
+    aktiv = models.BooleanField(default=True)
+    erfasst_am = models.DateTimeField(auto_now_add=True)
+    erfasst_durch = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='erfasste_bankverbindungen',
+    )
+
+    class Meta:
+        verbose_name = 'Kreditor-Bankverbindung'
+        verbose_name_plural = 'Kreditor-Bankverbindungen'
+        ordering = ['kreditor', '-erfasst_am']
+
+    def save(self, *args, **kwargs):
+        from .normalisierung import normalisiere_iban
+        self.iban = normalisiere_iban(self.iban)
+        self.bic = (self.bic or '').replace(' ', '').upper()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f'{self.kreditor.name}: {self.iban}'
+
+
+class KreditorDublettenPruefung(models.Model):
+    """Angehaltene Kreditor-Neuanlage, die ein Mensch entscheiden muss.
+
+    Entsteht beim Rechnungsimport, wenn der Abgleich
+    (``services.kreditor_matching``) einen Verdacht meldet: ähnlicher
+    Name, abweichende Bankverbindung bei bekanntem Namen, abweichender
+    Name bei bekannter Bankverbindung, oder ein Treffer auf einem
+    deaktivierten Kreditor.
+
+    Eigenes Modell statt Flags an der Rechnung, weil die Entscheidung
+    nachvollziehbar bleiben muss: bei Zahlungsdaten will man später
+    beantworten können, wer wann bestätigt hat, dass ein Lieferant mit
+    neuer Bankverbindung derselbe ist.
+
+    Solange der Fall ``offen`` ist, hat die Rechnung KEINEN Kreditor und
+    kann nicht gebucht werden — das ist die eigentliche Sperre.
+    """
+
+    STATUS_OFFEN = 'offen'
+    STATUS_NEU_ANGELEGT = 'als_neu_angelegt'
+    STATUS_ZUGEORDNET = 'zugeordnet'
+    STATUS_ABGELEHNT = 'abgelehnt'
+    STATUS_CHOICES = [
+        (STATUS_OFFEN, 'Offen — Prüfung erforderlich'),
+        (STATUS_NEU_ANGELEGT, 'Als neuer Kreditor angelegt'),
+        (STATUS_ZUGEORDNET, 'Bestehendem Kreditor zugeordnet'),
+        (STATUS_ABGELEHNT, 'Abgelehnt'),
+    ]
+
+    ANLASS_CHOICES = [
+        ('fuzzy_name', 'Ähnlicher Name'),
+        ('iban_abweichung', 'Bekannter Name, abweichende Bankverbindung'),
+        ('name_abweichung', 'Bekannte Bankverbindung, abweichender Name'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    rechnung = models.OneToOneField(
+        'Rechnung', on_delete=models.CASCADE, related_name='dubletten_pruefung',
+    )
+    erkannter_name = models.CharField(max_length=255)
+    erkannte_iban = models.CharField(max_length=34, blank=True)
+    anlass = models.CharField(max_length=25, choices=ANLASS_CHOICES)
+    # Zum Prüfzeitpunkt eingefroren: die Kreditorenliste ändert sich, die
+    # Entscheidungsgrundlage soll rekonstruierbar bleiben.
+    kandidaten = models.JSONField(default=list)
+
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_OFFEN)
+    ergebnis_kreditor = models.ForeignKey(
+        Kreditor, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='dubletten_entscheidungen',
+        help_text='Der Kreditor, auf den die Entscheidung hinauslief.',
+    )
+    entschieden_von = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        null=True, blank=True, related_name='kreditor_dubletten_entscheidungen',
+    )
+    entschieden_am = models.DateTimeField(null=True, blank=True)
+    notiz = models.TextField(blank=True)
+    erstellt_am = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Kreditor-Dublettenprüfung'
+        verbose_name_plural = 'Kreditor-Dublettenprüfungen'
+        ordering = ['-erstellt_am']
+        indexes = [models.Index(fields=['status'])]
+
+    def __str__(self):
+        return f'Dublettenprüfung {self.erkannter_name} [{self.get_status_display()}]'
 
 
 class Rechnung(models.Model):

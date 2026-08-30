@@ -45,6 +45,33 @@ export interface WKZVorlage {
   splits: WKZSplit[]
 }
 
+/** Zeile der Stufe-2-Freigabeliste (Rechnungsfreigabe → WKZ) */
+export interface WKZVorlageFreigabe {
+  id: string
+  objekt: string
+  objekt_bezeichnung: string
+  kreditor: string
+  kreditor_name: string
+  bezeichnung: string
+  typ: 'bescheid' | 'vertrag'
+  status: 'eingereicht'
+  zahlweg: 'lastschrift' | 'ueberweisung'
+  betrag_gesamt: string
+  rhythmus: string
+  erste_faelligkeit: string
+  gueltig_ab: string
+  gueltig_bis: string | null
+  jahresbetrag: string | null
+  perioden_pro_jahr: number | null
+  bescheid_pflicht: boolean
+  rechnung_id: string | null
+  rechnung_nummer: string | null
+  rechnung_dateiname: string | null
+  erstellt_von_name: string
+  erstellt_am: string
+  splits: WKZSplit[]
+}
+
 export interface WKZVorlageCreate {
   objekt: string
   kreditor: string
@@ -135,6 +162,14 @@ export const wkzApi = {
 
   vorlageFreigeben: (id: string) =>
     client.post<WKZVorlage>(`/wkz-vorlagen/${id}/freigeben/`).then(r => r.data),
+
+  // Stufe-2-Freigabeliste: eingereichte Vorlagen, für die der User zuständig ist
+  freigabeListe: () =>
+    client.get<WKZVorlageFreigabe[]>('/wkz-vorlagen/freigabe-liste/').then(r => r.data),
+
+  // Freigabe verweigern — Vorlage geht zurück in den Entwurf
+  vorlageAblehnen: (id: string, grund: string) =>
+    client.post<WKZVorlage>(`/wkz-vorlagen/${id}/ablehnen/`, { grund }).then(r => r.data),
 
   vorlagePausieren: (id: string, grund: string) =>
     client.post<WKZVorlage>(`/wkz-vorlagen/${id}/pausieren/`, { grund }).then(r => r.data),

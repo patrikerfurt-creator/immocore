@@ -18,6 +18,7 @@ from .serializers_wkz import (
     WKZVorlageSerializer,
     WKZVorlageDetailSerializer,
     WKZVorlageCreateSerializer,
+    WKZVorlageFreigabeSerializer,
     WKZOPSerializer,
     WKZOPDetailSerializer,
     WKZForecastSerializer,
@@ -30,6 +31,10 @@ from .services.wkz.vorlage_service import (
     reaktiviere_vorlage,
     beende_vorlage,
     ersetze_vorlage,
+)
+from .services.wkz.freigabe_service import (
+    darf_wkz_vorlage_freigeben,
+    lehne_vorlage_ab,
 )
 from .services.wkz.op_generator_service import (
     berechne_fallige_perioden,
@@ -176,6 +181,40 @@ class WKZVorlageViewSet(viewsets.ModelViewSet):
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(WKZVorlageDetailSerializer(vorlage).data)
 
+    @action(detail=False, methods=['get'], url_path='freigabe-liste')
+    def freigabe_liste(self, request):
+        """Stufe-2-Liste „WKZ-Freigabe" — alle eingereichten Vorlagen, für die
+        der User laut objektbasierten zahlungsfreigabe_grenzen zuständig ist
+        (Jahresbetrag als Bewertungsgrundlage). GF sieht alle.
+
+        Wird unter „Rechnungsfreigabe" neben den Rechnungen angezeigt: eine aus
+        einem Beleg angelegte WKZ ersetzt die Zahlung dieser Rechnung und muss
+        deshalb hier freigegeben werden."""
+        qs = (
+            WiederkehrendeBuchungVorlage.objects
+            .filter(status='eingereicht')
+            .select_related('objekt', 'kreditor', 'erstellt_von', 'rechnung')
+            .prefetch_related('splits')
+            .order_by('objekt__bezeichnung', 'bezeichnung')
+        )
+        vorlagen = [v for v in qs if darf_wkz_vorlage_freigeben(v, request.user)]
+        return Response(WKZVorlageFreigabeSerializer(vorlagen, many=True).data)
+
+    @action(detail=True, methods=['post'], url_path='ablehnen')
+    def ablehnen(self, request, pk=None):
+        """Freigabe verweigern — die Vorlage geht zurück in den Entwurf."""
+        vorlage = self.get_object()
+        if not darf_wkz_vorlage_freigeben(vorlage, request.user):
+            return Response(
+                {'detail': 'Keine Freigabeberechtigung für dieses Objekt bzw. diesen Betrag.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        try:
+            lehne_vorlage_ab(vorlage, request.data.get('grund', ''), request.user)
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(WKZVorlageDetailSerializer(vorlage).data)
+
     @action(detail=True, methods=['post'], url_path='freigeben')
     def freigeben(self, request, pk=None):
         """Freigabe erteilen — für Vorlagen im Status 'entwurf' oder 'eingereicht'."""
@@ -184,6 +223,11 @@ class WKZVorlageViewSet(viewsets.ModelViewSet):
             return Response(
                 {'detail': 'Nur Vorlagen im Status "entwurf" oder "eingereicht" können freigegeben werden.'},
                 status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not darf_wkz_vorlage_freigeben(vorlage, request.user):
+            return Response(
+                {'detail': 'Keine Freigabeberechtigung für dieses Objekt bzw. diesen Betrag.'},
+                status=status.HTTP_403_FORBIDDEN,
             )
         try:
             aktiviere_vorlage(vorlage, freigegeben_von=request.user)

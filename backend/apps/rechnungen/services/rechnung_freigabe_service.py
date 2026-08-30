@@ -72,6 +72,12 @@ def darf_freigeben(rechnung, user) -> bool:
     return False   # 'geschaeftsfuehrer'-Stufe: oben bereits behandelt
 
 
+def _hat_offene_wkz_vorlage(rechnung) -> bool:
+    """True, wenn zu der Rechnung eine WKZ-Vorlage besteht, die die Zahlung
+    übernimmt (jede Vorlage außer 'beendet')."""
+    return rechnung.wkz_vorlagen.exclude(status='beendet').exists()
+
+
 def route_zur_freigabe(rechnung, geprueft_von=None):
     """Stufe-1-Abschluss „Geprüft → zur Freigabe" (Spec 5.1):
     Status → zur_freigabe, Freigabestufe/-person über die bestehenden
@@ -81,7 +87,17 @@ def route_zur_freigabe(rechnung, geprueft_von=None):
     Beim Übergang zur Freigabe wird die Match-Regel aus der von der
     Buchhaltung geprüften/bestätigten Kontierung erstellt bzw. bestätigt
     (gleiches Konto → trefferzahl++). Der Stufe-2-Freigeber ändert die
-    Regel nur bei bewusster Konto-Korrektur mit Rückfrage (Spec 5.3)."""
+    Regel nur bei bewusster Konto-Korrektur mit Rückfrage (Spec 5.3).
+
+    Sonderfall WKZ: Besteht zu der Rechnung eine (nicht beendete) WKZ-Vorlage,
+    läuft die Zahlung über die wiederkehrende Zahlung — mit eigener Freigabe
+    unter „Rechnungsfreigabe". Die Rechnung verlässt deshalb JETZT, mit dem
+    Abschluss der Erfassung, den normalen Zahlweg (status='wkz_beleg') und
+    nicht schon beim Anlegen der Vorlage."""
+    if _hat_offene_wkz_vorlage(rechnung):
+        from apps.buchhaltung.services.wkz.vorlage_service import uebergib_rechnung_an_wkz
+        return uebergib_rechnung_an_wkz(rechnung, user=geprueft_von)
+
     if geprueft_von is not None:
         from ..recognition import lege_match_regel_an
         regel = lege_match_regel_an(rechnung, geprueft_von, 'pruefung', lernen=True)

@@ -77,6 +77,35 @@ class WKZVorlageDetailSerializer(serializers.ModelSerializer):
         ]
 
 
+class WKZVorlageFreigabeSerializer(serializers.ModelSerializer):
+    """Zeile der Stufe-2-Liste „Rechnungsfreigabe" für eingereichte WKZ-Vorlagen:
+    Vorlage + Splits + Herkunftsbeleg, damit der Freigeber ohne Detailaufruf
+    entscheiden kann."""
+    kreditor_name = serializers.CharField(source='kreditor.name', read_only=True)
+    objekt_bezeichnung = serializers.CharField(source='objekt.bezeichnung', read_only=True)
+    jahresbetrag = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
+    perioden_pro_jahr = serializers.IntegerField(read_only=True)
+    splits = WKZSplitSerializer(many=True, read_only=True)
+    erstellt_von_name = serializers.CharField(source='erstellt_von.get_full_name', read_only=True)
+    rechnung_nummer = serializers.CharField(source='rechnung.rechnungsnummer', read_only=True)
+    rechnung_dateiname = serializers.CharField(source='rechnung.dateiname', read_only=True)
+
+    class Meta:
+        model = WiederkehrendeBuchungVorlage
+        fields = [
+            'id', 'objekt', 'objekt_bezeichnung',
+            'kreditor', 'kreditor_name',
+            'bezeichnung', 'typ', 'status', 'zahlweg',
+            'betrag_gesamt', 'rhythmus',
+            'erste_faelligkeit', 'gueltig_ab', 'gueltig_bis',
+            'jahresbetrag', 'perioden_pro_jahr',
+            'bescheid_pflicht',
+            'rechnung_id', 'rechnung_nummer', 'rechnung_dateiname',
+            'erstellt_von_name', 'erstellt_am',
+            'splits',
+        ]
+
+
 class WKZVorlageCreateSerializer(serializers.Serializer):
     objekt = serializers.UUIDField()
     kreditor = serializers.UUIDField()

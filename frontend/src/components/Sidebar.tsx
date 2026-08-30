@@ -28,6 +28,7 @@ const buchhaltungItems: NavItemDef[] = [
   { to: '/buchhaltung/wkz-vorlagen',   label: 'WKZ',               icon: '🔁', objektAware: true },
   { to: '/rechnungen/inbox',                  label: 'Rechnungseingang',  icon: '📨' },
   { to: '/rechnungen/freigabe',               label: 'Rechnungsfreigabe', icon: '✅' },
+  { to: '/rechnungen/kreditor-pruefung',      label: 'Kreditor-Prüfung',  icon: '🔍' },
   { to: '/rechnungen',                        label: 'Rechnungen',        icon: '🧾', objektAware: true },
   { to: '/admin/rechnungen/match-regeln',     label: 'Match-Regeln',      icon: '🔗' },
   { to: '/buchhaltung',                       label: 'Buchungsjournal',   icon: '📒', objektAware: true },

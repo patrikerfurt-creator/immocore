@@ -64,3 +64,9 @@ local_seed/*.sql.gz
 
 # Celery-Laufzeitstand (wird beim Start neu erzeugt)
 backend/celerybeat-schedule
+
+# Lokale DB-Dumps: die bestehende Regel greift nur eine Ebene tief und
+# erfasst 'local_seed/live_backup/*.sql.gz' nicht — dort liegen echte
+# Live-Daten (Personen, Bankverbindungen), die nie ins Repo gehören.
+local_seed/**/*.sql
+local_seed/**/*.sql.gz

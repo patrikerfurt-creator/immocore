@@ -20,51 +20,18 @@ from .serializers import (
 
 
 def _finde_dubletten_kandidaten(name: str, iban=None, schwelle: float = 0.65) -> list:
-    """Sucht ähnliche Kreditoren anhand Name und optionaler IBAN."""
-    from .recognition import _fuzzy_score
+    """Sucht ähnliche Kreditoren anhand Name und optionaler IBAN.
 
-    gefunden_ids: set = set()
-    kandidaten: list = []
+    Dünne Hülle um ``services.kreditor_matching.finde_kandidaten`` — die
+    Suche existierte hier früher als eigene Fassung, die (anders als der
+    Import) deaktivierte Kreditoren ausblendete und die Rohnamen statt der
+    normalisierten verglich. Zwei Verfahren für dieselbe Frage waren genau
+    der Grund, warum Doppelungen je nach Weg mal gefunden wurden und mal
+    nicht.
+    """
+    from .services.kreditor_matching import finde_kandidaten
 
-    if iban:
-        k = Kreditor.objects.filter(iban=iban, aktiv=True).first()
-        if k:
-            return [{
-                'id': str(k.id),
-                'name': k.name,
-                'kreditorennummer': k.kreditorennummer or '',
-                'iban': k.iban or '',
-                'score': 1.0,
-                'match_typ': 'iban',
-            }]
-
-    name_norm = name.lower().strip()
-    exact = Kreditor.objects.filter(name_normalisiert__iexact=name_norm, aktiv=True).first()
-    if exact:
-        kandidaten.append({
-            'id': str(exact.id),
-            'name': exact.name,
-            'kreditorennummer': exact.kreditorennummer or '',
-            'iban': exact.iban or '',
-            'score': 0.92,
-            'match_typ': 'name_exakt',
-        })
-        gefunden_ids.add(exact.id)
-
-    for k in Kreditor.objects.filter(aktiv=True).exclude(id__in=gefunden_ids):
-        score = _fuzzy_score(name, k.name)
-        if score >= schwelle:
-            kandidaten.append({
-                'id': str(k.id),
-                'name': k.name,
-                'kreditorennummer': k.kreditorennummer or '',
-                'iban': k.iban or '',
-                'score': min(score, 0.85),
-                'match_typ': 'name_fuzzy',
-            })
-
-    kandidaten.sort(key=lambda x: x['score'], reverse=True)
-    return kandidaten[:10]
+    return [k.as_dict() for k in finde_kandidaten(name, iban or '', schwelle)][:10]
 
 
 class KreditorViewSet(viewsets.ModelViewSet):
@@ -489,13 +456,25 @@ class RechnungViewSet(viewsets.ModelViewSet):
         # bleibt in Stufe 1 (in_buchhaltung). Beim Übergang lernt die
         # Match-Regel aus der geprüften Kontierung (route_zur_freigabe).
         if modus in ('zur_freigabe', 'freigeben'):
-            if not rechnung.aufwandskonto_id and not rechnung.splits.exists():
+            # Bei WKZ-Belegen liegt die Kontierung in den Splits der WKZ-Vorlage —
+            # ein Aufwandskonto auf der Rechnung ist dann nicht erforderlich.
+            from .services.rechnung_freigabe_service import _hat_offene_wkz_vorlage
+            ist_wkz_beleg = _hat_offene_wkz_vorlage(rechnung)
+            if not ist_wkz_beleg and not rechnung.aufwandskonto_id and not rechnung.splits.exists():
                 return Response({'error': 'Aufwandskonto oder Split-Positionen für die Freigabe erforderlich.'},
                                 status=status.HTTP_400_BAD_REQUEST)
             route_zur_freigabe(rechnung, geprueft_von=request.user)
+            bearbeiter = request.user.get_full_name() or request.user.username
             Verarbeitungslog.objects.create(
-                rechnung=rechnung, aktion='Geprüft → zur Freigabe', status=rechnung.status,
-                details=f'Stufe 1 abgeschlossen durch {request.user.get_full_name() or request.user.username}',
+                rechnung=rechnung,
+                aktion='An WKZ übergeben' if ist_wkz_beleg else 'Geprüft → zur Freigabe',
+                status=rechnung.status,
+                details=(
+                    f'Erfassung abgeschlossen durch {bearbeiter}; Zahlung läuft über die '
+                    f'wiederkehrende Zahlung (WKZ), Freigabe dort'
+                    if ist_wkz_beleg
+                    else f'Stufe 1 abgeschlossen durch {bearbeiter}'
+                ),
             )
         else:
             rechnung.status = 'in_buchhaltung'
@@ -1109,12 +1088,11 @@ class RechnungViewSet(viewsets.ModelViewSet):
                         },
                         status=status.HTTP_409_CONFLICT,
                     )
+            # 'name_normalisiert' wird in Kreditor.save() abgeleitet und
+            # hier bewusst nicht mehr gesetzt — die frühere Fassung
+            # (name.lower()) hätte die Dubletten-Erkennung ausgehebelt.
             kreditor, _ = Kreditor.objects.get_or_create(
-                name=name,
-                defaults={
-                    'iban': iban,
-                    'name_normalisiert': name.lower(),
-                },
+                name=name, defaults={'iban': iban},
             )
         elif kreditor_id := data.get('kreditor_id'):
             try:

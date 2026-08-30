@@ -31,15 +31,20 @@ function summe(splits: SplitRow[]): number {
 }
 
 export default function VorlageWizard() {
-  const { selectedId: objektId } = useObjektStore()
+  const { selectedId } = useObjektStore()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
 
   // URL-Parameter (vorausgefüllt aus Rechnung)
   const paramRechnungId   = searchParams.get('rechnung_id') ?? ''
   const paramKreditorId   = searchParams.get('kreditor_id') ?? ''
+  const paramObjektId     = searchParams.get('objekt_id') ?? ''
   const paramBezeichnung  = searchParams.get('bezeichnung') ?? ''
   const paramBetrag       = searchParams.get('betrag') ?? ''
+
+  // Objekt der Rechnung hat Vorrang vor der globalen Objektauswahl — der
+  // Rechnungseingang ist objektübergreifend.
+  const objektId = paramObjektId || selectedId
 
   // Schritt 1–4
   const [schritt, setSchritt] = useState(1)
@@ -80,8 +85,20 @@ export default function VorlageWizard() {
   })
 
   const mutation = useMutation({
-    mutationFn: (data: WKZVorlageCreate) =>
-      wkzApi.vorlageAnlegen(objektId!, data),
+    mutationFn: async (data: WKZVorlageCreate) => {
+      const vorlage = await wkzApi.vorlageAnlegen(objektId!, data)
+      // Aus einem Beleg angelegt: die Zahlung läuft künftig über die Vorlage,
+      // deshalb geht sie sofort in die Freigabe (Stufe 2, „Rechnungsfreigabe").
+      // Bei Grenze 'auto' aktiviert der Service direkt.
+      if (paramRechnungId) {
+        try {
+          return await wkzApi.vorlageEinreichen(vorlage.id)
+        } catch {
+          return vorlage   // Einreichen kann im Detail nachgeholt werden
+        }
+      }
+      return vorlage
+    },
     onSuccess: v => navigate(`../${v.id}`),
     onError: (e: unknown) =>
       setFehler((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? 'Fehler'),
@@ -158,6 +175,9 @@ export default function VorlageWizard() {
         <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 text-sm text-blue-800">
           <span className="font-medium">Aus Rechnung übernommen</span> — Kreditor, Bezeichnung und Betrag sind vorausgefüllt.
           Der DMS-Bezug zur Originalrechnung wird automatisch gespeichert.
+          Die Vorlage wird nach dem Anlegen zur Freigabe eingereicht und erscheint unter
+          <span className="font-medium"> Rechnungsfreigabe</span>. Die Rechnung selbst bleibt im
+          Rechnungseingang, bis ihre Erfassung dort abgeschlossen ist.
         </div>
       )}
 
@@ -480,7 +500,9 @@ export default function VorlageWizard() {
             onClick={handleSubmit}
             disabled={mutation.isPending}
           >
-            {mutation.isPending ? 'Wird gespeichert…' : 'Vorlage anlegen'}
+            {mutation.isPending
+              ? 'Wird gespeichert…'
+              : paramRechnungId ? 'Vorlage anlegen & zur Freigabe' : 'Vorlage anlegen'}
           </Button>
         )}
       </div>
