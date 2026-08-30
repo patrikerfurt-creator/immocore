@@ -6,12 +6,31 @@
  * das Sachkonto korrigieren; der Button „Freigabe" (ehem. „Sachkonto
  * speichern") speichert die Korrektur UND schließt die Freigabe ab.
  * Bei geändertem Konto: Match-Regel-Dialog (Ja/Nein) — nur „Ja" lernt.
+ *
+ * Zweiter Block: eingereichte WKZ-Vorlagen (wiederkehrende Zahlungen). Eine aus
+ * einem Beleg angelegte WKZ nimmt die Rechnung aus dem normalen Zahlweg —
+ * freigegeben wird deshalb hier die Vorlage (Bewertung über den Jahresbetrag).
  */
 import { useCallback, useEffect, useState } from 'react'
 import { rechnungenApi } from '../../api/rechnungen'
 import { buchhaltungApi } from '../../api/buchhaltung'
+import { wkzApi, type WKZVorlageFreigabe } from '../../api/wkz'
 import type { Konto, RechnungList } from '../../types'
 import { Ampelpunkt } from './Ampel'
+
+const RHYTHMUS_LABEL: Record<string, string> = {
+  monatlich: 'monatlich',
+  zweimonatlich: 'zweimonatlich',
+  quartalsweise: 'quartalsweise',
+  halbjaehrlich: 'halbjährlich',
+  jaehrlich: 'jährlich',
+  frei: 'frei (manuell)',
+}
+
+function eur(wert: string | null): string {
+  if (wert == null) return '—'
+  return `${Number(wert).toLocaleString('de-DE', { minimumFractionDigits: 2 })} €`
+}
 
 function istAufwandskonto(k: Konto): boolean {
   const nr = Number(k.kontonummer)
@@ -25,6 +44,8 @@ export default function RechnungsFreigabe() {
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [fehler, setFehler] = useState<string | null>(null)
+  const [wkzRows, setWkzRows] = useState<WKZVorlageFreigabe[]>([])
+  const [wkzFehler, setWkzFehler] = useState<string | null>(null)
 
   const laden = useCallback(() => {
     setLoading(true)
@@ -44,7 +65,37 @@ export default function RechnungsFreigabe() {
       .finally(() => setLoading(false))
   }, [])
 
-  useEffect(() => { laden() }, [laden])
+  const wkzLaden = useCallback(() => {
+    wkzApi.freigabeListe()
+      .then(setWkzRows)
+      .catch(() => setWkzFehler('WKZ-Freigabeliste konnte nicht geladen werden.'))
+  }, [])
+
+  useEffect(() => { laden(); wkzLaden() }, [laden, wkzLaden])
+
+  const wkzFreigeben = async (v: WKZVorlageFreigabe) => {
+    setBusyId(v.id); setWkzFehler(null)
+    try {
+      await wkzApi.vorlageFreigeben(v.id)
+      wkzLaden()
+    } catch (e) {
+      const msg = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail
+      setWkzFehler(msg ?? 'Freigabe der WKZ-Vorlage fehlgeschlagen.')
+    } finally { setBusyId(null) }
+  }
+
+  const wkzAblehnen = async (v: WKZVorlageFreigabe) => {
+    const grund = window.prompt('Begründung der Ablehnung (Vorlage geht zurück in den Entwurf):')
+    if (grund == null) return
+    setBusyId(v.id); setWkzFehler(null)
+    try {
+      await wkzApi.vorlageAblehnen(v.id, grund)
+      wkzLaden()
+    } catch (e) {
+      const msg = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail
+      setWkzFehler(msg ?? 'Ablehnen fehlgeschlagen.')
+    } finally { setBusyId(null) }
+  }
 
   const freigeben = async (r: RechnungList) => {
     const kontoId = auswahl[r.id]
@@ -84,6 +135,7 @@ export default function RechnungsFreigabe() {
   return (
     <div className="p-6">
       <h1 className="text-xl font-semibold text-gray-800 mb-4">Rechnungsfreigabe — Stufe 2</h1>
+      <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">Rechnungen</h2>
       {fehler && <div className="mb-3 text-sm text-red-600">{fehler}</div>}
       {loading ? (
         <div className="text-gray-500 text-sm">Lädt…</div>
@@ -143,6 +195,88 @@ export default function RechnungsFreigabe() {
                   </tr>
                 )
               })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------------ */}
+      {/* WKZ — wiederkehrende Zahlungen (aus Belegen angelegt)              */}
+      {/* ------------------------------------------------------------------ */}
+      <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mt-8 mb-2">
+        Wiederkehrende Zahlungen (WKZ)
+      </h2>
+      <p className="text-xs text-gray-500 mb-2">
+        Vorlagen aus einer Eingangsrechnung: die Zahlung läuft über die wiederkehrende Zahlung
+        statt über die einzelne Rechnung — freigegeben wird deshalb hier die Vorlage
+        (Bewertung über den Jahresbetrag).
+      </p>
+      {wkzFehler && <div className="mb-3 text-sm text-red-600">{wkzFehler}</div>}
+      {wkzRows.length === 0 ? (
+        <div className="text-gray-500 text-sm">Keine wiederkehrenden Zahlungen zur Freigabe.</div>
+      ) : (
+        <div className="overflow-x-auto border rounded">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50 text-gray-600">
+              <tr>
+                <th className="px-3 py-2 text-left">Kreditor</th>
+                <th className="px-3 py-2 text-left">Bezeichnung</th>
+                <th className="px-3 py-2 text-left">Objekt</th>
+                <th className="px-3 py-2 text-left">Rhythmus / Zahlweg</th>
+                <th className="px-3 py-2 text-right">Betrag je Periode</th>
+                <th className="px-3 py-2 text-right">Jahresbetrag</th>
+                <th className="px-3 py-2 text-left">Sachkonten</th>
+                <th className="px-3 py-2 text-left">Beleg</th>
+                <th className="px-3 py-2 text-right">Aktionen</th>
+              </tr>
+            </thead>
+            <tbody>
+              {wkzRows.map(v => (
+                <tr key={v.id} className="border-t hover:bg-gray-50">
+                  <td className="px-3 py-2">{v.kreditor_name}</td>
+                  <td className="px-3 py-2">
+                    {v.bezeichnung}
+                    <span className="block text-xs text-gray-500">
+                      {v.typ === 'bescheid' ? 'Bescheid' : 'Vertrag'} · ab {new Date(v.gueltig_ab).toLocaleDateString('de-DE')}
+                      {v.erstellt_von_name ? ` · erfasst von ${v.erstellt_von_name}` : ''}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 text-gray-600">{v.objekt_bezeichnung}</td>
+                  <td className="px-3 py-2 text-gray-600">
+                    {RHYTHMUS_LABEL[v.rhythmus] ?? v.rhythmus}
+                    <span className="block text-xs text-gray-500">
+                      {v.zahlweg === 'lastschrift' ? 'Lastschrift' : 'Überweisung'}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono">{eur(v.betrag_gesamt)}</td>
+                  <td className="px-3 py-2 text-right font-mono font-medium">{eur(v.jahresbetrag)}</td>
+                  <td className="px-3 py-2 text-xs text-gray-600">
+                    {v.splits.map(sp => (
+                      <span key={sp.id} className="block font-mono">
+                        {sp.kontonummer} · {eur(sp.betrag)}
+                      </span>
+                    ))}
+                  </td>
+                  <td className="px-3 py-2">
+                    {v.rechnung_id ? (
+                      <button onClick={() => rechnungenApi.openPdf(v.rechnung_id!).catch(() => {})}
+                              className="text-blue-600 hover:underline">
+                        {v.rechnung_nummer || 'PDF'}
+                      </button>
+                    ) : (
+                      <span className="text-gray-400">—</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-right whitespace-nowrap">
+                    <button onClick={() => wkzFreigeben(v)} disabled={busyId === v.id}
+                            className="px-3 py-1 rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 mr-2">
+                      Freigabe
+                    </button>
+                    <button onClick={() => wkzAblehnen(v)} disabled={busyId === v.id}
+                            className="text-red-600 hover:underline">Ablehnen</button>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>

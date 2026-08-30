@@ -30,6 +30,7 @@ import FrontofficeInbox from './pages/rechnungen/FrontofficeInbox'
 import BuchhaltungsInbox from './pages/rechnungen/BuchhaltungsInbox'
 import RechnungErfassen from './pages/rechnungen/RechnungErfassen'
 import RechnungsFreigabe from './pages/rechnungen/RechnungsFreigabe'
+import KreditorDubletten from './pages/rechnungen/KreditorDubletten'
 import { ProzessWizard } from './pages/prozesse/ProzessWizard'
 import { DokumenteListe } from './pages/dokumente/DokumenteListe'
 import { VorgaengeListe } from './pages/vorgaenge/VorgaengeListe'
@@ -114,6 +115,7 @@ export default function App() {
             <Route path="rechnungen/erfassen/:id" element={<RechnungErfassen />} />
             <Route path="rechnungen/:id/prueffall" element={<PrueffallDetail />} />
             <Route path="rechnungen/frontoffice" element={<FrontofficeInbox />} />
+            <Route path="rechnungen/kreditor-pruefung" element={<KreditorDubletten />} />
             <Route path="kreditoren" element={<KreditorenListe />} />
             <Route path="admin/rechnungen/match-regeln" element={<MatchRegeln />} />
             <Route path="prozesse" element={<ProzessWizard />} />

@@ -50,25 +50,47 @@ def _system_user():
 # Kreditor-Abgleich
 # ---------------------------------------------------------------------------
 
+def gleiche_kreditor_ab(supplier: str, iban: str):
+    """Abgleich OHNE Nebenwirkung — legt nichts an.
+
+    Liefert ein ``AbgleichErgebnis`` mit genau einem von drei Zuständen
+    (sicher / verdacht / neu). Der Aufrufer entscheidet, was daraus folgt:
+    verwenden, anhalten oder anlegen.
+    """
+    from .kreditor_matching import AbgleichErgebnis, gleiche_kreditoren
+
+    if not supplier:
+        return AbgleichErgebnis()
+    return gleiche_kreditoren(supplier, iban or '')
+
+
 def finde_oder_erstelle_kreditor(supplier: str, supplier_normalized: str, iban: str) -> Kreditor | None:
+    """Sicheren Treffer liefern oder neu anlegen — OHNE Dubletten-Sperre.
+
+    Bleibt für Aufrufer erhalten, die keinen Prüffall erzeugen können
+    (z.B. die manuelle Erfassung, wo direkt am Bildschirm entschieden
+    wird). Der automatische Import nutzt stattdessen
+    ``gleiche_kreditor_ab`` und hält Verdachtsfälle an — sonst entstünden
+    weiter unbemerkt Doppelungen.
+
+    ``supplier_normalized`` wird nicht mehr ausgewertet:
+    ``name_normalisiert`` entsteht seit der Vereinheitlichung
+    ausschließlich in ``Kreditor.save()``.
+    """
+    ergebnis = gleiche_kreditor_ab(supplier, iban)
+    if ergebnis.sicher:
+        return ergebnis.kreditor
     if not supplier:
         return None
 
-    if iban:
-        k = Kreditor.objects.filter(iban=iban, aktiv=True).first()
-        if k:
-            return k
+    # Verdachtsfälle landen hier nur, wenn der Aufrufer sie bewusst nicht
+    # anhält: dann ist der beste aktive Kandidat immer noch besser als
+    # eine stille Neuanlage.
+    for kandidat in ergebnis.kandidaten:
+        if kandidat.kreditor.aktiv and kandidat.match_typ in ('iban', 'iban_zweitkonto', 'name_exakt'):
+            return kandidat.kreditor
 
-    if supplier_normalized:
-        k = Kreditor.objects.filter(name_normalisiert=supplier_normalized, aktiv=True).first()
-        if k:
-            return k
-
-    # Neu anlegen
-    kwargs = {
-        'name': supplier,
-        'name_normalisiert': supplier_normalized or '',
-    }
+    kwargs = {'name': supplier}
     if iban:
         kwargs['iban'] = iban
     return Kreditor.objects.create(**kwargs)
@@ -255,13 +277,23 @@ def verarbeite_datei(datei_pfad: str, archiv_root: Path) -> dict:
         duplikat_von = None
         notiz = 'Neue Rechnung verarbeitet'
 
-        # Kreditor
+        # Kreditor — Verdachtsfälle werden angehalten statt still angelegt.
         kundennummer = parsed.get('customer_number') or ''
-        kreditor = finde_oder_erstelle_kreditor(
-            parsed.get('supplier'),
-            parsed.get('supplier_normalized'),
-            parsed.get('iban'),
-        )
+        abgleich = gleiche_kreditor_ab(parsed.get('supplier'), parsed.get('iban'))
+        if abgleich.sicher:
+            kreditor = abgleich.kreditor
+        elif abgleich.verdacht:
+            # Kein Kreditor: die Rechnung bleibt ohne und damit nicht buchbar,
+            # bis jemand entschieden hat (Prüffall wird nach dem Anlegen der
+            # Rechnung erzeugt — er braucht deren ID).
+            kreditor = None
+        elif parsed.get('supplier'):
+            kwargs = {'name': parsed['supplier']}
+            if parsed.get('iban'):
+                kwargs['iban'] = parsed['iban']
+            kreditor = Kreditor.objects.create(**kwargs)
+        else:
+            kreditor = None
 
         # Objekt + Konto: erst Regel, dann Adress-Erkennung
         objekt, vorgeschlagenes_konto = _wende_kreditor_regel_an(kreditor, kundennummer)
@@ -276,6 +308,17 @@ def verarbeite_datei(datei_pfad: str, archiv_root: Path) -> dict:
             status = 'prueffall'
             duplikat_typ = 'ocr_unvollstaendig'
             notiz = f'OCR unvollständig: {", ".join(fehlende)}'
+        elif abgleich.verdacht:
+            # Vor der Duplikat-Erkennung: ein ungeklärter Kreditor macht
+            # jede weitere Zuordnung (Objekt, Konto, Buchung) wertlos.
+            status = 'prueffall'
+            duplikat_typ = 'kreditor_dublette'
+            bester = abgleich.kandidaten[0]
+            notiz = (
+                f'Kreditor-Dublettenverdacht ({abgleich.anlass}): '
+                f'ähnelt "{bester.kreditor.name}" '
+                f'[{bester.kreditor.kreditorennummer or "ohne Nummer"}]'
+            )
         else:
             # Stufe 1: Hash
             dup = _finde_duplikat_hash(sha256)
@@ -352,6 +395,15 @@ def verarbeite_datei(datei_pfad: str, archiv_root: Path) -> dict:
             ist_gutschrift=ist_gutschrift,
         )
 
+        # Dublettenprüfung anlegen — braucht die Rechnungs-ID, deshalb erst
+        # hier. Die Rechnung hat in diesem Fall bewusst keinen Kreditor.
+        if abgleich.verdacht:
+            from .kreditor_dubletten import lege_pruefung_an
+            lege_pruefung_an(
+                rechnung, abgleich,
+                parsed.get('supplier') or '', parsed.get('iban') or '',
+            )
+
         # Beleg-Dokument koppeln (v1_1 Phase A) — darf den Rechnungseingang nie
         # blockieren, daher eigener Savepoint (die äußere Transaktion bleibt
         # sonst nach einer Exception "kaputt" und der Log-Eintrag/Commit unten
@@ -411,11 +463,27 @@ def ocr_erneut_ausfuehren(rechnung: Rechnung) -> Rechnung:
     fehlende = [label for key, label in PFLICHTFELDER.items() if not parsed.get(key)]
 
     kundennummer = parsed.get('customer_number') or ''
-    kreditor = finde_oder_erstelle_kreditor(
-        parsed.get('supplier'),
-        parsed.get('supplier_normalized'),
-        parsed.get('iban'),
-    )
+    # Auch der Wiederholungslauf hält Verdachtsfälle an — sonst wäre er ein
+    # Schlupfloch, durch das genau die Doppelungen entstehen, die der
+    # Erstimport verhindert.
+    abgleich = gleiche_kreditor_ab(parsed.get('supplier'), parsed.get('iban'))
+    if abgleich.sicher:
+        kreditor = abgleich.kreditor
+    elif abgleich.verdacht:
+        kreditor = None
+        from .kreditor_dubletten import lege_pruefung_an
+        lege_pruefung_an(
+            rechnung, abgleich,
+            parsed.get('supplier') or '', parsed.get('iban') or '',
+        )
+    elif parsed.get('supplier'):
+        kwargs = {'name': parsed['supplier']}
+        if parsed.get('iban'):
+            kwargs['iban'] = parsed['iban']
+        kreditor = Kreditor.objects.create(**kwargs)
+    else:
+        kreditor = None
+
     objekt, vorgeschlagenes_konto = _wende_kreditor_regel_an(kreditor, kundennummer)
     if not objekt:
         objekt = finde_objekt_fuer_adresse(parsed.get('property_address') or '')
@@ -441,6 +509,18 @@ def ocr_erneut_ausfuehren(rechnung: Rechnung) -> Rechnung:
 
     if fehlende:
         rechnung.verarbeitungsnotiz = f'OCR wiederholt – noch unvollständig: {", ".join(fehlende)}'
+        rechnung.save()
+    elif abgleich.verdacht:
+        # Nicht in die Erkennungs-Pipeline schicken: ohne geklärten
+        # Kreditor greifen weder Kreditor-Regel noch Kontovorschlag.
+        rechnung.status = 'prueffall'
+        rechnung.duplikat_typ = 'kreditor_dublette'
+        bester = abgleich.kandidaten[0]
+        rechnung.verarbeitungsnotiz = (
+            f'Kreditor-Dublettenverdacht ({abgleich.anlass}): '
+            f'ähnelt "{bester.kreditor.name}" '
+            f'[{bester.kreditor.kreditorennummer or "ohne Nummer"}]'
+        )
         rechnung.save()
     else:
         rechnung.status      = 'importiert'

@@ -4,6 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { rechnungenApi } from '../../api/rechnungen'
 import { objekteApi } from '../../api/objekte'
 import { buchhaltungApi } from '../../api/buchhaltung'
+import { wkzApi } from '../../api/wkz'
 import type { AmpelErgebnis, Einheit, Kreditor, Konto, ObjektList, Rechnung } from '../../types'
 import { Ampelpunkt } from './Ampel'
 
@@ -73,6 +74,7 @@ export default function RechnungErfassen() {
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const pdfUrlRef = useRef<string | null>(null)
   const [aufteilen, setAufteilen] = useState(false)
+  const [wkzAnzahl, setWkzAnzahl] = useState(0)
   const [splits, setSplits] = useState<SplitRow[]>([
     { aufwandskonto: '', betrag: '' }, { aufwandskonto: '', betrag: '' },
   ])
@@ -133,6 +135,12 @@ export default function RechnungErfassen() {
 
   // Blob-URL beim Verlassen freigeben
   useEffect(() => () => { if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current) }, [])
+
+  // Bereits mit dieser Rechnung verknüpfte WKZ-Vorlagen (für den Button-Hinweis)
+  useEffect(() => {
+    if (!id) { setWkzAnzahl(0); return }
+    wkzApi.vorlagenJeRechnung(id).then(vs => setWkzAnzahl(vs.length)).catch(() => {})
+  }, [id])
 
   // Objektabhängige Listen (Einheiten für Kostenverursacher, Aufwandskonten)
   useEffect(() => {
@@ -204,19 +212,47 @@ export default function RechnungErfassen() {
     } finally { setBusy(false) }
   }
 
+  const payloadBauen = (modus: 'entwurf' | 'zur_freigabe') => {
+    const payload: Record<string, unknown> = { ...form, modus }
+    if (id) payload.id = id
+    if (aufteilen) {
+      payload.splits = splits
+        .filter(s => s.aufwandskonto && s.betrag)
+        .map(s => ({ aufwandskonto: s.aufwandskonto, betrag: s.betrag.replace(',', '.') }))
+    } else {
+      payload.splits = []   // ohne Aufteilung: evtl. vorhandene Splits entfernen
+    }
+    return payload as Record<string, unknown> & { modus: typeof modus }
+  }
+
+  /** „WKZ aus dieser Rechnung anlegen": erst den aktuellen Stand als Entwurf
+   *  sichern (sonst gehen Korrekturen im Formular verloren), dann in den
+   *  WKZ-Wizard mit vorbelegten Werten. Die Vorlage wird dort zur Freigabe
+   *  eingereicht und erscheint unter „Rechnungsfreigabe"; die Rechnung selbst
+   *  verlässt den normalen Zahlweg. */
+  const wkzAnlegen = async () => {
+    if (!id) return
+    setBusy(true); setFehler(null)
+    try {
+      await rechnungenApi.erfassen(payloadBauen('entwurf'))
+      const params = new URLSearchParams()
+      params.set('rechnung_id', id)
+      if (form.kreditor_id)     params.set('kreditor_id', form.kreditor_id)
+      if (form.objekt_id)       params.set('objekt_id', form.objekt_id)
+      if (form.betrag_brutto)   params.set('betrag', form.betrag_brutto.replace(',', '.'))
+      if (form.rechnungsnummer) params.set('bezeichnung', form.rechnungsnummer)
+      navigate(`/buchhaltung/wkz-vorlagen/neu?${params.toString()}`)
+    } catch (e) {
+      const data = (e as { response?: { data?: { error?: unknown } } }).response?.data?.error
+      setFehler(typeof data === 'string' ? data
+        : 'Rechnung konnte vor dem Anlegen der WKZ nicht gespeichert werden — bitte Pflichtfelder prüfen.')
+    } finally { setBusy(false) }
+  }
+
   const speichern = async (modus: 'entwurf' | 'zur_freigabe') => {
     setBusy(true); setFehler(null)
     try {
-      const payload: Record<string, unknown> = { ...form, modus }
-      if (id) payload.id = id
-      if (aufteilen) {
-        payload.splits = splits
-          .filter(s => s.aufwandskonto && s.betrag)
-          .map(s => ({ aufwandskonto: s.aufwandskonto, betrag: s.betrag.replace(',', '.') }))
-      } else {
-        payload.splits = []   // ohne Aufteilung: evtl. vorhandene Splits entfernen
-      }
-      const r = await rechnungenApi.erfassen(payload as Record<string, unknown> & { modus: typeof modus })
+      const r = await rechnungenApi.erfassen(payloadBauen(modus))
       setRechnung(r)
       if (r.erkennung_ampel) {
         setAmpel({
@@ -456,6 +492,33 @@ export default function RechnungErfassen() {
           Geprüft → zur Freigabe
         </button>
       </div>
+
+      {/* Wiederkehrende Zahlung (WKZ) aus diesem Beleg — nur bei bestehender Rechnung */}
+      {id && (
+        <div className="mt-5 border rounded-lg px-4 py-3 bg-gray-50">
+          <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+            Wiederkehrende Zahlung
+          </div>
+          {wkzAnzahl > 0 && (
+            <p className="text-xs text-gray-500 mb-2">
+              Bereits {wkzAnzahl} WKZ-Vorlage{wkzAnzahl > 1 ? 'n' : ''} mit dieser Rechnung verknüpft.
+            </p>
+          )}
+          <button onClick={wkzAnlegen} disabled={busy}
+                  className="px-3 py-2 text-sm rounded bg-white border hover:bg-gray-100 disabled:opacity-50">
+            {wkzAnzahl === 0
+              ? '↻ WKZ aus dieser Rechnung anlegen'
+              : '↻ Zusätzlich WKZ aus dieser Rechnung anlegen'}
+          </button>
+          <p className="text-xs text-gray-500 mt-2">
+            Bescheid oder Vertrag als wiederkehrende Zahlung führen: der aktuelle Stand wird als
+            Entwurf gesichert, danach öffnet der WKZ-Wizard mit Kreditor, Objekt und Betrag aus
+            dieser Rechnung. Die Rechnung bleibt im Rechnungseingang, bis du die Erfassung mit
+            „Geprüft → zur Freigabe" abschließt — erst dann verlässt sie den normalen Zahlweg.
+            Freigegeben wird dann die WKZ-Vorlage unter „Rechnungsfreigabe".
+          </p>
+        </div>
+      )}
     </div>{/* Ende Formular-Bereich */}
 
     {/* PDF-Vorschau parallel */}

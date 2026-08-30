@@ -102,9 +102,16 @@ def erstelle_vorlage(data: dict, splits_data: list[dict], user) -> 'Wiederkehren
     for split in vorlage.splits.all():
         validiere_split_kontonummer(split.kontonummer, vorlage.objekt)
 
-    # Aus Beleg angelegt: Rechnung gleich aus dem Zahlweg nehmen (kein Doppel).
+    # Aus Beleg angelegt: der Belegbezug wird nur gespeichert. Die Rechnung
+    # bleibt im Rechnungseingang, bis die Buchhaltung die Erfassung abschließt
+    # ('Geprüft → zur Freigabe'); erst dann verlässt sie den normalen Zahlweg
+    # (siehe route_zur_freigabe → uebergib_rechnung_an_wkz).
     if vorlage.rechnung_id:
-        _rechnung_als_wkz_beleg_markieren(vorlage.rechnung)
+        logger.info(
+            "WKZ Vorlage %s aus Rechnung %s angelegt — Rechnung bleibt bis zum "
+            "Abschluss der Erfassung im Rechnungseingang",
+            vorlage.id, vorlage.rechnung_id,
+        )
 
     logger.info("WKZ Vorlage %s angelegt von %s", vorlage.id, user)
     return vorlage
@@ -133,6 +140,20 @@ def _rechnung_als_wkz_beleg_markieren(rechnung):
     if phase1 is not None and phase1.status == 'entwurf':
         Buchung.objects.filter(parent_buchung=phase1).delete()
         phase1.delete()
+
+
+@transaction.atomic
+def uebergib_rechnung_an_wkz(rechnung, user=None):
+    """Abschluss der Erfassung einer Rechnung, zu der eine WKZ-Vorlage besteht:
+    die Zahlung läuft über die WKZ (mit eigener Freigabe), die Rechnung verlässt
+    den normalen Zahlweg (status='wkz_beleg'). Wird aus route_zur_freigabe
+    aufgerufen — nicht schon beim Anlegen der Vorlage."""
+    _rechnung_als_wkz_beleg_markieren(rechnung)
+    logger.info(
+        "Rechnung %s nach Abschluss der Erfassung an die WKZ übergeben (durch %s)",
+        rechnung.id, user,
+    )
+    return rechnung
 
 
 @transaction.atomic
