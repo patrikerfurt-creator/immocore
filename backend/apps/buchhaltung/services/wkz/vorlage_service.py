@@ -18,8 +18,9 @@ logger = logging.getLogger(__name__)
 
 def validiere_split_kontonummer(kontonummer: str, objekt) -> None:
     """
-    Prüft, dass die Kontonummer im Objekt existiert, im Aufwandsbereich liegt
-    und ein aktives Standard- oder Unterkonto ist (keine Summierungskonten).
+    Prüft, dass die Kontonummer im Objekt existiert, im Aufwandsbereich
+    (50000–55999) liegt und ein aktives Standard- oder Unterkonto ist
+    (keine Summierungskonten).
     """
     from apps.konten.models import Konto
     konto = Konto.objects.filter(
@@ -32,11 +33,13 @@ def validiere_split_kontonummer(kontonummer: str, objekt) -> None:
         raise ValidationError(
             f"Konto {kontonummer} im Objekt nicht gefunden, inaktiv oder ein Summierungskonto."
         )
-    if konto.direktes_buchen:
-        raise ValidationError(
-            f"Konto {kontonummer} ist direkt buchbar (direktes_buchen=True) — "
-            f"nicht als WKZ-Split zulässig."
-        )
+    # Hinweis: direktes_buchen wird hier bewusst NICHT geprueft. Das Flag steuert,
+    # ob im E-Banking/Dialog direkt auf ein Konto gebucht werden darf (siehe
+    # ebanking_buchungs_service.verbuche) — es sagt nichts darueber aus, ob ein
+    # Konto ein Aufwandskonto ist. Bank-, Verrechnungs- und Kassenkonten schliesst
+    # bereits die Bereichspruefung 50000-55999 weiter unten aus. Eine zusaetzliche
+    # direktes_buchen-Sperre traf nur ARGE-Unterkonten (50300-50360), die als
+    # Aufwands-Split legitim sind.
     try:
         nr = int(kontonummer)
     except ValueError:

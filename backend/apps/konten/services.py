@@ -20,6 +20,77 @@ MUSTER_ABRECHNUNGSARTEN = [
 _ROMAN = [(1000,'M'),(900,'CM'),(500,'D'),(400,'CD'),(100,'C'),(90,'XC'),
           (50,'L'),(40,'XL'),(10,'X'),(9,'IX'),(5,'V'),(4,'IV'),(1,'I')]
 
+def ordne_zahlungen_teilbuchungen_zu(teilbuchungen, zahlungen) -> dict:
+    """
+    Ordnet jeder Teilbuchung die `SollstellungZahlung` zu, die sie ausgelöst hat.
+
+    Hintergrund: `SollstellungZahlung` verweist auf die Kopfbuchung, nicht auf
+    die einzelnen Teilbuchungen. Für die Anzeige „welcher offene Posten wird
+    hier getilgt" muss deshalb gepaart werden — über Abrechnungsart und Betrag.
+    Der Fall, der das nötig macht: zwei Teilbuchungen auf dasselbe Erlöskonto,
+    eine für den laufenden Monat, eine als Nachtilgung eines Vormonats. Ohne
+    Zuordnung sind die beiden Zeilen in der Oberfläche nicht unterscheidbar.
+
+    Jede Zahlung wird höchstens einmal vergeben. Zuerst wird auf
+    Abrechnungsart + Betrag gepaart, danach ersatzweise nur auf den Betrag.
+
+    Gibt `{teilbuchung.id: zahlung}` zurück; nicht zuordenbare Teilbuchungen
+    fehlen im Ergebnis.
+    """
+    ergebnis = {}
+    offen = list(zahlungen)
+
+    def _nimm(pruefe):
+        for z in offen:
+            if pruefe(z):
+                offen.remove(z)
+                return z
+        return None
+
+    for stufe in ('ba_und_betrag', 'nur_betrag'):
+        for teil in teilbuchungen:
+            if teil.id in ergebnis:
+                continue
+            if stufe == 'ba_und_betrag':
+                treffer = _nimm(lambda z: (
+                    getattr(z, 'split_id', None)
+                    and z.split.ba_id == teil.buchungsart_id
+                    and z.betrag == teil.betrag
+                ))
+            else:
+                treffer = _nimm(lambda z: z.betrag == teil.betrag)
+            if treffer is not None:
+                ergebnis[teil.id] = treffer
+    return ergebnis
+
+
+def konto_im_jahr(konto, jahr: int):
+    """
+    Löst ein jahresgebundenes Konto in das gleichnamige Konto eines anderen
+    Wirtschaftsjahres desselben Objekts auf.
+
+    Hintergrund: Mehrere Modelle speichern ein Konto als Fremdschlüssel und
+    damit immer auf EIN Wirtschaftsjahr — z.B. `Rechnung.aufwandskonto`,
+    `BankMatchRegel.gegenkonto`. Wird so ein Verweis später zum Buchen benutzt,
+    muss er in das Jahr des Buchungsdatums aufgelöst werden. Sonst landen
+    Buchungen in dem Jahr, in dem der Verweis angelegt wurde — die Kontoblätter
+    des Buchungsjahres bleiben unvollständig, und die Jahresabrechnung ist
+    entsprechend falsch.
+
+    Gibt das Original zurück, wenn es bereits im Zieljahr liegt oder dort kein
+    Konto gleicher Nummer existiert (dann ist ein Verweis besser als keiner).
+    """
+    if konto is None or not jahr or not konto.wirtschaftsjahr_id:
+        return konto
+    if konto.wirtschaftsjahr.jahr == jahr:
+        return konto
+    return Konto.objects.filter(
+        kontonummer=konto.kontonummer,
+        wirtschaftsjahr__jahr=jahr,
+        wirtschaftsjahr__objekt_id=konto.wirtschaftsjahr.objekt_id,
+    ).first() or konto
+
+
 def _roman(n: int) -> str:
     result = ''
     for v, s in _ROMAN:

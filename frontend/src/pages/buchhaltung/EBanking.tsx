@@ -94,7 +94,10 @@ function DetailSlideOver({
     enabled: !!objektId && kannBearbeiten && buchungsTyp === 'kreditor',
   })
 
-  const buchbareKonten = (konten ?? []).filter((k: Konto) => k.kontoart === 'standard' && k.aktiv)
+  // Buchbar ist alles ausser Summierungskonten (50299 etc.) — deckt sich mit der
+  // Backend-Regel in ebanking_buchungs_service.verbuche(). ARGE-Unterkonten wie
+  // 50320 Gas/Oel/Waerme gehoeren dazu.
+  const buchbareKonten = (konten ?? []).filter((k: Konto) => k.kontoart !== 'summierung' && k.aktiv)
   const alleKonten     = (konten ?? []).filter((k: Konto) => k.aktiv)
 
   function invalidate() {

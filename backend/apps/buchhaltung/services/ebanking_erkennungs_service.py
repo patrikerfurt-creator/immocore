@@ -131,6 +131,72 @@ def _finde_kreditorkonto(kreditor_rechnungen, objekt, buchungsdatum=None):
     return qs.order_by('-wirtschaftsjahr__jahr').first()
 
 
+def _ist_zahllauf_ausgleich(op) -> bool:
+    """
+    True, wenn die Verbindlichkeit dieses OP bereits über einen Zahllauf gegen
+    13600 ausgeglichen wurde (rechnung_zahlung_service Phase 2:
+    Soll 70xxx / Haben 13600).
+
+    Der spätere Bankabgang gehört dann gegen 13600 (Phase 3: Soll 13600 /
+    Haben Bank) — ein erneuter Vorschlag auf das Kreditorkonto würde den
+    Kreditor ein zweites Mal belasten.
+    """
+    if op is None or op.status != 'bezahlt' or not op.zahlung_buchung_id:
+        return False
+    zb = op.zahlung_buchung
+    return any(k is not None and k.kontonummer == '13600'
+               for k in (zb.soll_konto, zb.haben_konto))
+
+
+def _finde_zahllauf_clearing(ku, kreditor):
+    """
+    Liefert (Konto 13600, OP), wenn der Bankabgang zu einem bereits per Zahllauf
+    ausgeglichenen KreditorOP dieses Kreditors passt — sonst (None, None).
+
+    Ein noch offener OP mit gleichem Betrag hat Vorrang: dort ist die
+    kreditorische Buchung korrekt und der OP soll ausgeglichen werden.
+    """
+    from apps.buchhaltung.models import KreditorOP
+    if not kreditor or not ku.objekt or (ku.betrag or 0) >= 0:
+        return None, None
+    abs_betrag = abs(ku.betrag)
+    basis = KreditorOP.objects.filter(objekt=ku.objekt, kreditor=kreditor)
+    for op in basis.filter(status__in=('offen', 'teilbezahlt')):
+        if abs(op.betrag_offen - abs_betrag) <= Decimal('0.01'):
+            return None, None
+    for op in basis.filter(status='bezahlt').select_related(
+            'zahlung_buchung__soll_konto', 'zahlung_buchung__haben_konto'):
+        if abs(op.betrag_ursprung - abs_betrag) <= Decimal('0.01') and _ist_zahllauf_ausgleich(op):
+            return _ermittle_konto(ku.objekt, '13600', ku.buchungsdatum), op
+    return None, None
+
+
+def _setze_zahllauf_clearing(ku, log, konto_13600, op, stufe):
+    """Gemeinsamer Ergebnis-Setter für den 13600-Fall (Stufe 1c und 3)."""
+    ku.status                 = 'erkannt'
+    ku.erkannt_gegenkonto     = konto_13600
+    ku.erkennungs_quelle      = 'zahllauf_clearing'
+    ku.erkennungs_konfidenz   = Decimal('0.95')
+    ku.erkennungs_begruendung = (
+        f"OP {op.op_nummer} ({op.kreditor.name}) wurde bereits über den Zahllauf "
+        f"ausgeglichen — Buchung Soll {op.kreditor.kreditorennummer} / Haben 13600. "
+        f"Der Bankabgang gehört deshalb gegen das Zahlungsausgang-Clearing 13600, "
+        f"nicht erneut gegen das Kreditorkonto."
+    )
+    log.stufe_erreicht       = stufe
+    log.quelle               = 'zahllauf_clearing'
+    log.konfidenz            = Decimal('0.95')
+    log.gegenkonto_vorschlag = konto_13600
+    log.details_json         = {
+        'op_nummer': op.op_nummer,
+        'op_id': str(op.id),
+        'op_status': op.status,
+        'kreditor_name': op.kreditor.name,
+        'kreditorkonto_uebersprungen': op.kreditor.kreditorennummer,
+        'zahlung_buchung_id': str(op.zahlung_buchung_id),
+    }
+
+
 def _get_system_user():
     """Gibt den ersten Superuser oder Admin-User zurück."""
     from django.contrib.auth import get_user_model
@@ -248,19 +314,20 @@ def versuche_kreditor_op_match(ku):
     return kandidaten[0] if len(kandidaten) == 1 else None
 
 
-def versuche_iban_ev_tilgung(ku):
+def finde_ev_per_iban(ku):
     """
-    Stufe 1b: IBAN-Match auf EigentumsVerhältnis + Betrag = Soll.
-    Gibt die erzeugte Buchung zurück oder None.
+    EigentumsVerhältnis zur Auftraggeber-IBAN eines Eingangs — ohne
+    Betragsprüfung.
+
+    Basis für Stufe 1b (Auto-Tilgung bei Betrag == Soll) und Stufe 2b
+    (Vorschlag bei abweichendem Betrag, z.B. Teilzahlung oder runder
+    Dauerauftrag). Eine Person kann mehrere IBANs haben — auch die eines
+    zahlenden Angehörigen.
     """
     from apps.personen.models import Person, EigentumsVerhaeltnis
-    from apps.buchhaltung.services.zahlungs_zuordnung_service import verrechne_eingang_manuell
-
-    if ku.betrag <= 0:
-        return None
 
     iban = (ku.auftraggeber_iban or '').strip().replace(' ', '')
-    if not iban:
+    if not iban or not ku.objekt:
         return None
 
     person = None
@@ -273,12 +340,36 @@ def versuche_iban_ev_tilgung(ku):
     if not person:
         return None
 
-    ev = EigentumsVerhaeltnis.objects.filter(
+    return EigentumsVerhaeltnis.objects.filter(
         person=person,
         einheit__objekt=ku.objekt,
         ende__isnull=True,
     ).select_related('personenkonto').first()
 
+
+def hausgeld_soll_zum_stichtag(ev, stichtag):
+    """
+    Hausgeld-Soll eines EigentumsVerhältnisses zu einem bestimmten Stichtag.
+
+    Bewusst nicht ev.hausgeld_soll: die Property nimmt date.today(). Für die
+    Zuordnung eines Kontoumsatzes zählt der Satz, der am Buchungsdatum galt —
+    sonst schlägt der Abgleich fehl, sobald ein neuer Wirtschaftsplan greift.
+    """
+    betraege = ev.hausgeld_alle_aktuell(stichtag=stichtag)
+    return sum(betraege.values(), Decimal('0')) if betraege else None
+
+
+def versuche_iban_ev_tilgung(ku):
+    """
+    Stufe 1b: IBAN-Match auf EigentumsVerhältnis + Betrag = Soll.
+    Gibt die erzeugte Buchung zurück oder None.
+    """
+    from apps.buchhaltung.services.zahlungs_zuordnung_service import verrechne_eingang_manuell
+
+    if ku.betrag <= 0:
+        return None
+
+    ev = finde_ev_per_iban(ku)
     if not ev:
         return None
 
@@ -287,8 +378,12 @@ def versuche_iban_ev_tilgung(ku):
     except Exception:
         return None
 
-    # Betrag-Plausibilitätsprüfung: muss mit Soll übereinstimmen
-    hausgeld_soll = ev.hausgeld_soll
+    # Betrag-Plausibilitätsprüfung gegen das Soll, das zum BUCHUNGSDATUM galt.
+    # ev.hausgeld_soll nimmt date.today() als Stichtag — damit schlüge der
+    # Abgleich für jeden Umsatz aus einem früheren Wirtschaftsjahr fehl, sobald
+    # ein neuer Wirtschaftsplan greift (z.B. Umsatz 04/2025 gegen den ab
+    # 01/2026 gültigen Satz).
+    hausgeld_soll = hausgeld_soll_zum_stichtag(ev, ku.buchungsdatum)
     if hausgeld_soll is not None:
         if abs(ku.betrag - Decimal(str(hausgeld_soll))) > Decimal('0.01'):
             return None
@@ -527,6 +622,15 @@ def fuehre_erkennung_aus(ku):
             op = None
 
         if op:
+            # Bereits per Zahllauf ausgeglichen? Dann gehört der Bankabgang
+            # gegen 13600 — die kreditorische Buchung ist schon erfolgt.
+            konto_13600 = (_ermittle_konto(ku.objekt, '13600', ku.buchungsdatum)
+                           if ku.objekt and _ist_zahllauf_ausgleich(op) else None)
+            if konto_13600:
+                _setze_zahllauf_clearing(ku, log, konto_13600, op, '1c')
+                _save_all(ku, log)
+                return ku
+
             # Kreditor-Person per IBAN suchen (erkannt_kreditor FK → Person)
             person_kreditor = None
             if op.kreditor.iban:
@@ -579,8 +683,14 @@ def fuehre_erkennung_aus(ku):
         ).first()
 
         if regel:
+            # BankMatchRegel.gegenkonto zeigt auf ein Konto EINES Wirtschafts-
+            # jahres. Ohne Auflösung bucht eine gelernte Regel nach dem Jahres-
+            # wechsel weiter in das Jahr, in dem sie angelegt wurde.
+            from apps.konten.services import konto_im_jahr
+            regel_gegenkonto = konto_im_jahr(regel.gegenkonto, ku.buchungsdatum.year)
+
             ku.status                       = 'erkannt'
-            ku.erkannt_gegenkonto           = regel.gegenkonto
+            ku.erkannt_gegenkonto           = regel_gegenkonto
             ku.erkannt_kreditor             = regel.kreditor
             ku.erkannt_eigentumsverhaeltnis = regel.eigentumsverhaeltnis
             ku.erkennungs_quelle            = 'bank_match_regel'
@@ -596,7 +706,7 @@ def fuehre_erkennung_aus(ku):
             log.stufe_erreicht        = '2'
             log.quelle                = 'bank_match_regel'
             log.konfidenz             = Decimal('1.00')
-            log.gegenkonto_vorschlag  = regel.gegenkonto
+            log.gegenkonto_vorschlag  = regel_gegenkonto
             log.regel_treffer         = regel
 
             # Auto-Booking
@@ -608,6 +718,48 @@ def fuehre_erkennung_aus(ku):
                 except Exception as exc:
                     logger.error("E-Banking Auto-Booking Fehler: %s", exc)
 
+            _save_all(ku, log)
+            return ku
+
+    # ---- Stufe 2b: Eigentümer per IBAN erkannt, Betrag weicht vom Soll ab ----
+    # Stufe 1b verlangt Betrag == hausgeld_soll und verbucht dann automatisch.
+    # Zahlt ein Eigentümer abweichend (Teilzahlung, runder Dauerauftrag), lief
+    # der Umsatz bisher bis zur KI durch und kam ohne Personenbezug heraus.
+    # Hier wird er wenigstens der Person zugeordnet — bewusst nur als
+    # Vorschlag, nie automatisch gebucht, weil die Aufteilung auf Perioden und
+    # Erlöskonten offen ist. Muss VOR Stufe 3 stehen: ein Eigentümer kann
+    # zugleich Kreditor sein und würde dort sonst als solcher erkannt.
+    if ku.betrag > 0 and ku.auftraggeber_iban:
+        try:
+            ev_abweichend = finde_ev_per_iban(ku)
+        except Exception as exc:
+            logger.warning("E-Banking Stufe 2b Fehler: %s", exc)
+            ev_abweichend = None
+
+        if ev_abweichend:
+            from apps.buchhaltung.models import HausgeldSollstellung
+            offen = (HausgeldSollstellung.objects
+                     .filter(eigentumsverhaeltnis=ev_abweichend,
+                             status_cached__in=('offen', 'teilbezahlt'))
+                     .order_by('periode').first())
+            offen_txt = (
+                f" Älteste unbeglichene Sollstellung: {offen.periode} über "
+                f"{offen.soll_betrag} € ({offen.status_cached})."
+                if offen else " Derzeit keine offene Sollstellung."
+            )
+            ku.status                       = 'vorschlag'
+            ku.erkannt_eigentumsverhaeltnis = ev_abweichend
+            ku.erkennungs_quelle            = 'iban_ev_abweichend'
+            ku.erkennungs_konfidenz         = Decimal('0.70')
+            ku.erkennungs_begruendung = (
+                f"IBAN gehört zu {ev_abweichend.person} "
+                f"(Personenkonto {ev_abweichend.personenkonto}). Der Betrag "
+                f"{ku.betrag} € weicht vom Soll ab — keine automatische Tilgung."
+                + offen_txt + " Bitte Zuordnung und Aufteilung prüfen."
+            )
+            log.stufe_erreicht = '2b'
+            log.quelle         = 'iban_ev_abweichend'
+            log.konfidenz      = Decimal('0.70')
             _save_all(ku, log)
             return ku
 
@@ -633,6 +785,14 @@ def fuehre_erkennung_aus(ku):
         ).first()
 
         if person_kreditor or kred_obj:
+            # Bankabgang zu einer bereits per Zahllauf beglichenen Rechnung?
+            # Dann 13600 statt Kreditorkonto (sonst Doppelbelastung).
+            konto_13600, zl_op = _finde_zahllauf_clearing(ku, kred_obj)
+            if konto_13600:
+                _setze_zahllauf_clearing(ku, log, konto_13600, zl_op, '3')
+                _save_all(ku, log)
+                return ku
+
             kreditorkonto = _finde_kreditorkonto(kred_obj, ku.objekt, ku.buchungsdatum)
 
             if person_kreditor:

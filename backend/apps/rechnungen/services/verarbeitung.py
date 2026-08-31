@@ -441,6 +441,21 @@ def verarbeite_datei(datei_pfad: str, archiv_root: Path) -> dict:
         except Exception as exc:
             logger.warning('Erkennungs-Pipeline Fehler bei %s: %s', dateiname, exc)
 
+        # Erkennungs-Ampel direkt mitberechnen. Sie wird sonst erst beim
+        # Speichern über die API gesetzt — importierte Rechnungen erscheinen
+        # in der Oberfläche bis dahin als „Noch nicht bewertet", obwohl alle
+        # Felder erkannt sind.
+        try:
+            from apps.rechnungen.services.erkennung_ampel_service import (
+                berechne_und_speichere_ampel,
+            )
+            berechne_und_speichere_ampel(rechnung)
+            rechnung.save(update_fields=[
+                'erkennung_ampel', 'erkennung_gesamt_konfidenz', 'erkennung_details',
+            ])
+        except Exception as exc:
+            logger.warning('Ampel-Berechnung fehlgeschlagen bei %s: %s', dateiname, exc)
+
     return {
         'status': status,
         'dateiname': dateiname,

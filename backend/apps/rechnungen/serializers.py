@@ -76,6 +76,8 @@ class RechnungSerializer(serializers.ModelSerializer):
     freigaben              = FreigabeSerializer(many=True, read_only=True)
     duplikat_von_dateiname = serializers.CharField(source='duplikat_von.dateiname', read_only=True)
     zugewiesen_an_name     = serializers.CharField(source='zugewiesen_an.get_full_name', read_only=True)
+    # Klartext statt technischem duplikat_typ — siehe pruefgrund_text()
+    pruefgrund             = serializers.SerializerMethodField()
     aufwandskonto_id       = serializers.UUIDField(source='aufwandskonto.id', read_only=True)
     aufwandskonto_label    = serializers.SerializerMethodField()
     darf_direkt_freigeben  = serializers.SerializerMethodField()
@@ -106,6 +108,13 @@ class RechnungSerializer(serializers.ModelSerializer):
             return f"{obj.aufwandskonto.kontonummer} — {obj.aufwandskonto.kontoname}"
         return None
 
+    def get_vorgeschlagenes_konto_label(self, obj):
+        k = obj.vorgeschlagenes_konto
+        return f"{k.kontonummer} — {k.kontoname}" if k else None
+
+    def get_pruefgrund(self, obj):
+        return pruefgrund_text(obj)
+
     def get_darf_direkt_freigeben(self, obj):
         request = self.context.get('request')
         if not request:
@@ -118,6 +127,52 @@ class RechnungSerializer(serializers.ModelSerializer):
             return obj.kreditor_op.op_nummer
         except Exception:
             return None
+
+
+def pruefgrund_text(rechnung) -> str:
+    """
+    Erklärt in einem Satz, warum eine Rechnung als Prüffall oder Duplikat
+    zurückgehalten wurde.
+
+    Der technische Code in `duplikat_typ` (z.B. 'ocr_unvollstaendig') sagt einem
+    Bearbeiter nichts, und die erklärende `verarbeitungsnotiz` war bisher nur in
+    der Listenansicht sichtbar — beim Bearbeiten fehlte sie. Gibt '' zurück,
+    wenn die Rechnung unauffällig ist.
+    """
+    if rechnung.status not in ('prueffall', 'duplikat') and not rechnung.duplikat_typ:
+        return ''
+
+    referenz = rechnung.duplikat_von.dateiname if rechnung.duplikat_von_id else ''
+    quelle = f' Bereits erfasst als „{referenz}".' if referenz else ''
+    notiz = (rechnung.verarbeitungsnotiz or '').strip()
+
+    if rechnung.duplikat_typ == 'ocr_unvollstaendig':
+        # Die Notiz nennt die konkreten Felder ("OCR unvollständig: A, B")
+        felder = notiz.split(':', 1)[1].strip() if ':' in notiz else ''
+        if felder:
+            return (f'Die automatische Texterkennung konnte diese Pflichtfelder nicht '
+                    f'lesen: {felder}. Bitte am Beleg prüfen und ergänzen.')
+        return ('Die automatische Texterkennung konnte nicht alle Pflichtfelder lesen. '
+                'Bitte die fehlenden Angaben am Beleg prüfen und ergänzen.')
+
+    texte = {
+        'unscharf': ('Möglicherweise eine Doppelerfassung: Betrag, Lieferant und Datum '
+                     'stimmen mit einer bereits erfassten Rechnung überein. '
+                     'Bitte vergleichen und entscheiden.'),
+        'hash': 'Exaktes Duplikat — dieselbe Datei wurde bereits erfasst.',
+        'rechnungsnummer': 'Diese Rechnungsnummer ist für den Kreditor bereits erfasst.',
+        'iban_betrag_datum': ('IBAN, Betrag und Datum stimmen mit einer bereits '
+                              'erfassten Rechnung überein.'),
+    }
+    text = texte.get(rechnung.duplikat_typ)
+    if text:
+        return text + quelle
+
+    # Unbekannter oder fehlender Typ: auf die Notiz zurückfallen
+    basis = ('Diese Rechnung wurde zur Prüfung zurückgehalten.'
+             if rechnung.status == 'prueffall' else
+             'Diese Rechnung wurde als Duplikat eingestuft.')
+    return f'{basis} {notiz}'.strip() + quelle
 
 
 class RechnungListSerializer(serializers.ModelSerializer):
@@ -137,10 +192,15 @@ class RechnungListSerializer(serializers.ModelSerializer):
     op_nummer = serializers.SerializerMethodField()
     erfasst_von_name = serializers.CharField(source='erfasst_von.get_full_name', read_only=True)
     kostenverursacher_id = serializers.UUIDField(source='kostenverursacher.id', read_only=True)
+    pruefgrund = serializers.SerializerMethodField()
+
+    def get_pruefgrund(self, obj):
+        return pruefgrund_text(obj)
 
     class Meta:
         model = Rechnung
         fields = [
+            'pruefgrund',
             'id', 'dateiname', 'rechnungsnummer', 'kreditor_name',
             'lieferant_name', 'betrag_brutto', 'waehrung',
             'rechnungsdatum', 'faelligkeitsdatum', 'status',

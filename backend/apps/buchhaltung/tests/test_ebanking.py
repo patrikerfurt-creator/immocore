@@ -19,15 +19,20 @@ from django.test import TestCase
 
 from apps.objekte.models import Objekt, Bankkonto, Wirtschaftsjahr
 from apps.konten.models import Konto
-from apps.personen.models import Person
+from apps.personen.models import Person, EigentumsVerhaeltnis, HausgeldHistorie
+from apps.objekte.models import Einheit
+from apps.konten.models import Personenkonto, Abrechnungsart
 from apps.buchhaltung.models import (
     Kontoumsatz, BankMatchRegel, BankErkennungsLog, CamtImportLog,
+    KreditorOP, Buchung,
 )
+from apps.rechnungen.models import Kreditor as KreditorModel, Rechnung
 from apps.buchhaltung.services.ebanking_erkennungs_service import (
     normalisiere_verwendungszweck,
     verwendungszweck_hash,
     regel_anlegen_oder_aktualisieren,
     fuehre_erkennung_aus,
+    hausgeld_soll_zum_stichtag,
 )
 from apps.buchhaltung.services.ebanking_buchungs_service import verbuche, storniere
 from apps.buchhaltung.services.camt054_service import erkenne_camt_typ, verarbeite_camt054
@@ -395,6 +400,362 @@ class PfadFuenfKreditorMatchTest(TestCase):
         fuehre_erkennung_aus(ku)
         ku.refresh_from_db()
         self.assertIsNone(ku.buchung)
+
+
+# ---------------------------------------------------------------------------
+# Aufwandsnachtrag aus 15900 beim OP-Ausgleich über die Bankseite
+# ---------------------------------------------------------------------------
+
+class AufwandNachtragTest(TestCase):
+    """
+    Wird eine Kreditorrechnung über einen Bankumsatz direkt gegen das
+    Kreditorkonto ausgeglichen, schloss _versuche_op_ausgleich() bisher nur den
+    OP und setzte die Rechnung auf 'bezahlt' — der Betrag blieb auf 15900 und
+    das kontierte Aufwandskonto leer.
+    """
+
+    def setUp(self):
+        (self.objekt, self.wj, self.bank_konto, self.aufwand_konto,
+         self.erloes_konto, self.summierung_konto, self.bankkonto) = _setup_objekt_und_konten()
+        self.user = _make_user()
+        self.konto_15900 = Konto.objects.create(
+            wirtschaftsjahr=self.wj, kontonummer='15900', kontoname='Schwebende ER',
+            kontoart='standard', direktes_buchen=False,
+        )
+        self.konto_70020 = Konto.objects.create(
+            wirtschaftsjahr=self.wj, kontonummer='70020', kontoname='Kreditor Test',
+            kontoart='standard', direktes_buchen=False,
+        )
+        self.kreditor = KreditorModel.objects.create(
+            kreditorennummer='70020', name='Testlieferant', iban='DE44444444444444444444',
+        )
+
+    def _rechnung_mit_op(self, betrag='150.00', gutschrift=False):
+        r = Rechnung.objects.create(
+            objekt=self.objekt, kreditor=self.kreditor, dateiname='r.pdf',
+            sha256_hash=f'h_{betrag}_{gutschrift}', rechnungsnummer='R-1',
+            rechnungsdatum=date(2026, 1, 10), betrag_brutto=Decimal(betrag),
+            status='freigegeben', aufwandskonto=self.aufwand_konto,
+            ist_gutschrift=gutschrift,
+        )
+        op = KreditorOP.objects.create(
+            op_nummer=26000900, kreditor=self.kreditor, objekt=self.objekt, rechnung=r,
+            betrag_ursprung=Decimal(betrag), betrag_offen=Decimal(betrag),
+            faellig_ab=date(2026, 1, 10), status='offen',
+        )
+        return r, op
+
+    def test_bankausgleich_bucht_aufwand_aus_15900(self):
+        r, op = self._rechnung_mit_op('150.00')
+        ku = _make_ku(self.objekt, self.bankkonto, betrag='-150.00', iban='DE44444444444444444444')
+        verbuche(ku, verbucht_von=self.user, gegenkonto=self.konto_70020)
+        r.refresh_from_db(); op.refresh_from_db()
+        self.assertEqual(op.status, 'bezahlt')
+        self.assertEqual(r.status, 'bezahlt')
+        self.assertIsNotNone(r.aufwand_buchung_id)
+        b = r.aufwand_buchung
+        self.assertEqual(b.soll_konto_id, self.aufwand_konto.id)
+        self.assertEqual(b.haben_konto_id, self.konto_15900.id)
+        self.assertEqual(b.betrag, Decimal('150.00'))
+
+    def test_gutschrift_wird_gedreht_gebucht(self):
+        r, op = self._rechnung_mit_op('150.00', gutschrift=True)
+        ku = _make_ku(self.objekt, self.bankkonto, betrag='-150.00', iban='DE44444444444444444444')
+        verbuche(ku, verbucht_von=self.user, gegenkonto=self.konto_70020)
+        r.refresh_from_db()
+        b = r.aufwand_buchung
+        self.assertEqual(b.soll_konto_id, self.konto_15900.id)
+        self.assertEqual(b.haben_konto_id, self.aufwand_konto.id)
+
+    def test_idempotent(self):
+        """Ein zweiter Aufruf darf keine zweite Aufwandsbuchung erzeugen."""
+        from apps.rechnungen.services.rechnung_zahlung_service import buche_aufwand_aus_schwebe
+        r, op = self._rechnung_mit_op('150.00')
+        ku = _make_ku(self.objekt, self.bankkonto, betrag='-150.00', iban='DE44444444444444444444')
+        verbuche(ku, verbucht_von=self.user, gegenkonto=self.konto_70020)
+        r.refresh_from_db()
+        vorher = Buchung.objects.filter(haben_konto=self.konto_15900).count()
+        self.assertIsNone(buche_aufwand_aus_schwebe(r, date(2026, 1, 10), self.user))
+        self.assertEqual(Buchung.objects.filter(haben_konto=self.konto_15900).count(), vorher)
+
+    def test_ohne_aufwandskonto_kein_nachtrag(self):
+        from apps.rechnungen.services.rechnung_zahlung_service import buche_aufwand_aus_schwebe
+        r, op = self._rechnung_mit_op('150.00')
+        r.aufwandskonto = None
+        r.save(update_fields=['aufwandskonto'])
+        self.assertIsNone(buche_aufwand_aus_schwebe(r, date(2026, 1, 10), self.user))
+
+
+# ---------------------------------------------------------------------------
+# Wirtschaftsjahr-Auflösung jahresgebundener Konto-Verweise
+# ---------------------------------------------------------------------------
+
+class KontoImJahrTest(TestCase):
+    """
+    Konto-FKs (BankMatchRegel.gegenkonto, Rechnung.aufwandskonto, ...) zeigen auf
+    EIN Wirtschaftsjahr. Beim Buchen müssen sie ins Jahr des Buchungsdatums
+    aufgelöst werden, sonst landen Buchungen im Jahr des Verweises.
+    """
+
+    def setUp(self):
+        (self.objekt, self.wj, self.bank_konto, self.aufwand_konto,
+         self.erloes_konto, self.summierung_konto, self.bankkonto) = _setup_objekt_und_konten()
+        self.user = _make_user()
+        # _setup legt WJ 2026 an; Vorjahr ergänzen
+        self.wj_vorjahr = Wirtschaftsjahr.objects.create(objekt=self.objekt, jahr=2025, beginn_monat=1)
+        self.aufwand_2025 = Konto.objects.create(
+            wirtschaftsjahr=self.wj_vorjahr, kontonummer='55400', kontoname='Strom',
+            kontoart='standard', direktes_buchen=True,
+        )
+        self.bank_2025 = Konto.objects.create(
+            wirtschaftsjahr=self.wj_vorjahr, kontonummer='18000', kontoname='Bank',
+            kontoart='standard', direktes_buchen=True,
+        )
+
+    def test_loest_konto_ins_zieljahr_auf(self):
+        from apps.konten.services import konto_im_jahr
+        # self.aufwand_konto liegt im WJ 2026, gleiche Nummer 55400 in 2025
+        self.assertEqual(konto_im_jahr(self.aufwand_konto, 2025).id, self.aufwand_2025.id)
+        self.assertEqual(konto_im_jahr(self.aufwand_2025, 2026).id, self.aufwand_konto.id)
+
+    def test_gibt_original_zurueck_wenn_jahr_passt(self):
+        from apps.konten.services import konto_im_jahr
+        self.assertEqual(konto_im_jahr(self.aufwand_konto, 2026).id, self.aufwand_konto.id)
+
+    def test_gibt_original_zurueck_wenn_zieljahr_fehlt(self):
+        from apps.konten.services import konto_im_jahr
+        self.assertEqual(konto_im_jahr(self.aufwand_konto, 2019).id, self.aufwand_konto.id)
+
+    def test_none_bleibt_none(self):
+        from apps.konten.services import konto_im_jahr
+        self.assertIsNone(konto_im_jahr(None, 2025))
+
+    def test_bank_match_regel_bucht_ins_umsatzjahr(self):
+        """
+        Eine Regel, die auf ein 2026er Konto zeigt, darf einen Umsatz aus 2025
+        nicht ins Jahr 2026 buchen.
+        """
+        ku_alt = Kontoumsatz.objects.create(
+            objekt=self.objekt, bankkonto=self.bankkonto, sha256_hash='h_regel_2025',
+            betrag=Decimal('-77.00'), buchungsdatum=date(2025, 6, 15),
+            auftraggeber_iban='DE99999999999999999999', verwendungszweck='Stromabschlag',
+        )
+        # Regel zeigt bewusst auf das Konto im WJ 2026
+        regel_anlegen_oder_aktualisieren(ku_alt, self.aufwand_konto, 'bestaetigung', self.user)
+
+        ku_neu = Kontoumsatz.objects.create(
+            objekt=self.objekt, bankkonto=self.bankkonto, sha256_hash='h_regel_2025b',
+            betrag=Decimal('-77.00'), buchungsdatum=date(2025, 7, 15),
+            auftraggeber_iban='DE99999999999999999999', verwendungszweck='Stromabschlag',
+        )
+        fuehre_erkennung_aus(ku_neu)
+        ku_neu.refresh_from_db()
+        self.assertEqual(ku_neu.erkennungs_quelle, 'bank_match_regel')
+        self.assertEqual(ku_neu.erkannt_gegenkonto.kontonummer, '55400')
+        self.assertEqual(ku_neu.erkannt_gegenkonto.wirtschaftsjahr.jahr, 2025)
+        self.assertEqual(ku_neu.erkannt_gegenkonto_id, self.aufwand_2025.id)
+
+
+# ---------------------------------------------------------------------------
+# Stufe 2b: Eigentümer per IBAN erkannt, Betrag weicht vom Soll ab
+# ---------------------------------------------------------------------------
+
+class EigentuemerAbweichenderBetragTest(TestCase):
+    """
+    Zahlt ein Eigentümer einen vom Soll abweichenden Betrag (Teilzahlung oder
+    runder Dauerauftrag), darf nicht automatisch getilgt werden — der Umsatz
+    soll aber der Person zugeordnet als Vorschlag erscheinen statt beim
+    KI-Fallback ohne Personenbezug zu landen.
+
+    Deckt zusätzlich ab, dass das Soll zum BUCHUNGSDATUM verglichen wird und
+    nicht zum heutigen Tag (neuer Wirtschaftsplan ab Folgejahr).
+    """
+
+    ZAHLER_IBAN = 'DE36512500000013496846'
+
+    def setUp(self):
+        (self.objekt, self.wj, self.bank_konto, self.aufwand_konto,
+         self.erloes_konto, self.summierung_konto, self.bankkonto) = _setup_objekt_und_konten()
+        self.user = _make_user()
+        self.person = Person.objects.create(
+            person_typ='100', vorname='Ella', nachname='Petrovic',
+            ibans=['DE58512500000013492182', self.ZAHLER_IBAN],
+        )
+        self.einheit = Einheit.objects.create(
+            objekt=self.objekt, einheit_nr='2', einheit_typ='wohnung', lage='EG rechts',
+        )
+        self.ev = EigentumsVerhaeltnis.objects.create(
+            person=self.person, einheit=self.einheit, beginn=date(2020, 1, 1),
+        )
+        # Personenkonto wird beim Anlegen des EV automatisch erzeugt
+        self.pk = Personenkonto.objects.get(vertrag=self.ev)
+        # Wirtschaftsplan: 400.72 ab 2025, 483.11 ab 2026
+        self.abr = Abrechnungsart.objects.create(objekt=self.objekt, code='900', bezeichnung='Hausgeld')
+        for ab, betrag in ((date(2025, 1, 1), '400.72'), (date(2026, 1, 1), '483.11')):
+            HausgeldHistorie.objects.create(
+                eigentumsverhaeltnis=self.ev, abrechnungsart=self.abr,
+                betrag=Decimal(betrag), gueltig_ab=ab, quelle='import',
+                import_referenz='testdaten', erstellt_von=self.user,
+            )
+
+    def _make_eingang(self, betrag, datum=date(2025, 4, 1)):
+        return Kontoumsatz.objects.create(
+            objekt=self.objekt, bankkonto=self.bankkonto,
+            sha256_hash=f'hash_ev_{betrag}_{datum}', betrag=Decimal(betrag),
+            buchungsdatum=datum,
+            auftraggeber_name='', auftraggeber_iban=self.ZAHLER_IBAN,
+            verwendungszweck='Liegenschaft Theresenstr TSUmlage',
+        )
+
+    def test_abweichender_betrag_ergibt_vorschlag_mit_eigentuemer(self):
+        ku = self._make_eingang('400.00')          # Soll 04/2025 ist 400.72
+        fuehre_erkennung_aus(ku)
+        ku.refresh_from_db()
+        self.assertEqual(ku.status, 'vorschlag')
+        self.assertEqual(ku.erkennungs_quelle, 'iban_ev_abweichend')
+        self.assertEqual(ku.erkannt_eigentumsverhaeltnis_id, self.ev.id)
+        self.assertIsNone(ku.buchung)               # nie automatisch gebucht
+
+    def test_zweitiban_des_angehoerigen_wird_gefunden(self):
+        """Die Zahlung kommt nicht von der Haupt-IBAN der Eigentümerin."""
+        ku = self._make_eingang('400.00')
+        fuehre_erkennung_aus(ku)
+        ku.refresh_from_db()
+        self.assertEqual(ku.erkannt_eigentumsverhaeltnis_id, self.ev.id)
+
+    def test_soll_wird_zum_buchungsdatum_ermittelt_nicht_zu_heute(self):
+        """
+        Ein Umsatz vom 01.04.2025 muss gegen den ab 2025 gültigen Satz (400.72)
+        geprüft werden — nicht gegen den ab 2026 gültigen (483.11), den die
+        Property ev.hausgeld_soll mit date.today() liefert.
+        """
+        self.assertEqual(
+            hausgeld_soll_zum_stichtag(self.ev, date(2025, 4, 1)), Decimal('400.72'))
+        self.assertEqual(
+            hausgeld_soll_zum_stichtag(self.ev, date(2026, 6, 1)), Decimal('483.11'))
+        self.assertEqual(self.ev.hausgeld_soll, Decimal('483.11'))
+
+    def test_soll_ohne_historie_ist_none(self):
+        ev_leer = EigentumsVerhaeltnis.objects.create(
+            person=Person.objects.create(person_typ='100', vorname='Ohne', nachname='Plan'),
+            einheit=Einheit.objects.create(
+                objekt=self.objekt, einheit_nr='9', einheit_typ='wohnung', lage='DG'),
+            beginn=date(2020, 1, 1),
+        )
+        self.assertIsNone(hausgeld_soll_zum_stichtag(ev_leer, date(2025, 4, 1)))
+
+    def test_unbekannte_iban_greift_nicht(self):
+        ku = Kontoumsatz.objects.create(
+            objekt=self.objekt, bankkonto=self.bankkonto,
+            sha256_hash='hash_fremd', betrag=Decimal('400.00'),
+            buchungsdatum=date(2025, 4, 1),
+            auftraggeber_iban='DE00000000000000000000',
+            verwendungszweck='Fremdzahlung',
+        )
+        fuehre_erkennung_aus(ku)
+        ku.refresh_from_db()
+        self.assertNotEqual(ku.erkennungs_quelle, 'iban_ev_abweichend')
+
+    def test_ausgang_greift_nicht(self):
+        """Stufe 2b gilt nur für Eingänge."""
+        ku = self._make_eingang('-400.00')
+        fuehre_erkennung_aus(ku)
+        ku.refresh_from_db()
+        self.assertNotEqual(ku.erkennungs_quelle, 'iban_ev_abweichend')
+
+
+# ---------------------------------------------------------------------------
+# Zahllauf-Clearing: bereits per Zahllauf beglichene OPs gehören gegen 13600
+# ---------------------------------------------------------------------------
+
+class ZahllaufClearingTest(TestCase):
+    """
+    Wird eine Kreditorrechnung über den Zahllauf bezahlt, bucht
+    rechnung_zahlung_service Phase 2 bereits Soll 70xxx / Haben 13600.
+    Der später eintreffende camt-Bankabgang darf deshalb NICHT noch einmal
+    gegen das Kreditorkonto vorgeschlagen werden, sondern gegen 13600.
+    """
+
+    KREDITOR_IBAN = 'DE22500502010200758802'
+
+    def setUp(self):
+        (self.objekt, self.wj, self.bank_konto, self.aufwand_konto,
+         self.erloes_konto, self.summierung_konto, self.bankkonto) = _setup_objekt_und_konten()
+        self.user = _make_user()
+        self.konto_13600 = Konto.objects.create(
+            wirtschaftsjahr=self.wj, kontonummer='13600', kontoname='DCL-Kreditor',
+            kontoart='standard', direktes_buchen=False,
+        )
+        self.konto_70012 = Konto.objects.create(
+            wirtschaftsjahr=self.wj, kontonummer='70012', kontoname='Kreditor Planwerk',
+            kontoart='standard', direktes_buchen=False,
+        )
+        self.kreditor = KreditorModel.objects.create(
+            kreditorennummer='70012', name='Planwerk S GmbH', iban=self.KREDITOR_IBAN,
+        )
+
+    def _make_op(self, status, zahlung_gegen_13600, betrag='222.14'):
+        zahlung_buchung = None
+        if zahlung_gegen_13600:
+            zahlung_buchung = Buchung.objects.create(
+                objekt=self.objekt, betrag=Decimal(betrag), buchungsdatum=date(2026, 1, 10),
+                soll_konto=self.konto_70012, haben_konto=self.konto_13600,
+                buchungstext='Zahllauf — Verbindlichkeit ausgleichen',
+            )
+        return KreditorOP.objects.create(
+            op_nummer=26000020, kreditor=self.kreditor, objekt=self.objekt,
+            betrag_ursprung=Decimal(betrag),
+            betrag_offen=Decimal('0.00') if status == 'bezahlt' else Decimal(betrag),
+            faellig_ab=date(2026, 1, 1), status=status, zahlung_buchung=zahlung_buchung,
+        )
+
+    def test_bezahlter_op_ergibt_13600_statt_kreditorkonto(self):
+        self._make_op('bezahlt', zahlung_gegen_13600=True)
+        ku = _make_ku(self.objekt, self.bankkonto, betrag='-222.14', iban=self.KREDITOR_IBAN)
+        fuehre_erkennung_aus(ku)
+        ku.refresh_from_db()
+        self.assertEqual(ku.erkannt_gegenkonto_id, self.konto_13600.id)
+        self.assertNotEqual(ku.erkannt_gegenkonto_id, self.konto_70012.id)
+        self.assertEqual(ku.erkennungs_quelle, 'zahllauf_clearing')
+        self.assertEqual(ku.status, 'erkannt')
+
+    def test_offener_op_bleibt_kreditorisch(self):
+        """Ein noch offener OP hat Vorrang — dort ist die Kreditorbuchung korrekt."""
+        self._make_op('offen', zahlung_gegen_13600=False)
+        ku = _make_ku(self.objekt, self.bankkonto, betrag='-222.14', iban=self.KREDITOR_IBAN)
+        fuehre_erkennung_aus(ku)
+        ku.refresh_from_db()
+        self.assertEqual(ku.erkannt_gegenkonto_id, self.konto_70012.id)
+        self.assertNotEqual(ku.erkennungs_quelle, 'zahllauf_clearing')
+
+    def test_offener_op_hat_vorrang_vor_bezahltem(self):
+        """Gleicher Betrag offen und bezahlt → kreditorisch buchen (OP ausgleichen)."""
+        self._make_op('bezahlt', zahlung_gegen_13600=True)
+        op_offen = KreditorOP.objects.create(
+            op_nummer=26000099, kreditor=self.kreditor, objekt=self.objekt,
+            betrag_ursprung=Decimal('222.14'), betrag_offen=Decimal('222.14'),
+            faellig_ab=date(2026, 1, 1), status='offen',
+        )
+        ku = _make_ku(self.objekt, self.bankkonto, betrag='-222.14', iban=self.KREDITOR_IBAN)
+        fuehre_erkennung_aus(ku)
+        ku.refresh_from_db()
+        self.assertEqual(ku.erkannt_gegenkonto_id, self.konto_70012.id)
+        self.assertTrue(op_offen.pk)
+
+    def test_bezahlt_ohne_zahllaufbuchung_bleibt_kreditorisch(self):
+        """Ohne Zahlungsbuchung gegen 13600 greift die Sonderregel nicht."""
+        self._make_op('bezahlt', zahlung_gegen_13600=False)
+        ku = _make_ku(self.objekt, self.bankkonto, betrag='-222.14', iban=self.KREDITOR_IBAN)
+        fuehre_erkennung_aus(ku)
+        ku.refresh_from_db()
+        self.assertNotEqual(ku.erkennungs_quelle, 'zahllauf_clearing')
+
+    def test_abweichender_betrag_greift_nicht(self):
+        self._make_op('bezahlt', zahlung_gegen_13600=True)
+        ku = _make_ku(self.objekt, self.bankkonto, betrag='-999.00', iban=self.KREDITOR_IBAN)
+        fuehre_erkennung_aus(ku)
+        ku.refresh_from_db()
+        self.assertNotEqual(ku.erkennungs_quelle, 'zahllauf_clearing')
 
 
 # ---------------------------------------------------------------------------

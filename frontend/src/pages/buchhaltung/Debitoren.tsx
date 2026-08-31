@@ -11,6 +11,11 @@ import type { PersonenkontoSaldo, KontoauszugPosition, SEPAMandat } from '../../
 const EUR = (v: number | null | undefined) =>
   (v ?? 0).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })
 const DATUM = (s: string) => new Date(s).toLocaleDateString('de-DE')
+// Periode einer Sollstellung kompakt: "2025-06-01" -> "06/2025"
+const PERIODE = (s: string) => {
+  const [jahr, monat] = s.split('-')
+  return monat ? `${monat}/${jahr}` : s
+}
 
 type View = 'liste' | 'kontoauszug' | 'buchung-detail'
 
@@ -667,13 +672,14 @@ function BuchungDetailView({
                 <th className="text-left px-4 py-3 text-gray-600 font-medium">Bezeichnung</th>
                 <th className="text-left px-4 py-3 text-gray-600 font-medium">Haben (Erlöskonto)</th>
                 <th className="text-left px-4 py-3 text-gray-600 font-medium">BA</th>
+                <th className="text-left px-4 py-3 text-gray-600 font-medium">tilgt OP</th>
                 <th className="text-right px-4 py-3 text-gray-600 font-medium">Betrag</th>
               </tr>
             </thead>
             <tbody>
               {(data?.positionen ?? []).length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="text-center py-8 text-gray-400">
+                  <td colSpan={6} className="text-center py-8 text-gray-400">
                     Keine Teilbuchungen vorhanden
                   </td>
                 </tr>
@@ -693,6 +699,23 @@ function BuchungDetailView({
                     <span className="inline-block px-2 py-0.5 text-xs bg-blue-100 text-blue-700 rounded">
                       {p.ba}
                     </span>
+                  </td>
+                  <td className="px-4 py-2.5 whitespace-nowrap">
+                    {p.op_nummer ? (
+                      <>
+                        <span className="font-mono text-xs text-blue-700">{p.op_nummer}</span>
+                        {p.op_periode && (
+                          <span className="text-gray-500 text-xs"> · {PERIODE(p.op_periode)}</span>
+                        )}
+                        {p.op_status === 'teilbezahlt' && (
+                          <span className="ml-1 inline-block px-1.5 py-0.5 text-[10px] bg-yellow-100 text-yellow-700 rounded">
+                            teilbezahlt
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-gray-400">—</span>
+                    )}
                   </td>
                   <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-gray-800">
                     {EUR(p.betrag)}

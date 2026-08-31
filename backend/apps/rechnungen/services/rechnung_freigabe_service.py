@@ -19,6 +19,8 @@ Rollen-Auflösung (dokumentierte Annahme, an reale Strukturen angepasst):
   'Geschaeftsfuehrer' oder Superuser. GF darf jede Stufe freigeben
   (Eskalationsziel laut Grenzen-Konfig).
 """
+from django.core.exceptions import ValidationError
+
 from ..recognition import (
     _ermittle_freigabestufe,
     _ermittle_freigabeperson,
@@ -78,6 +80,15 @@ def _hat_offene_wkz_vorlage(rechnung) -> bool:
     return rechnung.wkz_vorlagen.exclude(status='beendet').exists()
 
 
+# Zustaende, aus denen der Stufe-1-Abschluss zulaessig ist. Alles andere
+# (freigegeben, teilbezahlt, bezahlt, storniert, wkz_beleg, duplikat,
+# abgelehnt) hat die Erfassung bereits hinter sich.
+STUFE1_STATUS = frozenset({
+    'importiert', 'erfasst', 'erkannt', 'pruefung_match', 'nicht_erkannt',
+    'in_pruefung', 'in_buchhaltung', 'prueffall',
+})
+
+
 def route_zur_freigabe(rechnung, geprueft_von=None):
     """Stufe-1-Abschluss „Geprüft → zur Freigabe" (Spec 5.1):
     Status → zur_freigabe, Freigabestufe/-person über die bestehenden
@@ -94,6 +105,25 @@ def route_zur_freigabe(rechnung, geprueft_von=None):
     unter „Rechnungsfreigabe". Die Rechnung verlässt deshalb JETZT, mit dem
     Abschluss der Erfassung, den normalen Zahlweg (status='wkz_beleg') und
     nicht schon beim Anlegen der Vorlage."""
+    # Stufe 1 → 2 ist nur aus einem Stufe-1-Zustand zulaessig. Ohne diese
+    # Pruefung liess sich eine bereits freigegebene Rechnung zurueck nach
+    # 'zur_freigabe' setzen, waehrend ihr offener Posten bestehen blieb — der
+    # Zustand war danach widerspruechlich, und jeder weitere Durchlauf hat ueber
+    # lege_match_regel_an() zusaetzlich die Lernstatistik hochgezaehlt.
+    if rechnung.status not in STUFE1_STATUS:
+        raise ValidationError(
+            f"Rechnung im Status '{rechnung.get_status_display()}' kann nicht erneut "
+            f"zur Freigabe gegeben werden."
+            + (f" Es besteht bereits der offene Posten {rechnung.kreditor_op.op_nummer}."
+               if getattr(rechnung, 'kreditor_op', None) else '')
+            + " Fuer eine Korrektur muss die Freigabe zuerst storniert werden."
+        )
+    if rechnung.op_buchung_id:
+        raise ValidationError(
+            "Zu dieser Rechnung ist bereits eine OP-Buchung vorhanden — "
+            "fuer eine Korrektur muss die Freigabe zuerst storniert werden."
+        )
+
     if _hat_offene_wkz_vorlage(rechnung):
         from apps.buchhaltung.services.wkz.vorlage_service import uebergib_rechnung_an_wkz
         return uebergib_rechnung_an_wkz(rechnung, user=geprueft_von)

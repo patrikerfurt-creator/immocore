@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
 from django.db.models import Q
@@ -35,6 +35,16 @@ DE_STOPWORDS = frozenset({
     'sowie', 'inkl', 'zzgl', 'netto', 'brutto', 'mwst', 'ust',
 })
 
+# Monatsnamen gehören nicht in den Leistungstext-Hash: Dauerleistungen (z.B.
+# monatliche Verwaltergebühr) tragen den Monat im Text und bekämen sonst jeden
+# Monat einen neuen Hash. Die gelernte Regel griffe nie wieder, stattdessen
+# entstünde jeden Monat eine neue.
+MONATSNAMEN = frozenset({
+    'januar', 'februar', 'maerz', 'märz', 'april', 'mai', 'juni', 'juli',
+    'august', 'september', 'oktober', 'november', 'dezember',
+    'jan', 'feb', 'mrz', 'apr', 'jun', 'jul', 'aug', 'sep', 'sept', 'okt', 'nov', 'dez',
+})
+
 
 # ===========================================================================
 # Text-Normalisierung + Hash
@@ -49,7 +59,10 @@ def normalisiere_leistungstext(text: str) -> str:
     text = re.sub(r'\b\d{4,}\b', '', text)                            # lange Zahlen
     text = re.sub(r'[^a-z0-9äöüß ]+', ' ', text)
     text = re.sub(r'\s+', ' ', text).strip()
-    text = ' '.join(t for t in text.split() if t not in DE_STOPWORDS)
+    text = ' '.join(
+        t for t in text.split()
+        if t not in DE_STOPWORDS and t not in MONATSNAMEN
+    )
     return text
 
 
@@ -179,6 +192,48 @@ def match_objekt(rechnung) -> MatchResult:
     return MatchResult.empty()
 
 
+def match_konto_eindeutig(kreditor, objekt) -> MatchResult:
+    """
+    Aufwandskonto aus den gelernten Regeln, wenn der Kreditor in diesem Objekt
+    nachweislich nur EIN Konto verwendet.
+
+    Greift, wenn der Leistungstext abweicht (anderer Wortlaut, neue Position),
+    die Kontierung aber ohnehin eindeutig ist. Sobald ein Kreditor mehrere
+    Konten benutzt — z.B. Techem mit Gerätemiete (50330) und Vorjahres-
+    abgrenzung (39000) — greift die Regel bewusst NICHT, dort entscheidet
+    weiter der Leistungstext.
+    """
+    from .models import RechnungsMatchRegel
+    if not kreditor or not objekt:
+        return MatchResult.empty()
+
+    # Über die KONTONUMMER vergleichen, nicht über die Konto-ID: Konten sind
+    # jahresgebunden, dieselbe Nummer existiert je Wirtschaftsjahr einmal.
+    # Regeln aus verschiedenen Jahren zeigen deshalb auf verschiedene Objekte
+    # und wären bei einem ID-Vergleich fälschlich „uneindeutig".
+    kontonummern = set(
+        RechnungsMatchRegel.objects
+        .filter(kreditor=kreditor, objekt=objekt, status='aktiv')
+        .values_list('aufwandskonto__kontonummer', flat=True)
+    )
+    kontonummern.discard(None)
+    if len(kontonummern) != 1:
+        return MatchResult.empty()
+
+    from apps.konten.models import Konto
+    # Irgendein Konto dieser Nummer im Objekt genügt — der Aufrufer löst es
+    # anschließend über konto_im_jahr() ins Jahr des Rechnungsdatums auf.
+    konto = (
+        Konto.objects
+        .filter(kontonummer=kontonummern.pop(), wirtschaftsjahr__objekt=objekt)
+        .order_by('-wirtschaftsjahr__jahr')
+        .first()
+    )
+    if not konto:
+        return MatchResult.empty()
+    return MatchResult.treffer(konto, 1.0, 'kreditor_eindeutig')
+
+
 def match_konto_historie(kreditor, objekt) -> MatchResult:
     """
     Konto-Vorschlag aus KreditorRegel (alter Lernmechanismus).
@@ -252,10 +307,28 @@ def fuehre_erkennung_aus(rechnung) -> object:
         if regel_treffer:
             konto_match = MatchResult.treffer(regel_treffer.aufwandskonto, 1.0, 'match_regel')
         else:
-            # Fallback: KreditorRegel-Historie (max 0.70 → kein eindeutiger Treffer)
-            konto_match = match_konto_historie(
+            # 1. Fallback: Kreditor verwendet im Objekt nur ein Konto
+            konto_match = match_konto_eindeutig(
                 kreditor_match.kandidat,
                 objekt_match.kandidat,
+            )
+            if not konto_match.kandidat:
+                # 2. Fallback: KreditorRegel-Historie (max 0.70 → nicht eindeutig)
+                konto_match = match_konto_historie(
+                    kreditor_match.kandidat,
+                    objekt_match.kandidat,
+                )
+
+        # Konten sind jahresgebunden — das Konto der Regel stammt aus dem Jahr,
+        # in dem sie gelernt wurde. Für diese Rechnung zählt ihr eigenes Jahr.
+        # isinstance statt Truthy-Prüfung: rechnungsdatum kann auch ein String
+        # (Serializer) oder ein Platzhalter sein, dann ist .year nicht nutzbar.
+        if konto_match.kandidat and isinstance(getattr(rechnung, 'rechnungsdatum', None), date):
+            from apps.konten.services import konto_im_jahr
+            konto_match = MatchResult.treffer(
+                konto_im_jahr(konto_match.kandidat, rechnung.rechnungsdatum.year),
+                konto_match.konfidenz,
+                konto_match.match_typ,
             )
 
     log_dimensionen['aufwandskonto'] = {

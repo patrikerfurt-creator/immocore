@@ -181,9 +181,14 @@ class KreditorViewSet(viewsets.ModelViewSet):
             konto_ids = set(konto_qs.values_list('id', flat=True))
 
             if konto_ids:
+                # Storno-Paare BEIDSEITIG ausschliessen: das stornierte Original
+                # (status='storniert') UND seine Gegenbuchung (storno_von gesetzt).
+                # Ohne den zweiten Filter bleibt die Gegenbuchung allein stehen und
+                # verfaelscht den Saldo um ihren Betrag — gleiche Logik wie in
+                # konten/views.py (Kontoauszug/Saldenliste).
                 bu_qs = Buchung.objects.filter(
                     Q(soll_konto_id__in=konto_ids) | Q(haben_konto_id__in=konto_ids)
-                ).exclude(status='storniert')
+                ).exclude(status='storniert').exclude(storno_von__isnull=False)
                 if jahr:
                     bu_qs = bu_qs.filter(buchungsdatum__year=int(jahr))
                 bu_qs = bu_qs.select_related(

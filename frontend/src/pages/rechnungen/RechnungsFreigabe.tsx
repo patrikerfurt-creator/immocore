@@ -32,6 +32,12 @@ function eur(wert: string | null): string {
   return `${Number(wert).toLocaleString('de-DE', { minimumFractionDigits: 2 })} €`
 }
 
+// Konten werden je Objekt UND Wirtschaftsjahr vorgehalten — dieselbe Kontonummer
+// existiert pro Jahr einmal, und ein Beleg braucht das Konto seines Jahres.
+function schluessel(objektId: string, jahr: string): string {
+  return `${objektId}|${jahr}`
+}
+
 function istAufwandskonto(k: Konto): boolean {
   const nr = Number(k.kontonummer)
   return k.aktiv && k.kontoart !== 'summierung' && (k.direktes_buchen || (nr >= 50000 && nr <= 55999))
@@ -44,21 +50,35 @@ export default function RechnungsFreigabe() {
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [fehler, setFehler] = useState<string | null>(null)
+  const [kontenFehler, setKontenFehler] = useState<string | null>(null)
   const [wkzRows, setWkzRows] = useState<WKZVorlageFreigabe[]>([])
   const [wkzFehler, setWkzFehler] = useState<string | null>(null)
 
   const laden = useCallback(() => {
     setLoading(true)
+    setKontenFehler(null)
     rechnungenApi.freigabeListe()
       .then(data => {
         setRows(data)
         setAuswahl(Object.fromEntries(data.map(r => [r.id, r.aufwandskonto_id ?? ''])))
-        // Aufwandskonten je Objekt einmalig laden
-        const objektIds = [...new Set(data.map(r => r.objekt_id).filter((x): x is string => !!x))]
-        objektIds.forEach(oid => {
-          buchhaltungApi.konten(oid)
-            .then(ks => setKontenByObjekt(prev => ({ ...prev, [oid]: ks.filter(istAufwandskonto) })))
-            .catch(() => {})
+        // Aufwandskonten je Objekt UND Rechnungsjahr laden.
+        // Konten sind jahresgebunden: ohne Jahr liefert die API die Konten des
+        // laufenden Wirtschaftsjahres, waehrend die Vorkontierung auf das Konto
+        // des Belegjahres zeigt. Das <select> faende seinen Wert dann nicht.
+        const kombis = new Map<string, { oid: string; jahr: string }>()
+        data.forEach(r => {
+          if (!r.objekt_id) return
+          const jahr = /^\d{4}-/.test(r.rechnungsdatum ?? '') ? r.rechnungsdatum!.slice(0, 4) : ''
+          kombis.set(schluessel(r.objekt_id, jahr), { oid: r.objekt_id, jahr })
+        })
+        kombis.forEach(({ oid, jahr }, key) => {
+          buchhaltungApi.konten(oid, jahr ? { jahr } : undefined)
+            .then(ks => setKontenByObjekt(prev => ({ ...prev, [key]: ks.filter(istAufwandskonto) })))
+            // Fehler nicht verschlucken: ohne Hinweis sieht ein fehlgeschlagener
+            // Request genauso aus wie eine leere Kontenliste.
+            .catch(() => setKontenFehler(
+              `Aufwandskonten konnten nicht geladen werden${jahr ? ` (Wirtschaftsjahr ${jahr})` : ''}. `
+              + 'Die Kontoauswahl bleibt leer — bitte die Seite neu laden.'))
         })
       })
       .catch(() => setFehler('Freigabe-Liste konnte nicht geladen werden.'))
@@ -137,6 +157,11 @@ export default function RechnungsFreigabe() {
       <h1 className="text-xl font-semibold text-gray-800 mb-4">Rechnungsfreigabe — Stufe 2</h1>
       <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">Rechnungen</h2>
       {fehler && <div className="mb-3 text-sm text-red-600">{fehler}</div>}
+      {kontenFehler && (
+        <div className="mb-3 p-2.5 rounded bg-red-50 border border-red-200 text-sm text-red-700">
+          ⚠ {kontenFehler}
+        </div>
+      )}
       {loading ? (
         <div className="text-gray-500 text-sm">Lädt…</div>
       ) : rows.length === 0 ? (
@@ -157,7 +182,8 @@ export default function RechnungsFreigabe() {
             </thead>
             <tbody>
               {rows.map(r => {
-                const konten = r.objekt_id ? (kontenByObjekt[r.objekt_id] ?? []) : []
+                const rJahr = /^\d{4}-/.test(r.rechnungsdatum ?? '') ? r.rechnungsdatum!.slice(0, 4) : ''
+                const konten = r.objekt_id ? (kontenByObjekt[schluessel(r.objekt_id, rJahr)] ?? []) : []
                 const geaendert = !!auswahl[r.id] && auswahl[r.id] !== (r.aufwandskonto_id ?? '')
                 return (
                   <tr key={r.id} className="border-t hover:bg-gray-50">

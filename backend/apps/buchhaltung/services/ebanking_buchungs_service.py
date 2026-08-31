@@ -279,6 +279,24 @@ def _versuche_op_ausgleich(ku, buchung, kreditorkonto, explizit_op_id=None):
         op.rechnung.status = 'bezahlt'
         op.rechnung.save(update_fields=['status'])
 
+        # Aufwand aus dem Schwebekonto 15900 realisieren. Der Ausgleich über die
+        # Bankseite ersetzt nur Phase 2 / Buchung 2 (Verbindlichkeit); ohne den
+        # Nachtrag bliebe der Betrag auf 15900 stehen und das kontierte
+        # Aufwandskonto leer — die Rechnung gälte als bezahlt, ohne je im
+        # Aufwand aufzutauchen. Idempotent über rechnung.aufwand_buchung.
+        try:
+            from apps.rechnungen.services.rechnung_zahlung_service import (
+                buche_aufwand_aus_schwebe,
+            )
+            buche_aufwand_aus_schwebe(
+                op.rechnung, buchung.buchungsdatum, buchung.erstellt_von,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Aufwandsnachtrag aus 15900 für Rechnung %s fehlgeschlagen: %s",
+                op.rechnung_id, exc,
+            )
+
 
 @transaction.atomic
 def storniere(ku, begruendung: str, storniert_von):

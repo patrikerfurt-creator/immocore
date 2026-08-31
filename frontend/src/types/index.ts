@@ -369,6 +369,9 @@ export interface BuchungDetailPosition {
   haben_konto_name: string
   ba: string
   betrag: number
+  op_nummer: string | null             // getilgter offener Posten (OPOS-Nr.)
+  op_periode: string | null            // Periode der getilgten Sollstellung
+  op_status: string | null             // offen | teilbezahlt | ausgeglichen
 }
 
 export interface BuchungDetail {
@@ -750,6 +753,7 @@ export interface RechnungList {
   faelligkeitsdatum: string | null
   status: RechnungStatus
   duplikat_typ: string
+  pruefgrund?: string           // Klartext-Begründung für Prüffall/Duplikat
   duplikat_von_dateiname: string | null
   erstellt_am: string
   objekt_id: string | null

@@ -420,8 +420,11 @@ export function Dialogbuchhaltung() {
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) => setForm(prev => ({ ...prev, [field]: e.target.value }))
 
+  // Buchbar ist alles ausser Summierungskonten (50299 etc.) — deckt sich mit der
+  // Backend-Regel in ebanking_buchungs_service.verbuche(). ARGE-Unterkonten wie
+  // 50320 Gas/Oel/Waerme gehoeren dazu.
   const aktiveKonten = (konten ?? []).filter(
-    (k: Konto) => k.aktiv && k.kontoart === 'standard'
+    (k: Konto) => k.aktiv && k.kontoart !== 'summierung'
   )
   const aktivePersonenkonten = personenkonten ?? []
   const aktiveKreditoren = kreditoren ?? []

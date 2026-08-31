@@ -51,7 +51,16 @@ class KontoViewSet(viewsets.ModelViewSet):
             qs = qs.filter(wirtschaftsjahr_id=p['wirtschaftsjahr'])
         elif p.get('objekt'):
             from apps.objekte.models import Wirtschaftsjahr
-            wj = (
+            # Konten sind jahresgebunden. Für einen Beleg zählt das Wirtschafts-
+            # jahr seines Datums — ohne `jahr` bekäme der Aufrufer die Konten des
+            # aktuell offenen Jahres, und eine Vorkontierung aus einem früheren
+            # Jahr hätte in der Auswahlliste keine passende Option.
+            wj = None
+            if p.get('jahr'):
+                wj = Wirtschaftsjahr.objects.filter(
+                    objekt_id=p['objekt'], jahr=p['jahr'],
+                ).first()
+            wj = wj or (
                 Wirtschaftsjahr.objects.filter(objekt_id=p['objekt'], status='offen')
                 .order_by('-jahr').first()
                 or Wirtschaftsjahr.objects.filter(objekt_id=p['objekt'])
@@ -461,9 +470,28 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
             .order_by('soll_unterkonto__suffix')
         )
 
+        # Getilgten offenen Posten je Teilbuchung ermitteln.
+        # SollstellungZahlung hängt an der Kopfbuchung, nicht an den einzelnen
+        # Teilbuchungen — über Abrechnungsart + Betrag ist die Zuordnung aber
+        # eindeutig. Ohne diese Angabe sind mehrere Teilbuchungen auf dasselbe
+        # Erlöskonto (z.B. laufender Monat + Nachtilgung eines Vormonats) in der
+        # Oberfläche nicht unterscheidbar.
+        from apps.buchhaltung.models import SollstellungZahlung
+        from .services import ordne_zahlungen_teilbuchungen_zu
+
+        teilbuchungen = list(teilbuchungen)
+        zahlungen = list(
+            SollstellungZahlung.objects
+            .filter(buchung=gesamt)
+            .select_related('sollstellung', 'split')
+        )
+        op_je_teilbuchung = ordne_zahlungen_teilbuchungen_zu(teilbuchungen, zahlungen)
+
         positionen = []
         for t in teilbuchungen:
             uk = t.soll_unterkonto
+            zahlung = op_je_teilbuchung.get(t.id)
+            ss = zahlung.sollstellung if zahlung else None
             positionen.append({
                 'id': str(t.id),
                 'soll_unterkonto': uk.volle_kontonummer if uk else None,
@@ -472,6 +500,9 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
                 'haben_konto_name': t.haben_konto.kontoname if t.haben_konto else '',
                 'ba': t.buchungsart.kuerzel if t.buchungsart else '',
                 'betrag': float(t.betrag),
+                'op_nummer': ss.opos_nr if ss else None,
+                'op_periode': str(ss.periode) if ss else None,
+                'op_status': ss.status_cached if ss else None,
             })
 
         return Response({
@@ -524,10 +555,16 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
         if wj_id:
             wj = Wirtschaftsjahr.objects.filter(pk=wj_id).first()
         if not wj:
-            obj = pk_obj.objekt
-            wj = (
-                Wirtschaftsjahr.objects.filter(objekt=obj, status='offen').order_by('-jahr').first()
-                or Wirtschaftsjahr.objects.filter(objekt=obj).order_by('-jahr').first()
+            # Strikt aus dem Buchungsdatum. Ein Fallback auf das neueste offene
+            # Wirtschaftsjahr würde Zahlungen aus einem Vorjahr im laufenden Jahr
+            # verbuchen — die Kontoblätter des Buchungsjahres blieben unvollständig.
+            jahr = str(buchungsdatum)[:4]
+            wj = Wirtschaftsjahr.objects.filter(objekt=pk_obj.objekt, jahr=jahr).first()
+        if not wj:
+            return Response(
+                {'error': f'Kein Wirtschaftsjahr {str(buchungsdatum)[:4]} am Objekt — '
+                          f'Zahlung vom {buchungsdatum} kann nicht in ein anderes WJ gebucht werden.'},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         try:

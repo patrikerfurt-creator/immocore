@@ -5,6 +5,7 @@ Kap. 10.1 Unit-Tests
 Kap. 10.2 Integrations-Tests Workflow-Pfade 1–12
 Kap. 10.3 Edge Cases
 """
+from datetime import date
 from decimal import Decimal
 from unittest.mock import MagicMock, patch, PropertyMock
 
@@ -138,6 +139,31 @@ class TextNormalisierungTest(TestCase):
         h = leistungstext_hash('Test')
         self.assertEqual(len(h), 64)
 
+    def test_monatsnamen_entfernt(self):
+        """
+        Dauerleistungen tragen den Monat im Leistungstext. Bliebe er im Hash,
+        bekäme jede Monatsrechnung einen neuen Hash — die gelernte Regel griffe
+        nie wieder und es entstünde jeden Monat eine neue.
+        """
+        result = normalisiere_leistungstext('Verwaltergebühr Juli 2025')
+        self.assertNotIn('juli', result)
+        self.assertIn('verwaltergebühr', result)
+
+    def test_gleicher_hash_ueber_monate(self):
+        h_juni = leistungstext_hash('WEG-Verwaltung Wohnungen, Verwaltergebühr Juni 2025')
+        h_juli = leistungstext_hash('WEG-Verwaltung Wohnungen, Verwaltergebühr Juli 2025')
+        self.assertEqual(h_juni, h_juli)
+
+    def test_abgekuerzte_monate_entfernt(self):
+        self.assertEqual(
+            leistungstext_hash('Wartung Jan'), leistungstext_hash('Wartung Dez'))
+
+    def test_verschiedene_leistungen_bleiben_verschieden(self):
+        """Die Monatsbereinigung darf inhaltlich Verschiedenes nicht zusammenwerfen."""
+        self.assertNotEqual(
+            leistungstext_hash('Gerätemiete Heizkostenverteiler Juni'),
+            leistungstext_hash('Abrechnungsservice Heizkosten Juni'))
+
 
 class KonfidenzMinTest(TestCase):
     def test_minimum_aus_drei_dimensionen(self):
@@ -198,7 +224,7 @@ class StufenAbleitungTest(TestCase):
 
         with patch('apps.rechnungen.recognition.match_kreditor', return_value=kreditor_result), \
              patch('apps.rechnungen.recognition.match_objekt',   return_value=objekt_result), \
-             patch('apps.rechnungen.recognition.match_konto_historie', return_value=MatchResult()), \
+             patch('apps.rechnungen.recognition.match_konto_historie', return_value=MatchResult()),              patch('apps.rechnungen.recognition.match_konto_eindeutig', return_value=MatchResult()), \
              patch('apps.rechnungen.recognition.RechnungsMatchRegel') as mock_mrm, \
              patch('apps.rechnungen.recognition.RechnungsErkennungsLog') as mock_log:
 
@@ -398,6 +424,90 @@ class WorkflowPfadTest(TestCase):
         self.assertEqual(r.status, 'in_buchhaltung')
 
 
+class KontoEindeutigTest(TestCase):
+    """
+    Eindeutigkeits-Fallback: Verwendet ein Kreditor in einem Objekt
+    nachweislich nur ein Aufwandskonto, wird es auch ohne Übereinstimmung im
+    Leistungstext gesetzt. Nötig, weil die OCR den Leistungstext jedes Mal
+    anders formuliert und die gelernte Regel sonst nie greift.
+    """
+
+    def setUp(self):
+        self.user     = make_user('eindeutig')
+        self.objekt   = make_objekt()
+        self.kreditor = make_kreditor()
+        self.konto_a  = make_konto(self.objekt, kontonummer='55100', kontoname='Verwaltergebühr')
+        self.konto_b  = make_konto(self.objekt, kontonummer='39000', kontoname='RAP')
+
+    def _regel(self, konto, text):
+        from apps.rechnungen.models import RechnungsMatchRegel
+        from apps.rechnungen.recognition import leistungstext_hash
+        return RechnungsMatchRegel.objects.create(
+            kreditor=self.kreditor, objekt=self.objekt, aufwandskonto=konto,
+            leistungstext_hash=leistungstext_hash(text), leistungstext_sample=text,
+            status='aktiv', erstellt_durch=self.user, erstellt_aus='pruefung',
+        )
+
+    def test_ein_konto_ergibt_treffer(self):
+        from apps.rechnungen.recognition import match_konto_eindeutig
+        self._regel(self.konto_a, 'Verwaltergebühr Wohnungen')
+        self._regel(self.konto_a, 'WEG-Verwaltung Objektbetreuung')
+        res = match_konto_eindeutig(self.kreditor, self.objekt)
+        self.assertEqual(res.kandidat.id, self.konto_a.id)
+        self.assertEqual(res.konfidenz, 1.0)
+        self.assertEqual(res.match_typ, 'kreditor_eindeutig')
+
+    def test_gleiche_kontonummer_in_zwei_jahren_ist_eindeutig(self):
+        """
+        Konten sind jahresgebunden: dieselbe Nummer existiert je Wirtschaftsjahr
+        einmal. Regeln aus verschiedenen Jahren zeigen deshalb auf verschiedene
+        Konto-Objekte — fachlich ist die Kontierung trotzdem eindeutig.
+        """
+        from apps.rechnungen.recognition import match_konto_eindeutig
+        from apps.konten.models import Konto
+        from apps.objekte.models import Wirtschaftsjahr
+        wj_vorjahr = Wirtschaftsjahr.objects.create(
+            objekt=self.objekt, jahr=date.today().year - 1, beginn_monat=1)
+        konto_vorjahr = Konto.objects.create(
+            wirtschaftsjahr=wj_vorjahr, kontonummer=self.konto_a.kontonummer,
+            kontoname=self.konto_a.kontoname, kontoart='standard',
+        )
+        self._regel(self.konto_a, 'Verwaltergebühr laufendes Jahr')
+        self._regel(konto_vorjahr, 'Verwaltergebühr Vorjahr')
+        res = match_konto_eindeutig(self.kreditor, self.objekt)
+        self.assertIsNotNone(res.kandidat)
+        self.assertEqual(res.kandidat.kontonummer, self.konto_a.kontonummer)
+        self.assertEqual(res.konfidenz, 1.0)
+
+    def test_mehrere_konten_ergeben_keinen_treffer(self):
+        """
+        Der Techem-Fall: Gerätemiete und Vorjahresabgrenzung gehen auf
+        verschiedene Konten — hier muss der Leistungstext entscheiden.
+        """
+        from apps.rechnungen.recognition import match_konto_eindeutig
+        self._regel(self.konto_a, 'Gerätemiete Heizkostenverteiler')
+        self._regel(self.konto_b, 'Abrechnungsservice Vorjahr')
+        res = match_konto_eindeutig(self.kreditor, self.objekt)
+        self.assertIsNone(res.kandidat)
+
+    def test_veraltete_regeln_zaehlen_nicht(self):
+        from apps.rechnungen.recognition import match_konto_eindeutig
+        self._regel(self.konto_a, 'Verwaltergebühr')
+        alt = self._regel(self.konto_b, 'Frühere Kontierung')
+        alt.status = 'veraltet'
+        alt.save(update_fields=['status'])
+        res = match_konto_eindeutig(self.kreditor, self.objekt)
+        self.assertEqual(res.kandidat.id, self.konto_a.id)
+
+    def test_ohne_regeln_kein_treffer(self):
+        from apps.rechnungen.recognition import match_konto_eindeutig
+        self.assertIsNone(match_konto_eindeutig(self.kreditor, self.objekt).kandidat)
+
+    def test_ohne_kreditor_kein_treffer(self):
+        from apps.rechnungen.recognition import match_konto_eindeutig
+        self.assertIsNone(match_konto_eindeutig(None, self.objekt).kandidat)
+
+
 class LernlogikTest(TestCase):
     def setUp(self):
         self.user    = make_user('tester')
@@ -541,3 +651,186 @@ class LegacyFeldTest(TestCase):
         response = view(request, pk=str(rechnung.id))
         self.assertEqual(response.status_code, 400)
         self.assertIn('aufwandskonto_id', str(response.data))
+
+
+class PruefgrundTextTest(TestCase):
+    """
+    Die Begründung, warum eine Rechnung zurückgehalten wurde, muss für einen
+    Bearbeiter lesbar sein — nicht nur als technischer Code wie
+    'ocr_unvollstaendig'.
+    """
+
+    def setUp(self):
+        self.objekt = make_objekt()
+        self.kreditor = make_kreditor()
+
+    def _rechnung(self, status='prueffall', typ='', notiz='', quelle=None):
+        r = make_rechnung(objekt=self.objekt, kreditor=self.kreditor)
+        r.status = status
+        r.duplikat_typ = typ
+        r.verarbeitungsnotiz = notiz
+        r.duplikat_von = quelle
+        r.save()
+        return r
+
+    def test_unauffaellige_rechnung_ohne_grund(self):
+        from apps.rechnungen.serializers import pruefgrund_text
+        self.assertEqual(pruefgrund_text(self._rechnung(status='in_buchhaltung')), '')
+
+    def test_ocr_unvollstaendig_nennt_die_felder(self):
+        from apps.rechnungen.serializers import pruefgrund_text
+        r = self._rechnung(typ='ocr_unvollstaendig',
+                           notiz='OCR unvollständig: Rechnungsnummer, Bruttobetrag')
+        text = pruefgrund_text(r)
+        self.assertIn('Rechnungsnummer, Bruttobetrag', text)
+        self.assertNotIn('ocr_unvollstaendig', text)
+
+    def test_ocr_unvollstaendig_ohne_notiz_bleibt_verstaendlich(self):
+        from apps.rechnungen.serializers import pruefgrund_text
+        text = pruefgrund_text(self._rechnung(typ='ocr_unvollstaendig'))
+        self.assertIn('Texterkennung', text)
+
+    def test_hash_duplikat_nennt_die_quelle(self):
+        from apps.rechnungen.serializers import pruefgrund_text
+        original = make_rechnung(objekt=self.objekt, kreditor=self.kreditor)
+        original.dateiname = 'original.pdf'
+        original.save()
+        text = pruefgrund_text(self._rechnung(status='duplikat', typ='hash', quelle=original))
+        self.assertIn('original.pdf', text)
+        self.assertNotIn('hash', text.lower().replace('rechnung', ''))
+
+    def test_kein_doppelter_dateiname(self):
+        """Die Quelle darf nicht zweimal im Text stehen (Text + Notiz)."""
+        from apps.rechnungen.serializers import pruefgrund_text
+        original = make_rechnung(objekt=self.objekt, kreditor=self.kreditor)
+        original.dateiname = 'doppelt.pdf'
+        original.save()
+        r = self._rechnung(status='duplikat', typ='hash',
+                           notiz='Exaktes Duplikat: doppelt.pdf', quelle=original)
+        self.assertEqual(pruefgrund_text(r).count('doppelt.pdf'), 1)
+
+    def test_unbekannter_typ_faellt_auf_notiz_zurueck(self):
+        from apps.rechnungen.serializers import pruefgrund_text
+        text = pruefgrund_text(self._rechnung(typ='irgendwas_neues', notiz='Sonderfall XY'))
+        self.assertIn('Sonderfall XY', text)
+
+
+class RouteZurFreigabeStatusTest(TestCase):
+    """
+    Der Stufe-1-Abschluss darf eine bereits freigegebene Rechnung nicht zurück
+    nach 'zur_freigabe' werfen: ihr offener Posten bliebe bestehen, der Zustand
+    wäre widersprüchlich, und jeder Durchlauf zählt die Lernstatistik hoch.
+    """
+
+    def setUp(self):
+        self.user = make_user('freigabe_status')
+        self.objekt = make_objekt()
+        self.kreditor = make_kreditor()
+        self.konto = make_konto(self.objekt)
+
+    def _rechnung(self, status):
+        r = make_rechnung(objekt=self.objekt, kreditor=self.kreditor, aufwandskonto=self.konto)
+        r.status = status
+        r.leistungstext = 'Hausmeisterdienste'
+        r.save()
+        return r
+
+    def test_aus_stufe_1_erlaubt(self):
+        from apps.rechnungen.services.rechnung_freigabe_service import route_zur_freigabe
+        r = self._rechnung('in_buchhaltung')
+        route_zur_freigabe(r, geprueft_von=self.user)
+        r.refresh_from_db()
+        self.assertEqual(r.status, 'zur_freigabe')
+
+    def test_bereits_freigegeben_wird_abgelehnt(self):
+        from django.core.exceptions import ValidationError
+        from apps.rechnungen.services.rechnung_freigabe_service import route_zur_freigabe
+        r = self._rechnung('freigegeben')
+        with self.assertRaises(ValidationError):
+            route_zur_freigabe(r, geprueft_von=self.user)
+        r.refresh_from_db()
+        self.assertEqual(r.status, 'freigegeben')   # unveraendert
+
+    def test_bezahlt_wird_abgelehnt(self):
+        from django.core.exceptions import ValidationError
+        from apps.rechnungen.services.rechnung_freigabe_service import route_zur_freigabe
+        r = self._rechnung('bezahlt')
+        with self.assertRaises(ValidationError):
+            route_zur_freigabe(r, geprueft_von=self.user)
+
+    def test_vorhandene_op_buchung_wird_abgelehnt(self):
+        """Auch aus einem Stufe-1-Status: existiert die OP-Buchung, ist Schluss."""
+        from django.core.exceptions import ValidationError
+        from apps.buchhaltung.models import Buchung
+        from apps.rechnungen.services.rechnung_freigabe_service import route_zur_freigabe
+        r = self._rechnung('in_buchhaltung')
+        r.op_buchung = Buchung.objects.create(
+            objekt=self.objekt, betrag=Decimal('10.00'), buchungsdatum=date(2026, 1, 1))
+        r.save(update_fields=['op_buchung'])
+        with self.assertRaises(ValidationError):
+            route_zur_freigabe(r, geprueft_von=self.user)
+
+    def test_lernstatistik_wird_nicht_hochgezaehlt(self):
+        """Der abgelehnte Durchlauf darf keine Match-Regel anlegen."""
+        from django.core.exceptions import ValidationError
+        from apps.rechnungen.models import RechnungsMatchRegel
+        from apps.rechnungen.services.rechnung_freigabe_service import route_zur_freigabe
+        r = self._rechnung('freigegeben')
+        vorher = RechnungsMatchRegel.objects.count()
+        with self.assertRaises(ValidationError):
+            route_zur_freigabe(r, geprueft_von=self.user)
+        self.assertEqual(RechnungsMatchRegel.objects.count(), vorher)
+
+
+class KreditorKontoauszugStornoTest(TestCase):
+    """
+    Der Buchungssaldo im Kreditor-Kontoauszug muss Storno-Paare BEIDSEITIG
+    ausschliessen. Wird nur das stornierte Original gefiltert, bleibt die
+    Gegenbuchung allein stehen und verfälscht den Saldo um ihren Betrag.
+    """
+
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+        self.user = get_user_model().objects.create_user(username='kkauszug', password='x')
+        self.objekt = make_objekt()
+        self.kreditor = make_kreditor()
+        self.kreditor.kreditorennummer = '70099'
+        self.kreditor.save(update_fields=['kreditorennummer'])
+        self.konto_kred = make_konto(self.objekt, kontonummer='70099', kontoname='Kreditor Test')
+        self.konto_bank = make_konto(self.objekt, kontonummer='18000', kontoname='Bank')
+
+    def _saldo(self):
+        from apps.rechnungen.views import KreditorViewSet
+        from rest_framework.test import APIRequestFactory
+        req = APIRequestFactory().get('/')
+        req.user = self.user
+        resp = KreditorViewSet.as_view({'get': 'kontoauszug'})(req, pk=str(self.kreditor.id))
+        return resp.data.get('buchungen_saldo')
+
+    def test_stornopaar_beeinflusst_saldo_nicht(self):
+        from apps.buchhaltung.models import Buchung
+        original = Buchung.objects.create(
+            objekt=self.objekt, betrag=Decimal('100.00'), buchungsdatum=date(2026, 3, 1),
+            soll_konto=self.konto_kred, haben_konto=self.konto_bank,
+            status='storniert', erstellt_von=self.user,
+        )
+        Buchung.objects.create(   # Gegenbuchung
+            objekt=self.objekt, betrag=Decimal('100.00'), buchungsdatum=date(2026, 3, 1),
+            soll_konto=self.konto_bank, haben_konto=self.konto_kred,
+            status='festgeschrieben', storno_von=original, erstellt_von=self.user,
+        )
+        self.assertEqual(Decimal(str(self.saldo_oder_null())), Decimal('0'))
+
+    def saldo_oder_null(self):
+        s = self._saldo()
+        return s if s is not None else 0
+
+    def test_offene_buchung_zaehlt_weiterhin(self):
+        """Gegenprobe: eine normale Buchung muss im Saldo erscheinen."""
+        from apps.buchhaltung.models import Buchung
+        Buchung.objects.create(
+            objekt=self.objekt, betrag=Decimal('250.00'), buchungsdatum=date(2026, 3, 2),
+            soll_konto=self.konto_kred, haben_konto=self.konto_bank,
+            status='festgeschrieben', erstellt_von=self.user,
+        )
+        self.assertEqual(Decimal(str(self.saldo_oder_null())), Decimal('250'))

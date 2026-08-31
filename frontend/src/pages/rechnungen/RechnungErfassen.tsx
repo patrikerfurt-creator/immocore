@@ -146,8 +146,20 @@ export default function RechnungErfassen() {
   useEffect(() => {
     if (!form.objekt_id) { setEinheiten([]); setKonten([]); return }
     objekteApi.listEinheiten({ objekt: form.objekt_id }).then(setEinheiten).catch(() => setEinheiten([]))
-    buchhaltungApi.konten(form.objekt_id).then(ks => setKonten(ks.filter(istAufwandskonto))).catch(() => setKonten([]))
-  }, [form.objekt_id])
+    // Konten sind jahresgebunden: die Liste muss zum Rechnungsdatum passen.
+    // Sonst enthält sie die Konten des laufenden Wirtschaftsjahres, während die
+    // Vorkontierung auf das Konto des Belegjahres zeigt — das <select> findet
+    // dann keine passende Option und wirkt leer, obwohl ein Konto gesetzt ist.
+    const jahr = /^\d{4}-/.test(form.rechnungsdatum) ? form.rechnungsdatum.slice(0, 4) : undefined
+    buchhaltungApi.konten(form.objekt_id, jahr ? { jahr } : undefined)
+      .then(ks => setKonten(ks.filter(istAufwandskonto)))
+      // Fehler sichtbar machen: eine leere Kontoauswahl ohne Hinweis sieht aus
+      // wie „es gibt keine Konten" statt „der Abruf ist fehlgeschlagen".
+      .catch(() => {
+        setKonten([])
+        setFehler(`Aufwandskonten konnten nicht geladen werden${jahr ? ` (Wirtschaftsjahr ${jahr})` : ''}.`)
+      })
+  }, [form.objekt_id, form.rechnungsdatum])
 
   const einheitenGefiltert = useMemo(() => {
     const q = einheitSuche.trim().toLowerCase()
@@ -334,12 +346,21 @@ export default function RechnungErfassen() {
         </div>
       )}
 
-      {/* Duplikat-Verdacht */}
-      {(rechnung?.status === 'duplikat' || rechnung?.duplikat_typ) && (
-        <div className="mb-3 p-2.5 rounded bg-orange-50 border border-orange-200 text-sm text-orange-800">
-          ⚠ Möglicher Duplikat-Verdacht{rechnung?.duplikat_typ ? ` (${rechnung.duplikat_typ})` : ''}
-          {rechnung?.duplikat_von_dateiname ? ` — Original: ${rechnung.duplikat_von_dateiname}` : ''}.
-          Vor dem Erfassen prüfen.
+      {/* Grund für Prüffall / Duplikat — Klartext statt technischem Code */}
+      {(rechnung?.status === 'prueffall' || rechnung?.status === 'duplikat' || rechnung?.duplikat_typ) && (
+        <div className="mb-3 p-3 rounded bg-orange-50 border border-orange-200 text-sm text-orange-900">
+          <div className="font-semibold mb-1">
+            {rechnung?.status === 'prueffall' ? '⚠ Prüffall — warum?' : '⚠ Duplikat-Verdacht — warum?'}
+          </div>
+          <div>
+            {rechnung?.pruefgrund
+              || `Zur Prüfung zurückgehalten${rechnung?.duplikat_typ ? ` (${rechnung.duplikat_typ})` : ''}.`}
+          </div>
+          {rechnung?.duplikat_von_dateiname && (
+            <div className="mt-1 text-orange-700">
+              Bereits erfasst als: <span className="font-mono">{rechnung.duplikat_von_dateiname}</span>
+            </div>
+          )}
         </div>
       )}
 

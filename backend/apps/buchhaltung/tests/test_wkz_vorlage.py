@@ -116,16 +116,31 @@ class VorlageAnlageTest(TestCase):
         with self.assertRaises(ValidationError):
             erstelle_vorlage(data, splits, self.user)
 
-    def test_split_direktes_buchen_raises(self):
-        """Konto mit direktes_buchen=True darf nicht als Split verwendet werden."""
+    def test_split_direktes_buchen_erlaubt(self):
+        """direktes_buchen sperrt einen Aufwands-Split NICHT (ARGE-Unterkonten wie 50320).
+
+        Das Flag steuert nur, ob im E-Banking direkt gebucht werden darf. Bank- und
+        Verrechnungskonten haelt bereits die Bereichspruefung 50000-55999 draussen.
+        """
         data = _vorlage_data(self.objekt, self.kreditor, betrag_gesamt=Decimal('100.00'))
         Konto.objects.create(
             wirtschaftsjahr=self.wj, kontonummer='50999', kontoname='Direkt',
             kontoart='standard', direktes_buchen=True, aktiv=True,
         )
         splits = [{'kontonummer': '50999', 'bezeichnung': 'Test', 'betrag': Decimal('100.00')}]
-        with self.assertRaises(ValidationError):
-            erstelle_vorlage(data, splits, self.user)
+        vorlage = erstelle_vorlage(data, splits, self.user)
+        self.assertEqual(vorlage.splits.count(), 1)
+
+    def test_split_arge_unterkonto_erlaubt(self):
+        """ARGE-Unterkonto (kontoart=unterkonto, direktes_buchen=True) ist als Split gueltig."""
+        data = _vorlage_data(self.objekt, self.kreditor, betrag_gesamt=Decimal('100.00'))
+        Konto.objects.create(
+            wirtschaftsjahr=self.wj, kontonummer='50320', kontoname='Gas/Öl/Wärme',
+            kontoart='unterkonto', direktes_buchen=True, aktiv=True,
+        )
+        splits = [{'kontonummer': '50320', 'bezeichnung': 'Gas', 'betrag': Decimal('100.00')}]
+        vorlage = erstelle_vorlage(data, splits, self.user)
+        self.assertEqual(vorlage.splits.first().kontonummer, '50320')
 
     def test_jahresbetrag_berechnung(self):
         data = _vorlage_data(self.objekt, self.kreditor)

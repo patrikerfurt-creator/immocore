@@ -57,6 +57,89 @@ def effektiver_zahlbetrag(rechnung) -> Decimal:
 
 
 @transaction.atomic
+@transaction.atomic
+def buche_aufwand_aus_schwebe(rechnung, buchungsdatum: date, gebucht_von):
+    """
+    Bucht NUR die Aufwandsseite (Phase 2 / Buchung 1) aus dem Schwebekonto:
+
+        normale Rechnung: Soll Aufwandskonto / Haben 15900
+        Gutschrift:       Soll 15900         / Haben Aufwandskonto
+
+    Für Rechnungen, deren Kreditorverbindlichkeit bereits auf anderem Weg
+    ausgeglichen wurde — etwa wenn ein Bankumsatz im E-Banking direkt gegen das
+    Kreditorkonto gebucht wird. `_versuche_op_ausgleich()` schließt dort den OP
+    und setzt die Rechnung auf 'bezahlt', realisiert den Aufwand aber nicht;
+    ohne diesen Nachtrag bliebe der Betrag dauerhaft auf 15900 stehen und das
+    kontierte Aufwandskonto leer.
+
+    Idempotent über `rechnung.aufwand_buchung`. Gibt die Buchung zurück (bei
+    Splits die erste) oder None, wenn nichts zu tun war.
+    """
+    from apps.konten.services import konto_im_jahr
+
+    if not rechnung.aufwandskonto_id or rechnung.aufwand_buchung_id:
+        return None
+
+    konto_15900 = (
+        Konto.objects.select_related('wirtschaftsjahr').filter(
+            wirtschaftsjahr__objekt_id=rechnung.objekt_id,
+            kontonummer=KONTO_SCHWEBENDE_ER,
+            wirtschaftsjahr__jahr=buchungsdatum.year,
+        ).first()
+        or Konto.objects.select_related('wirtschaftsjahr').filter(
+            wirtschaftsjahr__objekt_id=rechnung.objekt_id,
+            kontonummer=KONTO_SCHWEBENDE_ER,
+        ).order_by('-wirtschaftsjahr__jahr').first()
+    )
+    if not konto_15900:
+        raise ValidationError(f"Konto {KONTO_SCHWEBENDE_ER} nicht im Objekt angelegt.")
+
+    wj = konto_15900.wirtschaftsjahr
+    jahr = buchungsdatum.year
+    ist_gutschrift = getattr(rechnung, 'ist_gutschrift', False)
+    belegnr = _naechste_belegnr(buchungsdatum)
+    ref = rechnung.rechnungsnummer or str(rechnung.id)
+    text = (
+        f"{'Gutschrift' if ist_gutschrift else 'Aufwand'} "
+        f"{rechnung.rechnungsnummer or rechnung.dateiname} / "
+        f"{rechnung.kreditor.name if rechnung.kreditor else 'Lieferant'} "
+        f"— Auflösung 15900"
+    )
+
+    def _buche(konto_aufwand, betrag, zusatz=''):
+        return Buchung.objects.create(
+            objekt=rechnung.objekt,
+            soll_konto=konto_15900 if ist_gutschrift else konto_aufwand,
+            haben_konto=konto_aufwand if ist_gutschrift else konto_15900,
+            betrag=betrag,
+            buchungsdatum=buchungsdatum,
+            buchungstext=(text + zusatz)[:255],
+            belegnr=belegnr,
+            beleg_referenz=ref,
+            wirtschaftsjahr=wj,
+            wirtschaftsjahr_nr=wj.jahr if wj else jahr,
+            status='festgeschrieben',
+            erstellt_von=gebucht_von,
+        )
+
+    splits = list(rechnung.splits.select_related('aufwandskonto').all())
+    erste = None
+    if splits:
+        for split in splits:
+            b = _buche(konto_im_jahr(split.aufwandskonto, jahr), split.betrag,
+                       f" (Split {split.position + 1}/{len(splits)})")
+            erste = erste or b
+    else:
+        erste = _buche(konto_im_jahr(rechnung.aufwandskonto, jahr),
+                       abs(rechnung.betrag_brutto))
+
+    rechnung.aufwand_buchung = erste
+    if not rechnung.buchung_id:
+        rechnung.buchung = erste
+    rechnung.save(update_fields=['aufwand_buchung', 'buchung'])
+    return erste
+
+
 def rechnung_bezahlen(rechnung, buchungsdatum: date, gebucht_von):
     """
     Phase 2 – Zahlungslauf.
@@ -127,6 +210,12 @@ def rechnung_bezahlen(rechnung, buchungsdatum: date, gebucht_von):
     ref = rechnung.rechnungsnummer or str(rechnung.id)
 
     # ── Split-Buchungen ──────────────────────────────────────────────────────
+    # Aufwandskonten ins Jahr des Buchungsdatums auflösen — die FKs zeigen auf
+    # das Wirtschaftsjahr, in dem die Rechnung erfasst/freigegeben wurde.
+    from apps.konten.services import konto_im_jahr
+    _jahr = buchungsdatum.year
+    rechnung_aufwandskonto = konto_im_jahr(rechnung.aufwandskonto, _jahr)
+
     splits = list(rechnung.splits.select_related('aufwandskonto').all())
     if splits:
         summe = sum(s.betrag for s in splits)
@@ -139,9 +228,9 @@ def rechnung_bezahlen(rechnung, buchungsdatum: date, gebucht_von):
             split_text = f"{text} (Split {split.position + 1}/{len(splits)})"
             if ist_gutschrift:
                 soll_k  = konto_15900
-                haben_k = split.aufwandskonto
+                haben_k = konto_im_jahr(split.aufwandskonto, _jahr)
             else:
-                soll_k  = split.aufwandskonto
+                soll_k  = konto_im_jahr(split.aufwandskonto, _jahr)
                 haben_k = konto_15900
             b = Buchung.objects.create(
                 objekt=rechnung.objekt,
@@ -198,7 +287,7 @@ def rechnung_bezahlen(rechnung, buchungsdatum: date, gebucht_von):
         buchung_aufwand = Buchung.objects.create(
             objekt=rechnung.objekt,
             soll_konto=konto_15900,
-            haben_konto=rechnung.aufwandskonto,
+            haben_konto=rechnung_aufwandskonto,
             betrag=betrag,
             buchungsdatum=buchungsdatum,
             buchungstext=text,
@@ -233,7 +322,7 @@ def rechnung_bezahlen(rechnung, buchungsdatum: date, gebucht_von):
         # Buchung 1 (Aufwand): Soll Aufwandskonto / Haben 15900  (nur Zahlbetrag)
         buchung_aufwand = Buchung.objects.create(
             objekt=rechnung.objekt,
-            soll_konto=rechnung.aufwandskonto,
+            soll_konto=rechnung_aufwandskonto,
             haben_konto=konto_15900,
             betrag=zahlbetrag,
             buchungsdatum=buchungsdatum,
