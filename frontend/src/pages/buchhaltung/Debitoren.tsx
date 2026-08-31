@@ -185,8 +185,8 @@ function PersonenkontoListe({
         <div className="flex items-center gap-4">
           {wjSelector}
           <div className="text-sm text-gray-500">
-            Gesamt offen:{' '}
-            <span className="font-semibold text-red-600">{EUR(gesamtOffen)}</span>
+            Gesamtsaldo:{' '}
+            <span className={`font-semibold ${gesamtOffen < 0 ? 'text-red-600' : 'text-green-600'}`}>{EUR(gesamtOffen)}</span>
           </div>
         </div>
       </div>
@@ -209,7 +209,7 @@ function PersonenkontoListe({
                     Einheit <DebSortIcon active={sortKey === 'einheit_nr'} dir={sortDir} />
                   </th>
                   <th className={`${thClass} text-right`} onClick={() => handleSort('saldo_offen')}>
-                    Saldo offen <DebSortIcon active={sortKey === 'saldo_offen'} dir={sortDir} />
+                    Saldo <DebSortIcon active={sortKey === 'saldo_offen'} dir={sortDir} />
                   </th>
                   <th className={thClass} onClick={() => handleSort('status')}>
                     Status <DebSortIcon active={sortKey === 'status'} dir={sortDir} />
@@ -244,7 +244,7 @@ function PersonenkontoListe({
                       <td className="px-3 py-2.5 font-mono font-semibold text-blue-700">{k.kontonummer}</td>
                       <td className="px-3 py-2.5 font-medium text-gray-900">{k.eigentuemer_name}</td>
                       <td className="px-3 py-2.5 text-gray-500">{k.einheit_nr || '—'}</td>
-                      <td className={`px-3 py-2.5 text-right font-semibold tabular-nums ${k.saldo_offen > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                      <td className={`px-3 py-2.5 text-right font-semibold tabular-nums ${k.saldo_offen < 0 ? 'text-red-600' : 'text-green-600'}`}>
                         {EUR(k.saldo_offen)}
                       </td>
                       <td className="px-3 py-2.5">
@@ -330,7 +330,7 @@ function KontoauszugView({
           <div className="text-right">
             <div className="text-xs text-gray-400 mb-1">Aktueller Saldo</div>
             <div className={`text-2xl font-bold tabular-nums ${
-              (data?.saldo_gesamt ?? 0) > 0 ? 'text-red-600' : 'text-green-600'
+              (data?.saldo_gesamt ?? 0) < 0 ? 'text-red-600' : 'text-green-600'
             }`}>
               {EUR(data?.saldo_gesamt ?? konto.saldo_offen)}
             </div>
@@ -385,7 +385,7 @@ function KontoauszugView({
                     {pos.haben != null ? EUR(pos.haben) : ''}
                   </td>
                   <td className={`px-4 py-2.5 text-right tabular-nums font-semibold ${
-                    pos.saldo > 0 ? 'text-red-600' : pos.saldo < 0 ? 'text-green-600' : 'text-gray-500'
+                    pos.saldo < 0 ? 'text-red-600' : pos.saldo > 0 ? 'text-green-600' : 'text-gray-500'
                   }`}>
                     {EUR(pos.saldo)}
                   </td>
@@ -402,7 +402,7 @@ function KontoauszugView({
                     Gesamtsaldo
                   </td>
                   <td className={`px-4 py-3 text-right tabular-nums font-bold text-base ${
-                    (data?.saldo_gesamt ?? 0) > 0 ? 'text-red-600' : 'text-green-600'
+                    (data?.saldo_gesamt ?? 0) < 0 ? 'text-red-600' : 'text-green-600'
                   }`}>
                     {EUR(data?.saldo_gesamt ?? 0)}
                   </td>

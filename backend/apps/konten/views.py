@@ -268,6 +268,10 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
         Gibt alle Personenkonten eines Objekts zurück inkl. Saldo.
         Soll = Nebenbuch (HausgeldSollstellung.soll_betrag, nicht storniert).
         Haben = Zahlungseingänge (Buchung mit soll_konto gesetzt, verknüpft via Personenkonto).
+
+        Vorzeichen aus Eigentümersicht (wie ein Bankkonto):
+        saldo_offen < 0 = Rückstand (weniger gezahlt als gefordert),
+        saldo_offen > 0 = Guthaben.
         """
         from django.db.models import Sum
         from apps.buchhaltung.models import Buchung, HausgeldSollstellung
@@ -321,7 +325,7 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
         for pk in pks:
             soll  = soll_per_ev.get(pk.vertrag_id) or Decimal('0')
             haben = haben_per_pk.get(pk.id) or Decimal('0')
-            saldo = soll - haben
+            saldo = haben - soll
             einheit_nr = ''
             try:
                 einheit_nr = pk.vertrag.einheit.einheit_nr
@@ -348,6 +352,9 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
         Soll  = Forderungen aus dem Nebenbuch (HausgeldSollstellung).
         Haben = Zahlungseingänge (Buchung, verknüpft via Personenkonto oder SollstellungZahlung).
         Beide Listen werden nach Datum gemischt und chronologisch sortiert.
+
+        Vorzeichen aus Eigentümersicht: negativer Saldo = Rückstand,
+        positiver Saldo = Guthaben.
         """
         from apps.buchhaltung.models import Buchung, HausgeldSollstellung
 
@@ -423,7 +430,7 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
         for e in eintraege:
             soll_val  = Decimal(str(e['soll']))  if e['soll']  is not None else Decimal('0')
             haben_val = Decimal(str(e['haben'])) if e['haben'] is not None else Decimal('0')
-            saldo += soll_val - haben_val
+            saldo += haben_val - soll_val
             e['saldo'] = float(saldo)
             e.pop('_datum')
             e.pop('_sort2')
