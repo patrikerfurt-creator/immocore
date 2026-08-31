@@ -71,13 +71,15 @@ class Buchungsart(models.Model):
         help_text='Buchungstyp für den Dialogbuchhaltung-Filter. Leer = nicht in der Dialogbuchhaltung wählbar.',
     )
     RICHTUNG_CHOICES = [
-        ('eingang', 'Eingang (Bank → Personenkonto)'),
-        ('abgang',  'Abgang (Personenkonto → Bank)'),
+        ('eingang', 'Eingang (Bank → Gegenkonto)'),
+        ('abgang',  'Abgang (Gegenkonto → Bank)'),
     ]
     richtung = models.CharField(
         max_length=10, choices=RICHTUNG_CHOICES,
         null=True, blank=True,
-        help_text='Nur für Personenkontobuchungen: bestimmt Buchungsrichtung automatisch.',
+        help_text='Bestimmt die Buchungsrichtung in der Dialogbuchhaltung automatisch. '
+                  'Gegenkonto ist je Buchungstyp das Personenkonto bzw. das '
+                  'Kreditorkonto. "abgang" = Gegenkonto im Soll, Bank im Haben.',
     )
 
     class Meta:
@@ -1078,6 +1080,7 @@ class KreditorOP(models.Model):
         ('bezahlt',     'Bezahlt'),
         ('teilbezahlt', 'Teilbezahlt'),
         ('storniert',   'Storniert'),
+        ('ausgebucht',  'Ausgebucht'),
     ]
 
     op_nummer        = models.IntegerField(unique=True, db_index=True)
@@ -1112,6 +1115,37 @@ class KreditorOP(models.Model):
     )
     status           = models.CharField(max_length=20, choices=STATUS_CHOICES, default='offen')
     erstellt_am      = models.DateTimeField(auto_now_add=True)
+    # Saldovortrag ins Folgejahr (Jahresabrechnung Schritt 2): der OP bleibt
+    # offen und zahlbar, verlässt aber das abgerechnete Wirtschaftsjahr und
+    # blockiert es damit nicht mehr. Abflussprinzip — die Kosten gehören in
+    # das Jahr der Zahlung.
+    vortrag_wj       = models.ForeignKey(
+        'objekte.Wirtschaftsjahr', on_delete=models.PROTECT,
+        null=True, blank=True, related_name='vorgetragene_kreditor_ops',
+        verbose_name='Vorgetragen nach Wirtschaftsjahr',
+    )
+    vortrag_am       = models.DateTimeField(null=True, blank=True)
+    vortrag_von      = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='kreditor_op_vortraege',
+    )
+    # Ausbuchung zum Jahresende (Status 'ausgebucht'): der Posten wird nicht
+    # mehr ausgeglichen und gegen ein Ertrags- bzw. Aufwandskonto aufgelöst.
+    ausgebucht_am    = models.DateTimeField(null=True, blank=True)
+    ausgebucht_von   = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='kreditor_op_ausbuchungen',
+    )
+
+    @property
+    def ist_forderung(self) -> bool:
+        """
+        Forderung an den Kreditor (z.B. Gutschrift) statt Verbindlichkeit.
+        `betrag_offen` wird immer als Betrag ohne Vorzeichen geführt — die
+        Richtung steckt im Vorzeichen von `betrag_ursprung` und deckt sich mit
+        den Seiten der Ursprungsbuchung.
+        """
+        return self.betrag_ursprung < 0
 
     class Meta:
         verbose_name        = 'Kreditor-OP'

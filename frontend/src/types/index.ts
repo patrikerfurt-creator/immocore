@@ -545,10 +545,30 @@ export interface KreditorOP {
   betrag_ursprung: string
   betrag_offen: string
   faellig_ab: string
-  status: 'offen' | 'teilbezahlt' | 'bezahlt' | 'storniert'
+  status: 'offen' | 'teilbezahlt' | 'bezahlt' | 'storniert' | 'ausgebucht'
   kreditor_name: string
   rechnung_nr: string
   betreff: string
+  /** Bestimmt beim Ausbuchen die Buchungsseite — serverseitig ermittelt. */
+  art: 'forderung' | 'verbindlichkeit'
+}
+
+export interface KreditorOPAusbuchungResponse {
+  anzahl: number
+  wirtschaftsjahr: number
+  gegenkonto: string
+  summe: string
+  summe_verbindlichkeiten: string
+  summe_forderungen: string
+  ops: Array<{
+    op_nummer: number
+    kreditor: string
+    betrag: string
+    art: 'forderung' | 'verbindlichkeit'
+    soll_konto: string
+    haben_konto: string
+    belegnr: string
+  }>
 }
 
 export interface BankMatchRegel {

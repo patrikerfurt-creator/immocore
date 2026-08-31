@@ -78,7 +78,12 @@ def verrechne_eingang_manuell(
         ba_900 = Buchungsart.objects.filter(nr='900').first()
         erloeskonto = None
         if ba_900 and ba_900.erloeskonto_default_nr:
+            # Jahr des Buchungsdatums hat Vorrang — Konten sind jahresgebunden
             erloeskonto = KontoModel.objects.filter(
+                wirtschaftsjahr__objekt=personenkonto.objekt,
+                wirtschaftsjahr__jahr=buchungsdatum.year,
+                kontonummer=ba_900.erloeskonto_default_nr,
+            ).first() or KontoModel.objects.filter(
                 wirtschaftsjahr=wirtschaftsjahr,
                 kontonummer=ba_900.erloeskonto_default_nr,
             ).first()
@@ -123,6 +128,12 @@ def verrechne_eingang_manuell(
         if rest_ss <= 0:
             continue
 
+        # Saldovortrag: saldovortrag_service hat die Forderung (Personenkonto
+        # ↔ 90080) bereits gebucht. Ein Erlösbein hier würde sie ein zweites
+        # Mal einbuchen — die Zahlung gleicht nur das Personenkonto aus.
+        from apps.buchhaltung.services.sollstellung_service import forderung_bereits_gebucht
+        erloes_buchen = not forderung_bereits_gebucht(ss)
+
         splits = sorted(ss.splits.all(), key=_split_sort_key)
 
         if splits:
@@ -135,21 +146,25 @@ def verrechne_eingang_manuell(
 
                 teil = min(verbleibend, rest_split)
 
-                Buchung.objects.create(
-                    objekt=personenkonto.objekt,
-                    buchungsart=split.ba,
-                    betrag=teil,
-                    soll_konto=None,
-                    haben_konto=split.erloeskonto,
-                    personenkonto=personenkonto,
-                    parent_buchung=parent_buchung,
-                    buchungsdatum=buchungsdatum,
-                    belegdatum=buchungsdatum,
-                    buchungstext=f"{split.ba.bezeichnung if split.ba else ''} {ss.periode.strftime('%m/%Y')}",
-                    wirtschaftsjahr=wirtschaftsjahr,
-                    status='festgeschrieben',
-                    erstellt_von=user,
-                )
+                if erloes_buchen:
+                    from apps.konten.services import konto_im_jahr
+                    Buchung.objects.create(
+                        objekt=personenkonto.objekt,
+                        buchungsart=split.ba,
+                        betrag=teil,
+                        soll_konto=None,
+                        # Konten sind jahresgebunden — der am Split hinterlegte
+                        # Verweis kann aus einem anderen WJ stammen.
+                        haben_konto=konto_im_jahr(split.erloeskonto, buchungsdatum.year),
+                        personenkonto=personenkonto,
+                        parent_buchung=parent_buchung,
+                        buchungsdatum=buchungsdatum,
+                        belegdatum=buchungsdatum,
+                        buchungstext=f"{split.ba.bezeichnung if split.ba else ''} {ss.periode.strftime('%m/%Y')}",
+                        wirtschaftsjahr=wirtschaftsjahr,
+                        status='festgeschrieben',
+                        erstellt_von=user,
+                    )
 
                 SollstellungZahlung.objects.create(
                     sollstellung=ss,
@@ -173,25 +188,30 @@ def verrechne_eingang_manuell(
             erloeskonto = None
             if ba and ba.erloeskonto_default_nr:
                 erloeskonto = Konto.objects.filter(
+                    wirtschaftsjahr__objekt=personenkonto.objekt,
+                    wirtschaftsjahr__jahr=buchungsdatum.year,
+                    kontonummer=ba.erloeskonto_default_nr,
+                ).first() or Konto.objects.filter(
                     wirtschaftsjahr=wirtschaftsjahr,
                     kontonummer=ba.erloeskonto_default_nr,
                 ).first()
 
-            Buchung.objects.create(
-                objekt=personenkonto.objekt,
-                buchungsart=ba,
-                betrag=teil,
-                soll_konto=None,
-                haben_konto=erloeskonto,
-                personenkonto=personenkonto,
-                parent_buchung=parent_buchung,
-                buchungsdatum=buchungsdatum,
-                belegdatum=buchungsdatum,
-                buchungstext=f"{ba.bezeichnung if ba else 'Zahlung'} {ss.periode.strftime('%m/%Y')}",
-                wirtschaftsjahr=wirtschaftsjahr,
-                status='festgeschrieben',
-                erstellt_von=user,
-            )
+            if erloes_buchen:
+                Buchung.objects.create(
+                    objekt=personenkonto.objekt,
+                    buchungsart=ba,
+                    betrag=teil,
+                    soll_konto=None,
+                    haben_konto=erloeskonto,
+                    personenkonto=personenkonto,
+                    parent_buchung=parent_buchung,
+                    buchungsdatum=buchungsdatum,
+                    belegdatum=buchungsdatum,
+                    buchungstext=f"{ba.bezeichnung if ba else 'Zahlung'} {ss.periode.strftime('%m/%Y')}",
+                    wirtschaftsjahr=wirtschaftsjahr,
+                    status='festgeschrieben',
+                    erstellt_von=user,
+                )
 
             SollstellungZahlung.objects.create(
                 sollstellung=ss,

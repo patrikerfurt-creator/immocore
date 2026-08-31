@@ -1140,6 +1140,29 @@ class JahresabrechnungViewSet(viewsets.ModelViewSet):
             'daten': daten,
         })
 
+    # -- Schritt 2: Saldovortrag offener Kreditor-OPs ins Folgejahr ------------
+
+    @action(detail=True, methods=['post'], url_path='kreditor-vortrag')
+    def kreditor_vortrag(self, request, pk=None):
+        """
+        Trägt die übergebenen offenen Kreditor-OPs ins Folgejahr vor, damit
+        Schritt 2 nicht mehr blockiert. Body: {"op_nummern": [26000063, ...]}
+        """
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from .services.jahresabrechnung import kreditor_vortrag_service, wizard_service
+
+        ja = self.get_object()
+        if guard := _weg_guard(ja.objekt):
+            return guard
+        op_nummern = request.data.get('op_nummern') or []
+        try:
+            ergebnis = kreditor_vortrag_service.vortrage_kreditor_ops(
+                ja, op_nummern, request.user)
+        except DjangoValidationError as exc:
+            return Response({'error': exc.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
+        ergebnis['pruefung'] = wizard_service.buchungspruefung(ja.objekt, ja.wirtschaftsjahr)
+        return Response(ergebnis)
+
     # -- Schritt 3: Kostenstellen ---------------------------------------------
 
     @action(detail=True, methods=['get'], url_path='kostenstellen')
@@ -2216,12 +2239,52 @@ class KreditorOPViewSet(viewsets.ReadOnlyModelViewSet):
         p = self.request.query_params
         if objekt_id := p.get('objekt'):
             qs = qs.filter(objekt_id=objekt_id)
+        # Dialogbuchhaltung: offene Posten des gewählten Kreditors
+        if kreditor_id := p.get('kreditor'):
+            qs = qs.filter(kreditor_id=kreditor_id)
         status_p = p.get('status')
         if status_p:
             qs = qs.filter(status=status_p)
         else:
             qs = qs.filter(status__in=['offen', 'teilbezahlt'])
         return qs.order_by('faellig_ab')
+
+    @action(detail=False, methods=['post'], url_path='ausbuchen')
+    def ausbuchen(self, request):
+        """
+        Bucht offene Kreditor-Posten gegen ein Gegenkonto aus (BA 056).
+        Body: {"objekt": <id>, "op_nummern": [..], "gegenkonto": <id>,
+               "buchungsdatum": "YYYY-MM-DD", "buchungstext": "optional"}
+        """
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from apps.konten.models import Konto
+        from apps.objekte.models import Objekt
+        from .services import kreditor_ausbuchung_service
+
+        objekt = Objekt.objects.filter(pk=request.data.get('objekt')).first()
+        if objekt is None:
+            return Response({'error': 'Objekt nicht gefunden.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        gegenkonto = Konto.objects.filter(pk=request.data.get('gegenkonto')).first()
+        if gegenkonto is None:
+            return Response({'error': 'Gegenkonto nicht gefunden.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        try:
+            ergebnis = kreditor_ausbuchung_service.ausbuchen(
+                objekt=objekt,
+                op_nummern=request.data.get('op_nummern') or [],
+                gegenkonto=gegenkonto,
+                buchungsdatum=request.data.get('buchungsdatum'),
+                user=request.user,
+                buchungstext=request.data.get('buchungstext') or '',
+            )
+        except DjangoValidationError as exc:
+            return Response({'error': exc.messages[0]},
+                            status=status.HTTP_400_BAD_REQUEST)
+        except (TypeError, ValueError):
+            return Response({'error': 'Ungültiges Buchungsdatum.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        return Response(ergebnis)
 
 
 class SepaZahlungslaufViewSet(viewsets.ReadOnlyModelViewSet):

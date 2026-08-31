@@ -3,10 +3,13 @@ SEPA pain.008.003.02 — SEPA Direct Debit Initiation
 Erzeugt SEPA-Lastschrift XML für Hausgeldeinzüge.
 Kompatibel mit: Windata, S-Firm, StarMoney, Profi cash
 """
+import logging
 import uuid
 from datetime import date
 from xml.etree import ElementTree as ET
 from xml.dom import minidom
+
+logger = logging.getLogger(__name__)
 
 
 NS = 'urn:iso:std:iso:20022:tech:xsd:pain.008.003.02'
@@ -325,15 +328,66 @@ def generiere_pain008(lastschriftlauf) -> str:
     return xml_bytes.decode('utf-8')
 
 
+def _erloes_teilbuchung(parent, personenkonto, ba, erloeskonto, betrag, periode, user):
+    """
+    Erlösbein einer eingezogenen Position: Personenkonto Soll / Erlöskonto Haben.
+
+    Die Kopfbuchung (13650 Soll / Personenkonto Haben) bildet nur den Zahlungsweg
+    ab. Ohne dieses Bein bliebe der Ertrag ungebucht und das Personenkonto trüge
+    einen reinen Haben-Saldo. Gleiche Struktur wie beim Überweisungseingang in
+    zahlungs_zuordnung_service — Teilbuchung mit parent_buchung.
+
+    Das Erlöskonto wird ins Jahr des Buchungsdatums aufgelöst: Konten sind
+    jahresgebunden, und der am Split hinterlegte Verweis kann aus einem anderen
+    Wirtschaftsjahr stammen.
+    """
+    from apps.buchhaltung.models import Buchung
+    from apps.konten.services import konto_im_jahr
+
+    if erloeskonto is None:
+        logger.warning(
+            'Lastschrift %s: kein Erlöskonto für BA %s — Erlösbein nicht gebucht.',
+            parent.belegnr or parent.id, ba.nr if ba else '?',
+        )
+        return None
+
+    konto = konto_im_jahr(erloeskonto, parent.buchungsdatum.year)
+    return Buchung.objects.create(
+        objekt=parent.objekt,
+        buchungsart=ba,
+        betrag=betrag,
+        soll_konto=None,
+        haben_konto=konto,
+        personenkonto=personenkonto,
+        parent_buchung=parent,
+        buchungsdatum=parent.buchungsdatum,
+        belegdatum=parent.buchungsdatum,
+        buchungstext=(
+            f"{ba.bezeichnung if ba else 'Hausgeld'} "
+            f"{periode.strftime('%m/%Y') if periode else ''}"
+        ).strip(),
+        wirtschaftsjahr=parent.wirtschaftsjahr,
+        wirtschaftsjahr_nr=parent.wirtschaftsjahr.jahr if parent.wirtschaftsjahr else None,
+        status='festgeschrieben',
+        erstellt_von=user,
+    )
+
+
 def _tilge_sollstellungen(sollstellung_ids, buchung, user):
     """
     Tilgt die Nebenbuch-Sollstellungen (HausgeldSollstellung) einer eingezogenen
     Lastschrift-Position vollständig: ist_betrag = soll_betrag, Splits voll,
     SollstellungZahlung je Split, status_cached = 'ausgeglichen'.
+
+    Je Split entsteht zusätzlich das Erlösbein im Hauptbuch (Personenkonto Soll /
+    Erlöskonto der Buchungsart Haben) — BA 900 auf 41900, BA 911 auf 41911 usw.
     Gibt die Anzahl getilgter Sollstellungen zurück.
     """
     from apps.buchhaltung.models import HausgeldSollstellung, SollstellungZahlung
+    from apps.buchhaltung.services.sollstellung_service import forderung_bereits_gebucht
+    from apps.konten.models import Konto
 
+    personenkonto = buchung.personenkonto
     getilgt = 0
     for ss_id in sollstellung_ids:
         ss = (HausgeldSollstellung.objects
@@ -342,6 +396,8 @@ def _tilge_sollstellungen(sollstellung_ids, buchung, user):
               .first())
         if not ss:
             continue
+        # Saldovortrag: Forderung steht bereits im Hauptbuch — kein zweites Bein
+        erloes_buchen = not forderung_bereits_gebucht(ss)
         splits = list(ss.splits.all())
         if splits:
             for split in splits:
@@ -352,15 +408,32 @@ def _tilge_sollstellungen(sollstellung_ids, buchung, user):
                     sollstellung=ss, split=split, buchung=buchung,
                     betrag=rest_split, tilgungsstufe='hauptforderung', erstellt_von=user,
                 )
+                if erloes_buchen:
+                    _erloes_teilbuchung(
+                        buchung, personenkonto, split.ba, split.erloeskonto,
+                        rest_split, ss.periode, user,
+                    )
                 split.ist_betrag_split = split.betrag
                 split.save(update_fields=['ist_betrag_split'])
         else:
+            # Sonderumlage / Abrechnungsergebnis — kein Split, Erlöskonto über die BA
             rest = ss.soll_betrag - ss.ist_betrag
             if rest != 0:
+                ba = ss.ba
+                erloeskonto = None
+                if ba and ba.erloeskonto_default_nr and buchung.wirtschaftsjahr_id:
+                    erloeskonto = Konto.objects.filter(
+                        wirtschaftsjahr=buchung.wirtschaftsjahr,
+                        kontonummer=ba.erloeskonto_default_nr,
+                    ).first()
                 SollstellungZahlung.objects.create(
                     sollstellung=ss, split=None, buchung=buchung,
                     betrag=rest, tilgungsstufe='hauptforderung', erstellt_von=user,
                 )
+                if erloes_buchen:
+                    _erloes_teilbuchung(
+                        buchung, personenkonto, ba, erloeskonto, rest, ss.periode, user,
+                    )
         ss.ist_betrag = ss.soll_betrag
         ss.status_cached = 'ausgeglichen'
         ss.save(update_fields=['ist_betrag', 'status_cached'])

@@ -51,12 +51,48 @@ def _bankkonto_fuer_ba(objekt, ba: Buchungsart):
         )
 
 
-def _erloeskonto_fuer_ba(ba: Buchungsart, objekt):
-    """Löst die Kontonummer aus ba.erloeskonto_default_nr auf."""
+def forderung_bereits_gebucht(ss) -> bool:
+    """
+    True, wenn die Forderung dieser Sollstellung schon im Hauptbuch steht.
+
+    Regelfall ist das Gegenteil: der Sollstellungslauf bucht nichts, erst der
+    Zahlungseingang erzeugt das Erlösbein (Personenkonto Soll / Erlöskonto
+    Haben). Der Saldovortrag ist die Ausnahme — `saldovortrag_service` bucht
+    Personenkonto ↔ 90080 sofort mit und legt die Sollstellung nur zusätzlich
+    als offenen Posten an. Ein Erlösbein bei Zahlung würde die Forderung ein
+    zweites Mal einbuchen.
+    """
+    return ss.sollstellungs_typ == 'saldovortrag'
+
+
+def _erloeskonto_fuer_ba(ba: Buchungsart, objekt, jahr: int = None):
+    """
+    Löst die Kontonummer aus ba.erloeskonto_default_nr auf.
+
+    `jahr` ist das Jahr der Periode, für die die Sollstellung gilt. Konten sind
+    jahresgebunden — ohne das Jahr landete der Verweis im jüngsten offenen
+    Wirtschaftsjahr, und eine Sollstellung für Mai 2025 trüge das Erlöskonto
+    aus 2026, sobald dieses Jahr eröffnet ist. Die spätere Erlösbuchung liefe
+    dann ins falsche Jahr.
+
+    Fällt auf das jüngste (offene) Wirtschaftsjahr zurück, wenn kein Jahr
+    übergeben wird oder es dort kein Konto gibt — ein Verweis ist besser als
+    keiner.
+    """
     from apps.konten.models import Konto
     from apps.objekte.models import Wirtschaftsjahr
     if not ba.erloeskonto_default_nr:
         return None
+
+    if jahr:
+        konto = Konto.objects.filter(
+            wirtschaftsjahr__objekt=objekt,
+            wirtschaftsjahr__jahr=jahr,
+            kontonummer=ba.erloeskonto_default_nr,
+        ).first()
+        if konto:
+            return konto
+
     wj = (
         Wirtschaftsjahr.objects.filter(objekt=objekt, status='offen').order_by('-jahr').first()
         or Wirtschaftsjahr.objects.filter(objekt=objekt).order_by('-jahr').first()
@@ -106,7 +142,7 @@ def lege_hausgeld_sollstellung_an(
         if betrag <= 0:
             continue
         bankkonto_ziel = _bankkonto_fuer_ba(objekt, ba_obj)
-        erloeskonto    = _erloeskonto_fuer_ba(ba_obj, objekt)
+        erloeskonto    = _erloeskonto_fuer_ba(ba_obj, objekt, jahr=periode.year)
         SollstellungSplit.objects.create(
             sollstellung=ss,
             ba=ba_obj,

@@ -106,6 +106,92 @@ class JahresabrechnungApiTest(EinzelAbrechnungServiceTestBase):
         resp = self.client.get(f'{BASE}{self.ja.id}/schritt/2/')
         self.assertEqual(resp.status_code, 200)
         self.assertFalse(resp.data['daten']['blockiert'])
+        self.assertEqual(resp.data['daten']['folgejahr'], self.wj.jahr + 1)
+
+    # -- Schritt 2: Saldovortrag offener Kreditor-OPs ---------------------------
+
+    def _offener_kreditor_op(self):
+        """Offener OP mit festgeschriebener Ursprungsbuchung 15900 / 70xxx."""
+        from apps.buchhaltung.models import Buchung, KreditorOP
+        from apps.konten.models import Konto
+        from apps.rechnungen.models import Kreditor
+        from apps.rechnungen.services.rechnung_op_service import (
+            get_or_create_kreditor_konto,
+        )
+        Wirtschaftsjahr.objects.create(
+            objekt=self.objekt, jahr=self.wj.jahr + 1,
+            beginn_monat=self.wj.beginn_monat, vorjahr=self.wj, status='offen',
+        )
+        kreditor = Kreditor.objects.create(name='API Handwerk GmbH')
+        schwebe = {
+            wj.jahr: Konto.objects.get_or_create(
+                wirtschaftsjahr=wj, kontonummer='15900',
+                defaults=dict(kontoname='Schwebende Eingangsrechnungen',
+                              direktes_buchen=False))[0]
+            for wj in Wirtschaftsjahr.objects.filter(objekt=self.objekt)
+        }
+        buchung = Buchung.objects.create(
+            objekt=self.objekt,
+            soll_konto=schwebe[self.wj.jahr],
+            haben_konto=get_or_create_kreditor_konto(
+                kreditor, self.objekt, jahr=self.wj.jahr),
+            betrag=Decimal('750.00'),
+            buchungsdatum=self.wj.ende_datum,
+            buchungstext='Eingangsrechnung API-Test',
+            wirtschaftsjahr=self.wj,
+            wirtschaftsjahr_nr=self.wj.jahr,
+            status='festgeschrieben',
+            erstellt_von=self.user,
+        )
+        return KreditorOP.objects.create(
+            op_nummer=95000001, kreditor=kreditor, objekt=self.objekt,
+            buchung=buchung,
+            betrag_ursprung=Decimal('750.00'), betrag_offen=Decimal('750.00'),
+            faellig_ab=self.wj.ende_datum, status='offen',
+        )
+
+    def test_kreditor_vortrag_entsperrt_schritt2(self):
+        op = self._offener_kreditor_op()
+        resp = self.client.get(f'{BASE}{self.ja.id}/schritt/2/')
+        self.assertTrue(resp.data['daten']['blockiert'])
+
+        resp = self.client.post(
+            f'{BASE}{self.ja.id}/kreditor-vortrag/',
+            {'op_nummern': [op.op_nummer]}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(resp.data['vorgetragen_nach'], self.wj.jahr + 1)
+        self.assertEqual(resp.data['anzahl_gebucht'], 1)
+        self.assertFalse(resp.data['pruefung']['blockiert'])
+        self.assertEqual(len(resp.data['pruefung']['vorgetragene_ops']), 1)
+
+        resp = self.client.get(f'{BASE}{self.ja.id}/schritt/2/')
+        self.assertFalse(resp.data['daten']['blockiert'])
+
+    def test_kreditor_vortrag_leere_auswahl_400(self):
+        resp = self.client.post(
+            f'{BASE}{self.ja.id}/kreditor-vortrag/', {'op_nummern': []}, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('error', resp.data)
+
+    def test_kreditor_vortrag_unbekannte_op_400(self):
+        self._offener_kreditor_op()
+        resp = self.client.post(
+            f'{BASE}{self.ja.id}/kreditor-vortrag/', {'op_nummern': [999]}, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('nicht gefunden', resp.data['error'])
+
+    def test_freigabe_nach_vortrag_nicht_mehr_durch_ops_gesperrt(self):
+        op = self._offener_kreditor_op()
+        resp = self.client.post(f'{BASE}{self.ja.id}/freigeben/')
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('Kreditoren-OPs', resp.data['error'])
+
+        self.client.post(f'{BASE}{self.ja.id}/kreditor-vortrag/',
+                         {'op_nummern': [op.op_nummer]}, format='json')
+        resp = self.client.post(f'{BASE}{self.ja.id}/freigeben/')
+        # Freigabe kann an anderen Schritten scheitern, aber nicht mehr an den OPs
+        if resp.status_code == 400:
+            self.assertNotIn('Kreditoren-OPs', resp.data['error'])
 
     def test_kostenstellen(self):
         self._create_kosten('1000.00')

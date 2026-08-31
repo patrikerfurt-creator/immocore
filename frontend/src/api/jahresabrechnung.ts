@@ -24,6 +24,35 @@ export interface SchrittResponse {
   daten: Record<string, unknown>
 }
 
+export interface KreditorOpZeile {
+  op_nummer: number
+  kreditor: string
+  betrag_offen: string
+  faellig_ab: string
+  status: string
+  buchung_festgeschrieben: boolean
+  vorgetragen_nach: number | null
+}
+
+export interface KreditorVortragResponse {
+  vorgetragen_nach: number
+  anzahl: number
+  anzahl_gebucht: number
+  summe: string
+  ops: Array<{
+    op_nummer: number
+    kreditor: string
+    betrag: string
+    gebucht: boolean
+    hinweis: string
+  }>
+  pruefung: {
+    blockiert: boolean
+    kreditor_ops: KreditorOpZeile[]
+    vorgetragene_ops: KreditorOpZeile[]
+  }
+}
+
 export interface KostenstellenPosition {
   konto_id: string
   kontonummer: string
@@ -174,4 +203,9 @@ export const jahresabrechnungApi = {
 
   freigeben: (id: string) =>
     client.post<FreigabeResponse>(`${BASE}/${id}/freigeben/`).then(r => r.data),
+
+  // Schritt 2: offene Kreditor-OPs per Saldovortrag ins Folgejahr schieben
+  kreditorVortrag: (id: string, opNummern: number[]) =>
+    client.post<KreditorVortragResponse>(
+      `${BASE}/${id}/kreditor-vortrag/`, { op_nummern: opNummern }).then(r => r.data),
 }

@@ -3,7 +3,7 @@ import type {
   Abrechnungsart, Buchung, BuchungList, BankImport, Konto,
   Buchungsart, OffenerPosten,
   CamtImportEinstellung, CamtImportLog, Kontoumsatz,
-  BankBuchung, BankMatchRegel, KreditorOP,
+  BankBuchung, BankMatchRegel, KreditorOP, KreditorOPAusbuchungResponse,
   Mahnlauf, Mahnung, Mahnsperre,
   Forderungsfall, Basiszinssatz,
   RAPPosition, RAPAufloesung,
@@ -297,8 +297,17 @@ export const buchhaltungApi = {
     client.get<BankMatchRegel[]>('/e-banking/bank-match-regeln/', { params }).then(r => r.data),
   eBankingMatchRegelDeaktivieren: (id: string) =>
     client.patch<BankMatchRegel>(`/e-banking/bank-match-regeln/${id}/`, { status: 'veraltet' }).then(r => r.data),
-  eBankingKreditorOPs: (params?: { objekt?: string; status?: string }) =>
+  eBankingKreditorOPs: (params?: { objekt?: string; status?: string; kreditor?: string }) =>
     client.get<KreditorOP[]>('/e-banking/kreditor-ops/', { params }).then(r => r.data),
+  kreditorOPsAusbuchen: (daten: {
+    objekt: string
+    op_nummern: number[]
+    gegenkonto: string
+    buchungsdatum: string
+    buchungstext?: string
+  }) =>
+    client.post<KreditorOPAusbuchungResponse>(
+      '/e-banking/kreditor-ops/ausbuchen/', daten).then(r => r.data),
   eBankingCamt054Liste: () =>
     client.get('/kontoumsaetze/camt054-liste/').then(r => r.data),
   camtVorschauUpload: (objektId: string, file: File) => {

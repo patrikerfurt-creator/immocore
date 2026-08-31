@@ -5,7 +5,9 @@ import { rechnungenApi } from '../../api/rechnungen'
 import { wirtschaftsjahreApi } from '../../api/wirtschaftsjahre'
 import { useObjektStore } from '../../stores/objekt'
 import { Button } from '../../components/ui/Button'
-import type { Konto, Buchungsart, PersonenkontoSaldo, Kreditor, Wirtschaftsjahr } from '../../types'
+import type {
+  Konto, Buchungsart, PersonenkontoSaldo, Kreditor, KreditorOP, Wirtschaftsjahr,
+} from '../../types'
 
 interface HausgeldSollstellung {
   id: string
@@ -148,6 +150,11 @@ export function Dialogbuchhaltung() {
   // Sachkonto-Saldovortrag (z.B. Bank 18000 gegen 90000)
   const [savoSkKontoId, setSavoSkKontoId] = useState('')
   const [savoSkRichtung, setSavoSkRichtung] = useState<'soll' | 'haben'>('soll')
+  // Ausbuchung offener Kreditor-Posten (BA 056)
+  const [ausbuchungKreditorId, setAusbuchungKreditorId] = useState('')
+  const [ausbuchungGegenkontoId, setAusbuchungGegenkontoId] = useState('')
+  const [ausbuchungOpNummern, setAusbuchungOpNummern] = useState<number[]>([])
+  const [ausbuchungMeldung, setAusbuchungMeldung] = useState<string | null>(null)
 
   const { data: offeneStapel } = useQuery({
     queryKey: ['buchungsstapel', objektId, 'offen'],
@@ -246,6 +253,62 @@ export function Dialogbuchhaltung() {
   // Sachkonto-Saldovortrag: BA 99 im Sachkonto-Tab → Gegenkonto 90000 fest
   const selectedFormBa = (buchungsarten ?? []).find((ba: Buchungsart) => String(ba.id) === String(form.buchungsart))
   const istSachkontoSavo = modus === 'sachkonto' && selectedFormBa?.nr === '99'
+
+  // Kreditorische Zahlung: Richtung der BA und gewählter Kreditor
+  const kreditorRichtung: 'eingang' | 'abgang' | null = modus === 'kreditor'
+    ? ((selectedFormBa as (Buchungsart & { richtung?: string }) | undefined)
+        ?.richtung as 'eingang' | 'abgang' | null ?? null)
+    : null
+  // BA 056 — Ausbuchung offener Posten: eigene Maske, keine Soll/Haben-Eingabe.
+  // Die Seite hängt nicht an der BA, sondern je Posten an Forderung/Verbindlichkeit.
+  const istKreditorAusbuchung = modus === 'kreditor' && selectedFormBa?.nr === '056'
+  const gewaehlterKreditorId = istKreditorAusbuchung
+    ? ausbuchungKreditorId
+    : (form.soll_typ === 'kreditorenkonto' ? form.soll_kreditor : '') ||
+      (form.haben_typ === 'kreditorenkonto' ? form.haben_kreditor : '')
+
+  // Offene Posten des Kreditors — bei Zahlungseingang, Zahlungsausgang und Ausbuchung
+  const { data: offeneKreditorOPs } = useQuery({
+    queryKey: ['kreditor-ops-dialog', gewaehlterKreditorId, objektId],
+    queryFn: () => buchhaltungApi.eBankingKreditorOPs({
+      objekt: objektId!,
+      kreditor: gewaehlterKreditorId,
+    }),
+    enabled: (!!kreditorRichtung || istKreditorAusbuchung)
+      && !!gewaehlterKreditorId && !!objektId,
+  })
+
+  const ausbuchungOPs = istKreditorAusbuchung ? (offeneKreditorOPs ?? []) : []
+  const ausbuchungAlleGewaehlt =
+    ausbuchungOPs.length > 0 && ausbuchungOpNummern.length === ausbuchungOPs.length
+  const ausbuchungGewaehlt = ausbuchungOPs.filter(
+    op => ausbuchungOpNummern.includes(op.op_nummer))
+  const ausbuchungSumme = ausbuchungGewaehlt.reduce(
+    (s, op) => s + Number(op.betrag_offen), 0)
+  const kannAusbuchen =
+    !!objektId && !!ausbuchungKreditorId && !!ausbuchungGegenkontoId &&
+    ausbuchungOpNummern.length > 0 && !!form.buchungsdatum
+
+  const opAusbuchenMut = useMutation({
+    mutationFn: () => buchhaltungApi.kreditorOPsAusbuchen({
+      objekt: objektId!,
+      op_nummern: ausbuchungOpNummern,
+      gegenkonto: ausbuchungGegenkontoId,
+      buchungsdatum: form.buchungsdatum,
+      buchungstext: form.buchungstext || undefined,
+    }),
+    onSuccess: res => {
+      invalidateAll()
+      qc.invalidateQueries({ queryKey: ['kreditor-ops-dialog'] })
+      setAusbuchungOpNummern([])
+      setAusbuchungMeldung(
+        `${res.anzahl} offene(r) Posten über ${EUR(res.summe)} gegen ` +
+        `${res.gegenkonto} ausgebucht (Verbindlichkeiten ` +
+        `${EUR(res.summe_verbindlichkeiten)}, Forderungen ` +
+        `${EUR(res.summe_forderungen)}).`
+      )
+    },
+  })
 
   // Offene Sollstellungen für ausgewähltes Personenkonto (nur bei Eingang + Betrag)
   const { data: offeneSollstellungen } = useQuery({
@@ -419,6 +482,35 @@ export function Dialogbuchhaltung() {
   const set = (field: keyof FormState) => (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) => setForm(prev => ({ ...prev, [field]: e.target.value }))
+
+  // Buchungsart wählen — im Kreditorenmodus bestimmt die Richtung der BA, auf
+  // welcher Seite das Kreditorkonto steht. Ein Zahlungsausgang baut die
+  // Verbindlichkeit ab: Kreditor im Soll, Bank im Haben. Ein Zahlungseingang
+  // (Rueckzahlung/Erstattung) umgekehrt. Eine bereits getroffene Auswahl wird
+  // beim Umschalten auf die andere Seite mitgenommen.
+  const setBuchungsartMitRichtung = (
+    e: React.ChangeEvent<HTMLSelectElement>
+  ) => {
+    const id = e.target.value
+    const ba = (buchungsarten ?? []).find(
+      (b: Buchungsart) => String(b.id) === String(id)
+    ) as (Buchungsart & { richtung?: 'eingang' | 'abgang' | null }) | undefined
+
+    setForm(prev => {
+      const next = { ...prev, buchungsart: id }
+      if (modus !== 'kreditor' || !ba?.richtung) return next
+      const kreditorImSoll = ba.richtung === 'abgang'
+      return {
+        ...next,
+        soll_typ:  kreditorImSoll ? 'kreditorenkonto' : 'sachkonto',
+        haben_typ: kreditorImSoll ? 'sachkonto' : 'kreditorenkonto',
+        soll_kreditor:  kreditorImSoll ? (prev.soll_kreditor || prev.haben_kreditor) : '',
+        haben_kreditor: kreditorImSoll ? '' : (prev.haben_kreditor || prev.soll_kreditor),
+        soll_konto:  kreditorImSoll ? '' : (prev.soll_konto || prev.haben_konto),
+        haben_konto: kreditorImSoll ? (prev.haben_konto || prev.soll_konto) : '',
+      }
+    })
+  }
 
   // Buchbar ist alles ausser Summierungskonten (50299 etc.) — deckt sich mit der
   // Backend-Regel in ebanking_buchungs_service.verbuche(). ARGE-Unterkonten wie
@@ -774,7 +866,7 @@ export function Dialogbuchhaltung() {
                 <option value="">— Eigentümer wählen —</option>
                 {(personenkonten ?? []).map((pk: { id: string; eigentuemer_name: string; einheit_nr: string; saldo_offen: number }) => (
                   <option key={pk.id} value={pk.id}>
-                    {pk.eigentuemer_name} — {pk.einheit_nr} (offen: {pk.saldo_offen.toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })})
+                    {pk.eigentuemer_name} — {pk.einheit_nr} (Saldo: {pk.saldo_offen.toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })})
                   </option>
                 ))}
               </select>
@@ -941,13 +1033,13 @@ export function Dialogbuchhaltung() {
             </label>
             <select
               value={form.buchungsart}
-              onChange={set('buchungsart')}
+              onChange={setBuchungsartMitRichtung}
               className="border rounded-lg px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="">— wählen —</option>
               {(buchungsarten ?? []).map((ba: Buchungsart) => (
                 <option key={ba.id} value={ba.id}>
-                  {ba.nr} {ba.kuerzel}
+                  {ba.nr} {ba.kuerzel} — {ba.bezeichnung}
                 </option>
               ))}
             </select>
@@ -977,7 +1069,7 @@ export function Dialogbuchhaltung() {
           </div>
         </div>
 
-        {!istSachkontoSavo && (<>
+        {!istSachkontoSavo && !istKreditorAusbuchung && (<>
         {/* Zeile 2: Soll / Betrag / Haben — T-Konten-Layout */}
         <div className="grid grid-cols-[1fr_auto_1fr] gap-3 items-start mb-5">
 
@@ -1115,6 +1207,232 @@ export function Dialogbuchhaltung() {
           </div>
         )}
 
+        {/* ── Ausbuchung offener Kreditor-Posten (BA 056) ── */}
+        {istKreditorAusbuchung && (
+          <div className="mb-5 space-y-4">
+            <div className="px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+              Posten ausbuchen, bei denen kein Ausgleich mehr zu erwarten ist.
+              Die Buchungsseite ergibt sich je Posten: eine <b>Verbindlichkeit</b> wird
+              im Soll des Kreditorkontos aufgelöst (Ertrag auf dem Gegenkonto), eine{' '}
+              <b>Forderung</b> im Haben (Aufwand auf dem Gegenkonto). Die Buchungen
+              werden sofort festgeschrieben.
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
+                  Kreditor *
+                </label>
+                <select
+                  value={ausbuchungKreditorId}
+                  onChange={e => {
+                    setAusbuchungKreditorId(e.target.value)
+                    setAusbuchungOpNummern([])
+                    setAusbuchungMeldung(null)
+                  }}
+                  className="border rounded-lg px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">— Kreditor wählen —</option>
+                  {aktiveKreditoren.map(k => (
+                    <option key={k.id} value={k.id}>
+                      {k.kreditorennummer} — {k.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
+                  Gegenkonto *
+                </label>
+                <select
+                  value={ausbuchungGegenkontoId}
+                  onChange={e => setAusbuchungGegenkontoId(e.target.value)}
+                  className="border rounded-lg px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">— Gegenkonto wählen —</option>
+                  {aktiveKonten.map((k: Konto) => (
+                    <option key={k.id} value={k.id}>
+                      {k.kontonummer} — {k.kontoname}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {!ausbuchungKreditorId ? (
+              <p className="text-xs text-gray-500">
+                Bitte zuerst einen Kreditor wählen.
+              </p>
+            ) : ausbuchungOPs.length === 0 ? (
+              <div className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2 border border-gray-200">
+                Keine offenen Posten für diesen Kreditor.
+              </div>
+            ) : (
+              <div className="border rounded-lg overflow-hidden max-h-64 overflow-y-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-gray-50 sticky top-0">
+                    <tr>
+                      <th className="px-2 py-1.5 w-7">
+                        <input
+                          type="checkbox"
+                          checked={ausbuchungAlleGewaehlt}
+                          onChange={() => setAusbuchungOpNummern(
+                            ausbuchungAlleGewaehlt
+                              ? []
+                              : ausbuchungOPs.map(op => op.op_nummer))}
+                          aria-label="Alle offenen Posten auswählen"
+                        />
+                      </th>
+                      <th className="text-left px-2 py-1.5 text-gray-600">OP-Nr</th>
+                      <th className="text-left px-2 py-1.5 text-gray-600">Rechnung</th>
+                      <th className="text-left px-2 py-1.5 text-gray-600">Fällig</th>
+                      <th className="text-left px-2 py-1.5 text-gray-600">Art</th>
+                      <th className="text-left px-2 py-1.5 text-gray-600">Buchung</th>
+                      <th className="text-right px-2 py-1.5 text-gray-600">Offen</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ausbuchungOPs.map((op: KreditorOP) => {
+                      const gewaehlt = ausbuchungOpNummern.includes(op.op_nummer)
+                      const forderung = op.art === 'forderung'
+                      return (
+                        <tr
+                          key={op.id}
+                          onClick={() => setAusbuchungOpNummern(v =>
+                            v.includes(op.op_nummer)
+                              ? v.filter(n => n !== op.op_nummer)
+                              : [...v, op.op_nummer])}
+                          className={`border-t cursor-pointer hover:bg-blue-50 ${gewaehlt ? 'bg-blue-50' : ''}`}
+                        >
+                          <td className="px-2 py-1.5">
+                            <input
+                              type="checkbox" checked={gewaehlt} readOnly
+                              aria-label={`OP-${op.op_nummer} auswählen`}
+                            />
+                          </td>
+                          <td className="px-2 py-1.5 tabular-nums">{op.op_nummer}</td>
+                          <td className="px-2 py-1.5">{op.rechnung_nr || '—'}</td>
+                          <td className="px-2 py-1.5">{DATUM(op.faellig_ab)}</td>
+                          <td className="px-2 py-1.5">
+                            {forderung ? 'Forderung' : 'Verbindlichkeit'}
+                          </td>
+                          <td className="px-2 py-1.5 text-gray-500">
+                            {forderung ? 'Kreditor im Haben' : 'Kreditor im Soll'}
+                          </td>
+                          <td className="px-2 py-1.5 text-right tabular-nums font-medium">
+                            {EUR(op.betrag_offen)}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                  <tfoot className="bg-gray-50 border-t">
+                    <tr>
+                      <td colSpan={6} className="px-2 py-1.5 text-right text-gray-600">
+                        {ausbuchungOpNummern.length} ausgewählt
+                      </td>
+                      <td className="px-2 py-1.5 text-right tabular-nums font-semibold">
+                        {EUR(ausbuchungSumme)}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+
+            {ausbuchungMeldung && (
+              <div className="px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-800">
+                {ausbuchungMeldung}
+              </div>
+            )}
+            {opAusbuchenMut.isError && (
+              <div className="px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+                {(opAusbuchenMut.error as { response?: { data?: { error?: string } } })
+                  ?.response?.data?.error ?? 'Ausbuchung fehlgeschlagen.'}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Offene Posten des Kreditors — bei Zahlungseingang und Zahlungsausgang ── */}
+        {kreditorRichtung && gewaehlterKreditorId && (
+          <div className="mb-5">
+            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
+              Offene Posten des Kreditors
+              <span className="ml-2 font-normal text-gray-400 normal-case">
+                Zeile anklicken übernimmt den offenen Betrag
+              </span>
+            </label>
+            {(offeneKreditorOPs ?? []).length === 0 ? (
+              <div className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2 border border-gray-200">
+                Keine offenen Posten für diesen Kreditor.
+              </div>
+            ) : (
+              <>
+                <div className="border rounded-lg overflow-hidden max-h-52 overflow-y-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-gray-50 sticky top-0">
+                      <tr>
+                        <th className="text-left px-2 py-1.5 text-gray-600">OP-Nr</th>
+                        <th className="text-left px-2 py-1.5 text-gray-600">Rechnung</th>
+                        <th className="text-left px-2 py-1.5 text-gray-600">Betreff</th>
+                        <th className="text-left px-2 py-1.5 text-gray-600">Fällig</th>
+                        <th className="text-right px-2 py-1.5 text-gray-600">Ursprung</th>
+                        <th className="text-right px-2 py-1.5 text-gray-600">Offen</th>
+                        <th className="text-left px-2 py-1.5 text-gray-600">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(offeneKreditorOPs ?? []).map((op: KreditorOP) => {
+                        const ueberfaellig = new Date(op.faellig_ab) < new Date()
+                        return (
+                          <tr
+                            key={op.id}
+                            onClick={() => setForm(prev => ({ ...prev, betrag: op.betrag_offen }))}
+                            className="border-t cursor-pointer hover:bg-blue-50"
+                            title={`Offenen Betrag ${op.betrag_offen} € übernehmen`}
+                          >
+                            <td className="px-2 py-1.5 tabular-nums">{op.op_nummer}</td>
+                            <td className="px-2 py-1.5">{op.rechnung_nr || '—'}</td>
+                            <td className="px-2 py-1.5 max-w-[14rem] truncate">{op.betreff || '—'}</td>
+                            <td className={`px-2 py-1.5 ${ueberfaellig ? 'text-red-600 font-medium' : ''}`}>
+                              {new Date(op.faellig_ab).toLocaleDateString('de-DE')}
+                            </td>
+                            <td className="px-2 py-1.5 text-right tabular-nums text-gray-500">
+                              {Number(op.betrag_ursprung).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="px-2 py-1.5 text-right tabular-nums font-medium">
+                              {Number(op.betrag_offen).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="px-2 py-1.5">{op.status}</td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                    <tfoot className="bg-gray-50 border-t">
+                      <tr>
+                        <td colSpan={5} className="px-2 py-1.5 text-right text-gray-600">
+                          Summe offen
+                        </td>
+                        <td className="px-2 py-1.5 text-right tabular-nums font-semibold">
+                          {(offeneKreditorOPs ?? [])
+                            .reduce((s: number, op: KreditorOP) => s + Number(op.betrag_offen), 0)
+                            .toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                        </td>
+                        <td />
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+                <p className="mt-1.5 text-xs text-gray-400">
+                  Anzeige zur Orientierung — die Buchung gleicht den offenen Posten nicht
+                  automatisch aus. Der OP-Ausgleich läuft über E-Banking bzw. den Zahllauf.
+                </p>
+              </>
+            )}
+          </div>
+        )}
+
         {/* Buchungstext */}
         <div className="mb-5">
           <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
@@ -1166,7 +1484,16 @@ export function Dialogbuchhaltung() {
             {editingId ? 'Abbrechen' : 'Felder leeren'}
           </button>
           <div className="flex gap-2">
-            {istSachkontoSavo ? (
+            {istKreditorAusbuchung ? (
+              <Button
+                onClick={() => { setAusbuchungMeldung(null); opAusbuchenMut.mutate() }}
+                disabled={!kannAusbuchen || opAusbuchenMut.isPending}
+              >
+                {opAusbuchenMut.isPending
+                  ? 'Buche…'
+                  : `${ausbuchungOpNummern.length || ''} Posten ausbuchen`.trim()}
+              </Button>
+            ) : istSachkontoSavo ? (
               <Button
                 onClick={() => bankSavoMut.mutate()}
                 disabled={!kannBankSavoBuchen || bankSavoMut.isPending}

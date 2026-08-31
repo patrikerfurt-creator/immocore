@@ -6,6 +6,7 @@ import { objekteApi } from '../../../api/objekte'
 import {
   EinzelAbrechnung,
   EinzelAbrechnungPosition,
+  KreditorOpZeile,
   jahresabrechnungApi,
 } from '../../../api/jahresabrechnung'
 
@@ -148,7 +149,10 @@ export function JahresabrechnungWizard() {
           />
         )}
         {schritt === 2 && jaId && (
-          <Schritt2Buchungspruefung jaId={jaId} readOnly={gesperrt} onWeiter={() => geheZu(3)} />
+          <Schritt2Buchungspruefung
+            jaId={jaId} readOnly={gesperrt}
+            onWeiter={() => geheZu(3)} onFehler={setFehler}
+          />
         )}
         {schritt === 3 && jaId && (
           <Schritt3Kostenstellen jaId={jaId} onWeiter={() => geheZu(4)} onZurueck={() => geheZu(2)} />
@@ -260,21 +264,56 @@ function Schritt1JahrObjekt({ objektId, jaId, onAngelegt, onFehler }: {
 // Schritt 2 — Buchungsprüfung
 // ---------------------------------------------------------------------------
 
-function Schritt2Buchungspruefung({ jaId, readOnly, onWeiter }: {
-  jaId: string; readOnly: boolean; onWeiter: () => void
+function Schritt2Buchungspruefung({ jaId, readOnly, onWeiter, onFehler }: {
+  jaId: string; readOnly: boolean; onWeiter: () => void; onFehler: (t: string) => void
 }) {
+  const queryClient = useQueryClient()
+  const [gewaehlt, setGewaehlt] = useState<number[]>([])
+  const [erfolg, setErfolg] = useState<string | null>(null)
+
   const { data, isLoading } = useQuery({
     queryKey: ['ja-schritt', jaId, 2],
     queryFn: () => jahresabrechnungApi.schritt(jaId, 2),
+  })
+
+  const vortrag = useMutation({
+    mutationFn: () => jahresabrechnungApi.kreditorVortrag(jaId, gewaehlt),
+    onSuccess: res => {
+      const ohneBuchung = res.ops.filter(o => !o.gebucht).length
+      setErfolg(
+        `${res.anzahl} offene(r) Posten über ${fmt(res.summe)} € nach ${res.vorgetragen_nach} ` +
+        `vorgetragen (${res.anzahl_gebucht} mit Buchung` +
+        (ohneBuchung > 0 ? `, ${ohneBuchung} ohne Buchung` : '') + ').'
+      )
+      setGewaehlt([])
+      onFehler('')
+      queryClient.invalidateQueries({ queryKey: ['ja-schritt', jaId, 2] })
+    },
+    onError: (e: unknown) => {
+      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+      onFehler(msg ?? 'Saldovortrag fehlgeschlagen.')
+    },
   })
 
   if (isLoading) return <p className="text-sm text-gray-400">Lade...</p>
 
   const daten = (data?.daten ?? {}) as {
     blockiert?: boolean
-    kreditor_ops?: Array<{ op_nummer: number; kreditor: string; betrag_offen: string; faellig_ab: string; status: string }>
+    folgejahr?: number
+    kreditor_ops?: KreditorOpZeile[]
+    vorgetragene_ops?: KreditorOpZeile[]
     wkz_ops?: Array<{ vorlage: string; faellig_am: string; status: string }>
   }
+  const offene = daten.kreditor_ops ?? []
+  const vorgetragene = daten.vorgetragene_ops ?? []
+  const folgejahr = daten.folgejahr
+  const alleGewaehlt = offene.length > 0 && gewaehlt.length === offene.length
+  const summeGewaehlt = offene
+    .filter(op => gewaehlt.includes(op.op_nummer))
+    .reduce((s, op) => s + Number(op.betrag_offen), 0)
+
+  const umschalten = (nr: number) =>
+    setGewaehlt(v => (v.includes(nr) ? v.filter(x => x !== nr) : [...v, nr]))
 
   return (
     <div className="space-y-4">
@@ -283,36 +322,135 @@ function Schritt2Buchungspruefung({ jaId, readOnly, onWeiter }: {
       {daten.blockiert ? (
         <div className="rounded-md bg-red-50 border border-red-300 p-3 text-sm text-red-700">
           Es existieren offene Kreditoren-OPs mit Fälligkeit im Wirtschaftsjahr —
-          Weiterschalten gesperrt. Bitte zuerst in der{' '}
-          <a href="/buchhaltung/kreditoren" className="underline">Kreditoren-OP-Liste</a> klären.
+          Weiterschalten gesperrt. Entweder in der{' '}
+          <a href="/buchhaltung/kreditoren" className="underline">Kreditoren-OP-Liste</a> klären
+          oder unten auswählen und per Saldovortrag nach {folgejahr} übertragen.
         </div>
       ) : (
         <p className="text-sm text-green-700">✓ Keine offenen Kreditoren-OPs im Wirtschaftsjahr.</p>
       )}
 
-      {(daten.kreditor_ops?.length ?? 0) > 0 && (
-        <table className="min-w-full text-sm">
-          <thead className="bg-gray-50 border-b border-gray-200">
-            <tr>
-              <th className="px-3 py-2 text-left font-medium text-gray-600">OP-Nr</th>
-              <th className="px-3 py-2 text-left font-medium text-gray-600">Kreditor</th>
-              <th className="px-3 py-2 text-right font-medium text-gray-600">Offen</th>
-              <th className="px-3 py-2 text-left font-medium text-gray-600">Fällig</th>
-              <th className="px-3 py-2 text-left font-medium text-gray-600">Status</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {daten.kreditor_ops!.map(op => (
-              <tr key={op.op_nummer}>
-                <td className="px-3 py-2">{op.op_nummer}</td>
-                <td className="px-3 py-2">{op.kreditor}</td>
-                <td className="px-3 py-2 text-right">{fmt(op.betrag_offen)} €</td>
-                <td className="px-3 py-2">{new Date(op.faellig_ab).toLocaleDateString('de-DE')}</td>
-                <td className="px-3 py-2">{op.status}</td>
+      {erfolg && (
+        <div className="rounded-md bg-green-50 border border-green-300 p-3 text-sm text-green-800">
+          {erfolg}
+        </div>
+      )}
+
+      {offene.length > 0 && (
+        <div className="space-y-3">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50 border-b border-gray-200">
+              <tr>
+                <th className="px-3 py-2 w-8">
+                  {!readOnly && (
+                    <input
+                      type="checkbox"
+                      checked={alleGewaehlt}
+                      onChange={() =>
+                        setGewaehlt(alleGewaehlt ? [] : offene.map(op => op.op_nummer))}
+                      aria-label="Alle offenen Posten auswählen"
+                    />
+                  )}
+                </th>
+                <th className="px-3 py-2 text-left font-medium text-gray-600">OP-Nr</th>
+                <th className="px-3 py-2 text-left font-medium text-gray-600">Kreditor</th>
+                <th className="px-3 py-2 text-right font-medium text-gray-600">Offen</th>
+                <th className="px-3 py-2 text-left font-medium text-gray-600">Fällig</th>
+                <th className="px-3 py-2 text-left font-medium text-gray-600">Status</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {offene.map(op => (
+                <tr key={op.op_nummer} className={gewaehlt.includes(op.op_nummer) ? 'bg-primary-50' : ''}>
+                  <td className="px-3 py-2">
+                    {!readOnly && (
+                      <input
+                        type="checkbox"
+                        checked={gewaehlt.includes(op.op_nummer)}
+                        onChange={() => umschalten(op.op_nummer)}
+                        aria-label={`OP-${op.op_nummer} auswählen`}
+                      />
+                    )}
+                  </td>
+                  <td className="px-3 py-2">{op.op_nummer}</td>
+                  <td className="px-3 py-2">
+                    {op.kreditor}
+                    {!op.buchung_festgeschrieben && (
+                      <span
+                        className="ml-2 text-xs text-amber-700"
+                        title="Zu diesem OP gibt es im Wirtschaftsjahr keine festgeschriebene
+                               Buchung — der Vortrag verschiebt nur den offenen Posten."
+                      >
+                        (ohne festgeschriebene Buchung)
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-right">{fmt(op.betrag_offen)} €</td>
+                  <td className="px-3 py-2">{new Date(op.faellig_ab).toLocaleDateString('de-DE')}</td>
+                  <td className="px-3 py-2">{op.status}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          {!readOnly && (
+            <div className="rounded-md border border-gray-200 bg-gray-50 p-3 space-y-2">
+              <p className="text-xs text-gray-600">
+                Saldovortrag nach {folgejahr}: Die Kreditorenverbindlichkeit wird zum
+                Jahresende aufgelöst und zum {folgejahr}-Beginn wieder eingestellt
+                (Kreditorkonto gegen Schwebekonto, erfolgsneutral). Der offene Posten
+                bleibt offen und zahlbar — die Kosten fallen nach dem Abflussprinzip
+                erst im Jahr der Zahlung an.
+              </p>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => { setErfolg(null); vortrag.mutate() }}
+                  disabled={gewaehlt.length === 0 || vortrag.isPending}
+                  className="px-4 py-2 bg-amber-600 text-white text-sm rounded hover:bg-amber-700 disabled:opacity-50"
+                >
+                  {vortrag.isPending
+                    ? 'Buche...'
+                    : `Saldovortrag nach ${folgejahr} buchen`}
+                </button>
+                <span className="text-sm text-gray-600">
+                  {gewaehlt.length === 0
+                    ? 'Keine Posten ausgewählt.'
+                    : `${gewaehlt.length} Posten, ${fmt(summeGewaehlt)} €`}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {vorgetragene.length > 0 && (
+        <div className="space-y-1">
+          <h3 className="text-sm font-medium text-gray-600">
+            Ins Folgejahr vorgetragen (blockiert nicht mehr)
+          </h3>
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50 border-b border-gray-200">
+              <tr>
+                <th className="px-3 py-2 text-left font-medium text-gray-600">OP-Nr</th>
+                <th className="px-3 py-2 text-left font-medium text-gray-600">Kreditor</th>
+                <th className="px-3 py-2 text-right font-medium text-gray-600">Offen</th>
+                <th className="px-3 py-2 text-left font-medium text-gray-600">Fällig</th>
+                <th className="px-3 py-2 text-left font-medium text-gray-600">Vorgetragen nach</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {vorgetragene.map(op => (
+                <tr key={op.op_nummer} className="text-gray-500">
+                  <td className="px-3 py-2">{op.op_nummer}</td>
+                  <td className="px-3 py-2">{op.kreditor}</td>
+                  <td className="px-3 py-2 text-right">{fmt(op.betrag_offen)} €</td>
+                  <td className="px-3 py-2">{new Date(op.faellig_ab).toLocaleDateString('de-DE')}</td>
+                  <td className="px-3 py-2">{op.vorgetragen_nach}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {(daten.wkz_ops?.length ?? 0) > 0 && (

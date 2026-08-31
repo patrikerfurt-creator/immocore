@@ -69,6 +69,21 @@ class BuchungSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ['id', 'erstellt_am']
 
+    def validate(self, attrs):
+        """
+        Kreditorische Buchungen aus der Dialogbuchhaltung tragen die
+        Kreditor-Seite nur als FK. Das fehlende Sachkonto 70xxx wird hier
+        ergänzt, damit die Buchung im Hauptbuch vollständig ist.
+        """
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from .services.kreditor_buchung_service import kreditorkonto_ergaenzen
+
+        attrs = super().validate(attrs)
+        try:
+            return kreditorkonto_ergaenzen(attrs, instance=self.instance)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({'kreditor': exc.messages})
+
 
 class BuchungListSerializer(serializers.ModelSerializer):
     soll_konto_nr = serializers.CharField(source='soll_konto.kontonummer', read_only=True)
@@ -161,6 +176,15 @@ class KreditorOPSerializer(serializers.ModelSerializer):
     kreditor_name = serializers.SerializerMethodField()
     rechnung_nr   = serializers.SerializerMethodField()
     betreff       = serializers.SerializerMethodField()
+    art           = serializers.SerializerMethodField()
+
+    def get_art(self, obj):
+        """
+        'forderung' | 'verbindlichkeit' — bestimmt beim Ausbuchen die
+        Buchungsseite. Serverseitig ermittelt, damit Maske und Buchung nicht
+        auseinanderlaufen.
+        """
+        return 'forderung' if obj.ist_forderung else 'verbindlichkeit'
 
     def get_kreditor_name(self, obj):
         k = obj.kreditor
@@ -179,7 +203,7 @@ class KreditorOPSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'op_nummer',
             'betrag_ursprung', 'betrag_offen', 'faellig_ab', 'status',
-            'kreditor_name', 'rechnung_nr', 'betreff',
+            'kreditor_name', 'rechnung_nr', 'betreff', 'art',
         ]
 
 

@@ -33,6 +33,10 @@ BA_KATALOG = [
     ('051', 'AUSG-K', 'Ausgang Kreditor (Zahlung)',                  'nein', False, False, 'gesperrt', False, False, False, '', '',      'kreditor'),
     ('052', 'GS-K',   'Kreditoren-Gutschrift',                       'nein', False, False, 'gesperrt', True,  False, False, '', '',      'kreditor'),
     ('053', 'SKT-K',  'Skonto / Rabatt Kreditor',                    'nein', False, False, 'gesperrt', False, False, False, '', '',      'kreditor'),
+    # Kreditorische Zahlung in der Dialogbuchhaltung — beide Richtungen
+    ('054', 'ZE-K',   'Zahlungseingang',                             'nein', False, False, 'gesperrt', False, False, False, '', '',      'kreditor'),
+    ('055', 'ZA-K',   'Zahlungsausgang',                             'nein', False, False, 'gesperrt', False, False, False, '', '',      'kreditor'),
+    ('056', 'AUSB-K', 'Ausbuchung offener Posten',                    'nein', False, False, 'gesperrt', False, False, False, '', '',      'kreditor'),
     ('080', 'ARAP-B', 'ARAP-Bildung',                                'nein', False, False, 'gesperrt', True,  False, False, '', '',      'sachkonto'),
     ('081', 'ARAP-A', 'ARAP-Auflösung',                              'ja',   True,  False, 'optional', False, False, False, '', '',      'sachkonto'),
     ('082', 'PRAP-B', 'PRAP-Bildung',                                'nein', False, False, 'gesperrt', True,  False, False, '', '',      'sachkonto'),
@@ -47,6 +51,17 @@ VIER_AUGEN_SCHWELLEN = {
     '012': 5000,
     '040': 10000,
     '041': 5000,
+}
+
+# Buchungsrichtung — steuert in der Dialogbuchhaltung, auf welcher Seite das
+# Gegenkonto (Personen- bzw. Kreditorkonto) steht.
+#   'abgang'  = Gegenkonto im Soll,  Bank im Haben
+#   'eingang' = Bank im Soll,        Gegenkonto im Haben
+RICHTUNGEN = {
+    '020': 'eingang',   # Eingang Personenkonto (Zahlung)
+    '021': 'abgang',    # Ausgang Personenkonto (Erstattung)
+    '054': 'eingang',   # Zahlungseingang Kreditor (Rückzahlung/Erstattung)
+    '055': 'abgang',    # Zahlungsausgang Kreditor (Zahlung an den Kreditor)
 }
 
 
@@ -76,6 +91,7 @@ class Command(BaseCommand):
                     default_konto_soll_pattern=soll_pat,
                     default_konto_haben_pattern=haben_pat,
                     buchungstyp=buchungstyp,
+                    richtung=RICHTUNGEN.get(nr),
                     vier_augen_schwelle=VIER_AUGEN_SCHWELLEN.get(nr),
                     aktiv=True,
                 ),

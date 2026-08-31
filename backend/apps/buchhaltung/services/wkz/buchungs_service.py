@@ -54,21 +54,31 @@ def _hole_wirtschaftsjahr(objekt, jahr: int):
     return wj
 
 
-def _finde_konto(objekt, kontonummer: str):
+def _finde_konto(objekt, kontonummer: str, jahr: int = None):
     """
     Sucht das Konto mit der gegebenen Kontonummer im Objekt.
+
+    `jahr` ist das Jahr des Buchungsdatums. Konten sind jahresgebunden — ohne
+    Jahr trifft die Suche ein beliebiges Wirtschaftsjahr, und die Buchung hängt
+    am Kontoblatt des falschen Jahres. Fehlt das Konto im Buchungsjahr, ist das
+    ein Fehler im Kontenplan und kein Grund, in ein anderes Jahr auszuweichen.
+
     Raises KontoNichtImWJException wenn nicht gefunden.
     """
     from apps.konten.models import Konto
-    konto = Konto.objects.filter(
+    qs = Konto.objects.filter(
         wirtschaftsjahr__objekt=objekt,
         kontonummer=kontonummer,
         aktiv=True,
-    ).first()
+    )
+    if jahr:
+        qs = qs.filter(wirtschaftsjahr__jahr=jahr)
+    konto = qs.first()
     if not konto:
+        im_jahr = f' im Wirtschaftsjahr {jahr}' if jahr else ''
         raise KontoNichtImWJException(
-            f"Konto {kontonummer} im Objekt '{objekt.bezeichnung}' nicht gefunden "
-            f"oder inaktiv. Bitte Kontenplan prüfen."
+            f"Konto {kontonummer} im Objekt '{objekt.bezeichnung}'{im_jahr} nicht "
+            f"gefunden oder inaktiv. Bitte Kontenplan prüfen."
         )
     return konto
 
@@ -79,32 +89,34 @@ def _bestimme_bank_sachkonto(kontoumsatz, objekt):
     Bewirtschaftungskonto → 18000, Rücklagenkonto → 18911.
     Sucht zuerst nach dem Standard-Kontonummer, dann nach beliebigem
     Konto im 18xxx-Bereich das zum Bankkonto gehört.
+
+    Immer im Wirtschaftsjahr des Umsatzdatums — Konten sind jahresgebunden,
+    und beide Beine einer Buchung müssen im selben Kontenrahmen liegen.
     """
     from apps.konten.models import Konto
+
+    jahr = kontoumsatz.buchungsdatum.year if kontoumsatz.buchungsdatum else None
+    basis = Konto.objects.filter(wirtschaftsjahr__objekt=objekt, aktiv=True)
+    if jahr:
+        basis = basis.filter(wirtschaftsjahr__jahr=jahr)
 
     bankkonto = kontoumsatz.bankkonto
     if bankkonto:
         ziel_nr = '18000' if bankkonto.konto_typ == 'bewirtschaftung' else '18911'
-        konto = Konto.objects.filter(
-            wirtschaftsjahr__objekt=objekt,
-            kontonummer=ziel_nr,
-            aktiv=True,
-        ).first()
+        konto = basis.filter(kontonummer=ziel_nr).first()
         if konto:
             return konto
 
     # Fallback: erstes Bank-Konto im Objekt (18000–18999)
-    konto = Konto.objects.filter(
-        wirtschaftsjahr__objekt=objekt,
-        aktiv=True,
-    ).filter(
+    konto = basis.filter(
         kontonummer__gte='18000',
         kontonummer__lte='18999',
     ).first()
 
     if not konto:
+        im_jahr = f' im Wirtschaftsjahr {jahr}' if jahr else ''
         raise KontoNichtImWJException(
-            f"Kein Bank-Sachkonto (18xxx) im Objekt '{objekt.bezeichnung}' gefunden."
+            f"Kein Bank-Sachkonto (18xxx) im Objekt '{objekt.bezeichnung}'{im_jahr} gefunden."
         )
     return konto
 
@@ -362,7 +374,7 @@ def verbuche_bankabgang(wkz_op, kontoumsatz, user=None) -> 'Buchung':
 
     split_konten = []
     for split in splits:
-        konto = _finde_konto(objekt, split.kontonummer)
+        konto = _finde_konto(objekt, split.kontonummer, jahr=bank_datum.year)
         split_konten.append((split, konto))
 
     verwendungszweck = (
@@ -437,7 +449,7 @@ def verbuche_mit_anpassung(
     # Split-Konten auflösen
     split_konten = []
     for kontonummer, betrag in splits_override.items():
-        konto = _finde_konto(objekt, str(kontonummer))
+        konto = _finde_konto(objekt, str(kontonummer), jahr=bank_datum.year)
         split_konten.append((konto, Decimal(str(betrag))))
 
     verwendungszweck = (

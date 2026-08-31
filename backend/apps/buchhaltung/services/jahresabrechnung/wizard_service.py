@@ -103,17 +103,27 @@ def buchungspruefung(objekt: Objekt, wj: Wirtschaftsjahr) -> dict:
     Offene Kreditoren-OPs (hartes Blocking, Kap. 5 Schritt 2) und offene
     WKZ-OPs im WJ. Blockiert = mind. ein offener/teilbezahlter Kreditor-OP
     mit Fälligkeit bis WJ-Ende.
+
+    Per Saldovortrag ins Folgejahr verschobene OPs blockieren nicht mehr
+    (siehe kreditor_vortrag_service) — sie verlassen dieses Wirtschaftsjahr,
+    bleiben aber offen und werden dort separat ausgewiesen. Ein OP, der nur
+    bis in dieses Jahr vorgetragen wurde, blockiert weiterhin: die Zahlung
+    steht dann in genau diesem Jahr aus.
     """
-    kreditor_ops = (
+    offene_ops = (
         KreditorOP.objects
         .filter(
             objekt=objekt,
             status__in=['offen', 'teilbezahlt'],
             faellig_ab__lte=wj.ende_datum,
         )
-        .select_related('kreditor')
+        .select_related('kreditor', 'vortrag_wj', 'buchung')
         .order_by('faellig_ab')
     )
+    vorgetragen = [op for op in offene_ops
+                   if op.vortrag_wj_id and op.vortrag_wj.jahr > wj.jahr]
+    vorgetragen_ids = {op.pk for op in vorgetragen}
+    kreditor_ops = [op for op in offene_ops if op.pk not in vorgetragen_ids]
     wkz_ops = (
         WiederkehrendeBuchungOP.objects
         .filter(
@@ -124,16 +134,23 @@ def buchungspruefung(objekt: Objekt, wj: Wirtschaftsjahr) -> dict:
         .select_related('vorlage')
         .order_by('faellig_am')
     )
-    kreditor_liste = [
-        {
+    def op_dict(op) -> dict:
+        return {
             'op_nummer': op.op_nummer,
             'kreditor': str(op.kreditor),
             'betrag_offen': str(op.betrag_offen),
             'faellig_ab': op.faellig_ab.isoformat(),
             'status': op.status,
+            # Schritt 2 muss unterscheiden können: nur bei einer
+            # festgeschriebenen Ursprungsbuchung entstehen beim Vortrag
+            # tatsächlich Buchungen.
+            'buchung_festgeschrieben': bool(
+                op.buchung_id and op.buchung.status == 'festgeschrieben'),
+            'vorgetragen_nach': op.vortrag_wj.jahr if op.vortrag_wj_id else None,
         }
-        for op in kreditor_ops
-    ]
+
+    kreditor_liste = [op_dict(op) for op in kreditor_ops]
+    vorgetragen_liste = [op_dict(op) for op in vorgetragen]
     wkz_liste = [
         {
             'vorlage': op.vorlage.bezeichnung,
@@ -146,8 +163,10 @@ def buchungspruefung(objekt: Objekt, wj: Wirtschaftsjahr) -> dict:
     ]
     return {
         'kreditor_ops': kreditor_liste,
+        'vorgetragene_ops': vorgetragen_liste,
         'wkz_ops': wkz_liste,
         'blockiert': len(kreditor_liste) > 0,
+        'folgejahr': wj.jahr + 1,
     }
 
 
