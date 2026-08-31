@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import client from '../../api/client'
 
-interface IbanCheckResult {
+export interface IbanCheckResult {
   valid: boolean
   iban?: string
   bic?: string
@@ -16,6 +16,18 @@ interface IbanInputProps {
   placeholder?: string
   className?: string
   disabled?: boolean
+  /**
+   * Server-Prüfung der IBAN. Ohne Angabe wird der interne Endpunkt mit
+   * Mitarbeiter-JWT verwendet. Das Eigentümer-Portal reicht hier seine
+   * eigene Prüfung herein — dort gibt es kein Mitarbeiter-Token, der
+   * interne Endpunkt würde mit 401 antworten.
+   */
+  pruefe?: (iban: string) => Promise<IbanCheckResult>
+}
+
+async function pruefeIntern(iban: string): Promise<IbanCheckResult> {
+  const res = await client.get<IbanCheckResult>('/iban-check/', { params: { iban } })
+  return res.data
 }
 
 function validateIbanChecksum(iban: string): boolean {
@@ -35,7 +47,7 @@ function formatIban(raw: string): string {
   return clean.replace(/(.{4})/g, '$1 ').trim()
 }
 
-export function IbanInput({ value, onChange, onBicFound, placeholder = 'DE89 3704 0044…', className = '', disabled }: IbanInputProps) {
+export function IbanInput({ value, onChange, onBicFound, placeholder = 'DE89 3704 0044…', className = '', disabled, pruefe = pruefeIntern }: IbanInputProps) {
   const [status, setStatus] = useState<'idle' | 'checking' | 'valid' | 'invalid'>('idle')
   const [bankInfo, setBankInfo] = useState<string>('')
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -61,17 +73,17 @@ export function IbanInput({ value, onChange, onBicFound, placeholder = 'DE89 370
     setStatus('checking')
     timerRef.current = setTimeout(async () => {
       try {
-        const res = await client.get<IbanCheckResult>('/iban-check/', { params: { iban: clean } })
-        if (res.data.valid) {
+        const daten = await pruefe(clean)
+        if (daten.valid) {
           setStatus('valid')
-          const info = res.data.bank_name || ''
+          const info = daten.bank_name || ''
           setBankInfo(info)
-          if (onBicFound && res.data.bic) {
-            onBicFound(res.data.bic, info)
+          if (onBicFound && daten.bic) {
+            onBicFound(daten.bic, info)
           }
         } else {
           setStatus('invalid')
-          setBankInfo(res.data.error || '')
+          setBankInfo(daten.error || '')
         }
       } catch {
         setStatus('invalid')

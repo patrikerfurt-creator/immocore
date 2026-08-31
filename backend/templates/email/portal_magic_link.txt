@@ -1,0 +1,17 @@
+Ihr Anmeldelink für das Eigentümer-Portal
+
+{% if person.briefanrede %}{{ person.briefanrede }}{% else %}Sehr geehrte Damen und Herren,{% endif %}
+{% if person.briefanrede2 %}{{ person.briefanrede2 }}{% endif %}
+
+mit diesem Link melden Sie sich im Eigentümer-Portal an:
+
+{{ link }}
+
+Der Link ist {{ gueltig_minuten }} Minuten gültig und kann nur einmal
+verwendet werden.
+
+Wenn Sie diese Anmeldung nicht angefordert haben, ignorieren Sie diese
+E-Mail bitte — ohne Klick auf den Link geschieht nichts.
+
+Mit freundlichen Grüßen
+Demme Immobilien Verwaltung GmbH

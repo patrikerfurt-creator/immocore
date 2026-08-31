@@ -55,6 +55,14 @@ ssh -i "$USERPROFILE/.ssh/strato_server_key" -o StrictHostKeyChecking=no patrik@
 - [ ] Alle Änderungen committed und gepusht
 - [ ] Neue Django-Modelle → Migration erstellt (`makemigrations`)
 - [ ] Migration lokal getestet (`migrate`)
+- [ ] Nach jeder Migration mit Modelländerungen: Celery-Worker/-Beat NEU
+      STARTEN (`docker restart immocore_celery_worker immocore_celery_beat`,
+      lokal wie live). Der Worker lädt die Modelldefinitionen nur beim Start —
+      läuft er nach einer Migration weiter, greift er mit veraltetem
+      Schema-Wissen zu (`ProgrammingError: column ... does not exist`) und der
+      betroffene Task wirft durch, ohne dass das im UI sichtbar wird. Beim
+      Standard-Deployment oben ist das über `docker compose up -d`
+      automatisch abgedeckt; bei reinem `migrate` ohne Neu-Deploy NICHT.
 
 ## Infos Server
 

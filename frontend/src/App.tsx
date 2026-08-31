@@ -61,6 +61,12 @@ import { VersammlungenListe } from './pages/versammlungen/VersammlungenListe'
 import { VersammlungDetail } from './pages/versammlungen/VersammlungDetail'
 import { BeschlussSammlung } from './pages/versammlungen/BeschlussSammlung'
 import { AuftragBestaetigung } from './pages/oeffentlich/AuftragBestaetigung'
+import { PortalLayout } from './pages/portal/PortalLayout'
+import { PortalLogin } from './pages/portal/PortalLogin'
+import { PortalAnmelden } from './pages/portal/PortalAnmelden'
+import { PortalEmailBestaetigen } from './pages/portal/PortalEmailBestaetigen'
+import { MeineEinheiten } from './pages/portal/MeineEinheiten'
+import { MeineDaten } from './pages/portal/MeineDaten'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -79,6 +85,19 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           {/* Öffentlich, ohne Login — Handwerker bestätigen ihren Auftrag per Mail-Link. */}
           <Route path="/auftrag-bestaetigung/:token" element={<AuftragBestaetigung />} />
+
+          {/* Eigentümer-Portal (Spec 1a) — eigener Zweig mit eigener
+              Anmeldung. Steht VOR den internen Routen, damit der
+              Catch-all der Layout-Route ihn nicht verschluckt. */}
+          <Route path="/portal/login" element={<PortalLogin />} />
+          <Route path="/portal/anmelden/:token" element={<PortalAnmelden />} />
+          <Route path="/portal/email-bestaetigen/:token" element={<PortalEmailBestaetigen />} />
+          <Route path="/portal" element={<PortalLayout />}>
+            <Route index element={<Navigate to="/portal/einheiten" replace />} />
+            <Route path="einheiten" element={<MeineEinheiten />} />
+            <Route path="daten" element={<MeineDaten />} />
+          </Route>
+
           <Route
             element={
               <ProtectedRoute>

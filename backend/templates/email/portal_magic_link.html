@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <title>Ihr Anmeldelink für das Eigentümer-Portal</title>
+</head>
+<body style="font-family:Arial,Helvetica,sans-serif;color:#222;line-height:1.5;">
+  <h2>Ihr Anmeldelink für das Eigentümer-Portal</h2>
+
+  <p>{% if person.briefanrede %}{{ person.briefanrede }}{% else %}Sehr geehrte Damen und Herren,{% endif %}</p>
+  {% if person.briefanrede2 %}<p>{{ person.briefanrede2 }}</p>{% endif %}
+
+  <p>mit diesem Link melden Sie sich im Eigentümer-Portal an:</p>
+
+  <p>
+    <a href="{{ link }}"
+       style="display:inline-block;padding:12px 20px;background:#1d4ed8;color:#fff;
+              text-decoration:none;border-radius:4px;font-weight:bold;">
+      Jetzt anmelden
+    </a>
+  </p>
+
+  <p style="font-size:12px;color:#555;">
+    Falls der Button nicht funktioniert, kopieren Sie diese Adresse in Ihren Browser:<br>
+    <span style="word-break:break-all;">{{ link }}</span>
+  </p>
+
+  <p>Der Link ist <strong>{{ gueltig_minuten }} Minuten</strong> gültig und kann nur
+     einmal verwendet werden.</p>
+
+  <p style="font-size:12px;color:#555;">
+    Wenn Sie diese Anmeldung nicht angefordert haben, ignorieren Sie diese E-Mail
+    bitte — ohne Klick auf den Link geschieht nichts.
+  </p>
+
+  <p>Mit freundlichen Grüßen<br>
+     Demme Immobilien Verwaltung GmbH</p>
+</body>
+</html>

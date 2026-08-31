@@ -47,6 +47,7 @@ LOCAL_APPS = [
     'apps.mitarbeiter',
     'apps.abrechnung_wp',
     'apps.versammlung',
+    'apps.portal',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -129,6 +130,11 @@ REST_FRAMEWORK = {
     # 'auftrag_token', explizit an der jeweiligen View gesetzt.
     'DEFAULT_THROTTLE_RATES': {
         'auftrag_token': '30/hour',
+        # Portal-Anmeldung (Spec 1a): grober Missbrauchsschutz auf den
+        # anonymen Endpunkten. Das fachliche Limit aus Spec Kap. 3.3
+        # (5 Magic-Link-Anfragen je E-Mail-Adresse pro Stunde) sitzt
+        # zusätzlich im Service, weil es je ADRESSE zählt, nicht je IP.
+        'portal_auth': '60/hour',
     },
     # Bewusst KEIN globales 'DEFAULT_PAGINATION_CLASS' — würde die
     # Antwortform ALLER bestehenden Endpunkte ändern (Frontend erwartet

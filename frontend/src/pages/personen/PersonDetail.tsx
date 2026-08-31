@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { personenApi } from '../../api/personen'
 import { PersonForm } from './PersonForm'
 import { Button } from '../../components/ui/Button'
+import { PortalZugangKarte } from './PortalZugangKarte'
 
 export function PersonDetail() {
   const { id } = useParams<{ id: string }>()
@@ -73,9 +74,21 @@ export function PersonDetail() {
                 <dd className="text-gray-800">{person.telefon || '–'}</dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-gray-500">Adresse</dt>
-                <dd className="text-gray-800 text-right whitespace-pre-line">
-                  {(person as unknown as Record<string, string>).adresse || '–'}
+                <dt className="text-gray-500">Straße</dt>
+                <dd className="text-gray-800 text-right">
+                  {[
+                    (person as unknown as Record<string, string>).strasse,
+                    (person as unknown as Record<string, string>).hausnummer,
+                  ].filter(Boolean).join(' ') || '–'}
+                </dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-gray-500">PLZ / Ort</dt>
+                <dd className="text-gray-800 text-right">
+                  {[
+                    (person as unknown as Record<string, string>).plz,
+                    (person as unknown as Record<string, string>).ort,
+                  ].filter(Boolean).join(' ') || '–'}
                 </dd>
               </div>
             </dl>
@@ -96,6 +109,13 @@ export function PersonDetail() {
               <p className="text-sm text-gray-400">Keine IBAN hinterlegt.</p>
             )}
           </div>
+
+          {/* Portal-Zugang — nur für Eigentümer (person_typ '100'),
+              siehe Spec 1a Kap. 3.1. Cast wie an den übrigen Stellen dieser
+              Datei: der Typ `PersonTyp` in src/types nennt noch Klartext-
+              Werte, das Backend liefert die Codes '100'…'400'. */}
+          {(person as unknown as Record<string, string>).person_typ === '100'
+            && id && <PortalZugangKarte personId={id} />}
 
           {/* Verknüpfte Objekte */}
           <div className="md:col-span-2 rounded-lg border border-gray-200 p-5 space-y-3">

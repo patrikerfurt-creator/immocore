@@ -73,7 +73,10 @@ interface FormState {
   briefanrede2: string
   emails: string[]
   telefonnummern: string[]
-  adresse: string
+  strasse: string
+  hausnummer: string
+  plz: string
+  ort: string
   ibans: string[]
 }
 
@@ -97,7 +100,12 @@ function toFormState(p?: Person): FormState {
     telefonnummern: (p as unknown as Record<string, string[]>)?.telefonnummern?.length
                       ? (p as unknown as Record<string, string[]>).telefonnummern
                       : (p?.telefon ? [p.telefon] : ['']),
-    adresse: (p as unknown as Record<string, string>)?.adresse ?? '',
+    // 'adresse' wird serverseitig aus diesen Feldern zusammengesetzt und
+    // deshalb hier weder gelesen noch gesendet.
+    strasse:    (p as unknown as Record<string, string>)?.strasse    ?? '',
+    hausnummer: (p as unknown as Record<string, string>)?.hausnummer ?? '',
+    plz:        (p as unknown as Record<string, string>)?.plz        ?? '',
+    ort:        (p as unknown as Record<string, string>)?.ort        ?? '',
     ibans: p?.ibans ?? [''],
   }
 }
@@ -384,16 +392,39 @@ export function PersonForm({ person }: Props) {
         </button>
       </div>
 
-      {/* Adresse */}
-      <div className="flex flex-col gap-1">
+      {/* Adresse — Einzelfelder; der Textblock 'adresse' entsteht daraus
+          serverseitig in Person.save(). */}
+      <div className="space-y-3">
         <label className="text-sm font-medium text-gray-700">Adresse</label>
-        <textarea
-          value={form.adresse}
-          onChange={e => set('adresse', e.target.value)}
-          rows={3}
-          placeholder={'Musterstraße 1\n60001 Frankfurt'}
-          className="rounded border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none resize-none"
-        />
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+          <input
+            value={form.strasse}
+            onChange={e => set('strasse', e.target.value)}
+            placeholder="Straße"
+            className="sm:col-span-3 rounded border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none"
+          />
+          <input
+            value={form.hausnummer}
+            onChange={e => set('hausnummer', e.target.value)}
+            placeholder="Hausnr."
+            className="rounded border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none"
+          />
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+          <input
+            value={form.plz}
+            onChange={e => set('plz', e.target.value)}
+            placeholder="PLZ"
+            inputMode="numeric"
+            className="rounded border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none"
+          />
+          <input
+            value={form.ort}
+            onChange={e => set('ort', e.target.value)}
+            placeholder="Ort"
+            className="sm:col-span-3 rounded border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none"
+          />
+        </div>
       </div>
 
       {/* IBANs */}

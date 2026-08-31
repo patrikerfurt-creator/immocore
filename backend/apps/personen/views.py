@@ -11,6 +11,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from .adresse import trenne_strasse_hausnummer
 from .models import Person, SEPAMandat, EigentumsVerhaeltnis, HausgeldHistorie, Mietvertrag
 from .serializers import (
     PersonSerializer, PersonListSerializer,
@@ -157,6 +158,10 @@ class PersonViewSet(viewsets.ModelViewSet):
                 plz = row.get('PLZ', '').strip()
                 ort = row.get('Ort', '').strip()
                 adresse = '\n'.join(p for p in [anschrift, f'{plz} {ort}'.strip()] if p)
+                # Die CSV liefert die Anschrift als eine Spalte — Straße und
+                # Hausnummer werden hier getrennt, damit die Vorschau zeigt,
+                # was tatsächlich gespeichert wird.
+                strasse, hausnummer = trenne_strasse_hausnummer(anschrift)
 
                 csv_data = {
                     'person_typ': person_typ,
@@ -174,6 +179,10 @@ class PersonViewSet(viewsets.ModelViewSet):
                     'email': email1,
                     'email2': row.get('Email2', '').strip(),
                     'adresse': adresse,
+                    'strasse': strasse,
+                    'hausnummer': hausnummer,
+                    'plz': plz,
+                    'ort': ort,
                     'iban': iban,
                 }
 
@@ -311,13 +320,16 @@ class PersonViewSet(viewsets.ModelViewSet):
                 anschrift = row.get('Anschrift', '').strip()
                 plz = row.get('PLZ', '').strip()
                 ort = row.get('Ort', '').strip()
-                adresse = '\n'.join(p for p in [anschrift, f'{plz} {ort}'.strip()] if p)
+                strasse, hausnummer = trenne_strasse_hausnummer(anschrift)
                 iban = row.get('IBAN', '').replace(' ', '').upper()
                 try:
                     person = Person.objects.create(
                         person_typ=person_typ, anrede=anrede, ist_firma=ist_firma,
                         vorname=vorname, nachname=nachname1, vorname2=vorname2, nachname2=nachname2,
-                        firmenname=firmenname, email=email1, adresse=adresse,
+                        firmenname=firmenname, email=email1,
+                        # 'adresse' wird in Person.save() aus diesen Feldern
+                        # zusammengesetzt und deshalb nicht mehr übergeben.
+                        strasse=strasse, hausnummer=hausnummer, plz=plz, ort=ort,
                         ibans=[iban] if iban else [],
                     )
                     ergebnisse.append(PersonenImportZeilenergebnis(

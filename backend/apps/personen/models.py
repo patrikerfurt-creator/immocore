@@ -84,7 +84,19 @@ class Person(models.Model):
     telefon = models.CharField(max_length=50, blank=True)  # Legacy
     emails        = models.JSONField(default=list, verbose_name='E-Mail-Adressen')
     telefonnummern = models.JSONField(default=list, verbose_name='Telefonnummern')
-    adresse = models.TextField(blank=True)
+    # Einzelfelder sind führend; ``adresse`` bleibt als zusammengesetzter
+    # Textblock erhalten, weil ihn mehrere Stellen direkt als Anschrift
+    # verwenden (Anschreiben-PDF Jahresabrechnung, EV-Postversand).
+    # ``save()`` hält beides synchron — siehe ``_synchronisiere_adresse``.
+    strasse = models.CharField(max_length=255, blank=True, default='', verbose_name='Straße')
+    hausnummer = models.CharField(max_length=20, blank=True, default='', verbose_name='Hausnummer')
+    plz = models.CharField(max_length=10, blank=True, default='', verbose_name='PLZ')
+    ort = models.CharField(max_length=100, blank=True, default='', verbose_name='Ort')
+    adresse = models.TextField(
+        blank=True,
+        help_text='Automatisch aus Straße/Hausnummer/PLZ/Ort zusammengesetzt. '
+                  'Nicht direkt pflegen — die Einzelfelder sind führend.',
+    )
     ibans = models.JSONField(default=list)
     briefanrede  = models.CharField(max_length=200, blank=True, default='')
     briefanrede2 = models.CharField(max_length=200, blank=True, default='')
@@ -135,12 +147,45 @@ class Person(models.Model):
 
         return '', ''
 
+    def _synchronisiere_adresse(self) -> None:
+        """Hält ``adresse`` und die Einzelfelder konsistent.
+
+        Zwei Richtungen, damit der Umstieg niemanden aussperrt:
+
+        * Einzelfelder gefüllt → ``adresse`` wird daraus neu gebaut. Sie
+          sind die führende Quelle.
+        * Nur ``adresse`` gefüllt (Altcode, Fixtures, Skripte, die weiter
+          den Textblock setzen) → die Einzelfelder werden daraus zerlegt,
+          statt leer zu bleiben.
+        """
+        from .adresse import baue_adresse, zerlege_adresse
+
+        if any([self.strasse, self.hausnummer, self.plz, self.ort]):
+            self.adresse = baue_adresse(self.strasse, self.hausnummer, self.plz, self.ort)
+        elif (self.adresse or '').strip():
+            teile = zerlege_adresse(self.adresse)
+            self.strasse = teile['strasse']
+            self.hausnummer = teile['hausnummer']
+            self.plz = teile['plz']
+            self.ort = teile['ort']
+
     def save(self, *args, **kwargs):
         if not self.briefanrede:
             self.briefanrede, self.briefanrede2 = self.auto_briefanreden(
                 self.anrede, self.nachname, self.nachname2, self.firmenname, self.ist_firma,
                 titel=self.titel, titel2=self.titel2,
             )
+        self._synchronisiere_adresse()
+
+        # Ein Teil-Save darf die mitgepflegten Adressfelder nicht verlieren:
+        # wer 'strasse' speichert, meint auch das daraus gebaute 'adresse'.
+        felder = kwargs.get('update_fields')
+        if felder is not None:
+            felder = set(felder)
+            if felder & {'strasse', 'hausnummer', 'plz', 'ort', 'adresse'}:
+                kwargs['update_fields'] = felder | {
+                    'strasse', 'hausnummer', 'plz', 'ort', 'adresse',
+                }
         super().save(*args, **kwargs)
 
     class Meta:

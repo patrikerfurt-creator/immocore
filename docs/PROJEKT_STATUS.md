@@ -43,7 +43,7 @@
 | Liegenschaft | ✅ | Sub-Model zu Objekt, ist_hauptadresse-Signal |
 | Bankkonto | ✅ | konto_typ (bewirtschaftung/ruecklage), IBAN, BIC, kontoinhaber |
 | Einheit | ✅ | einheit_typ Enum, Fläche, MEA |
-| Person | ✅ | person_typ, ist_firma, ibans (JSONField), sepa_mandat (OneToOne) |
+| Person | ✅ | person_typ, ist_firma, ibans (JSONField), sepa_mandat (OneToOne), Adresse in Einzelfeldern strasse/hausnummer/plz/ort (`adresse` bleibt als abgeleiteter Textblock, siehe Abw. 009) |
 | SEPAMandat | ✅ | mandatsreferenz, iban, bic, unterzeichnet_am, aktiv |
 | EigentumsVerhaeltnis | ✅ | Person + Einheit, beginn/ende, post_save → Personenkonto anlegen |
 | HausgeldHistorie | ✅ | Historisierung Hausgeld-Soll je EigentumsVerhaeltnis + Kontoart |
@@ -69,7 +69,9 @@
 | Jahresabrechnung | ✅ | Wirtschaftsjahr, sperren/freigeben; Frontend 🔄 |
 | EinzelAbrechnung | ✅ | je Einheit, positionen/ruecklagen JSONField |
 | LastschriftLauf | ✅ | positionen/ohne_mandat (JSONField), buchungen_erstellt, Migrations 0012+0013 angewendet |
-| Kreditor | ✅ | name_normalisiert, iban (unique nullable) |
+| Kreditor | ✅ | name_normalisiert (wird in `save()` aus `name` abgeleitet), iban (unique nullable) = primäre Bankverbindung |
+| KreditorBankverbindung | ✅ | Weitere IBANs je Kreditor; `Kreditor.iban` bleibt die primäre |
+| KreditorDublettenPruefung | ✅ | Angehaltene Kreditor-Neuanlage aus dem Import; Kandidaten eingefroren, Entscheidung mit Benutzer + Zeitstempel |
 | Rechnung | ✅ | sha256_hash, duplikat-Erkennung, 10 Status, kostenstelle FK |
 | Freigabe | ✅ | Freigabe-Event mit Rolle + Entscheidung |
 | Prozess | ✅ | Wizard-Zustand, steps_data JSONField |
@@ -77,6 +79,10 @@
 | Ticket | ⚠️ ersetzt | Entfernt 2026-08-09 (Phase E Cleanup) — ersetzt durch `Vorgang`, siehe `CLAUDE_CODE_ANLEITUNG_VORGANG_DMS_v1_0.md` |
 | Vorgang | ✅ | Generische Fallakte (apps.vorgaenge), löst `Ticket` ab — Ereignisse, Status-Lifecycle, Wiedervorlage, Dokument-Kopplung |
 | Mietvertrag | ✅ | Model (ZH/SEV), Wizard Phase 2 🚫 |
+| PortalZugang | ✅ | Eigentümer-Portal (apps.portal), OneToOne→Person, aktiv, eingeladen_von, erstaktivierung_am, email_pending |
+| PortalToken | ✅ | Einmal-Link für Einladung (72h) / Magic Link (15min) / E-Mail-Bestätigung (24h) |
+| PortalSession | ✅ | Portal-Sitzung (12h), opakes Token — bewusst kein JWT, da Eigentümer keinen `auth.User` haben |
+| PersonStammdatenAenderung | ✅ | Audit-Log je geändertem Feld (GoBD), quelle `Portal-Selbständerung` |
 
 ### 2.2 Migrations-Stand
 
@@ -110,6 +116,7 @@
 | WKZ OP-Generator | `services/wkz/op_generator_service.py` | ✅ | Fälligkeitsberechnung, Wochenend-Regel, Idempotenz, Celery-Task tägl. 03:00 Uhr |
 | WKZ Bank-Match | `services/wkz/bank_match_service.py` | ✅ | IBAN-/MREF-Erkennung, Toleranz-Fenster (Betrag + Tage), Auto-Match <1% |
 | WKZ Buchungs-Service | `services/wkz/buchungs_service.py` | ✅ | Kassenprinzip-Aufwandsbuchung (Sammelbuchung + Teilbuchungen), verbuche_mit_anpassung |
+| WKZ Freigabe-Service | `services/wkz/freigabe_service.py` | ✅ | Stufe-2-Zuständigkeit über objektbasierte `zahlungsfreigabe_grenzen` (Jahresbetrag), Freigabeliste `/wkz-vorlagen/freigabe-liste/`, Ablehnen → Entwurf |
 | Rechnungs-OCR | `rechnungen/services/invoice_parser.py` | ✅ | PyMuPDF + Tesseract-Fallback + Claude API |
 | Rechnungsverarbeitung | `rechnungen/services/verarbeitung.py` | ✅ | 5-stufige Duplikaterkennung, Kreditor-Abgleich, Objekt-Erkennung |
 | Zinsen | `services/zinsen.py` | ✅ | Basiszinssatz-Abfrage |
@@ -147,6 +154,7 @@
 | `/lastschrift-laeufe/` | CRUD + xml (pain.008 Download + Buchungen erstellen) | ✅ |
 | `/rechnungen/` | CRUD + ki-ocr + freigeben + ablehnen + buchen + sepa-export | ✅ |
 | `/kreditoren/` | CRUD + deaktivieren | ✅ |
+| `/kreditor-dubletten/` | Liste offener Prüffälle + als-neu-anlegen / zuordnen / ablehnen | ✅ |
 | `/wkz-vorlagen/` | CRUD + einreichen + freigeben + pausieren + reaktivieren + beenden + ersetzen + forecast | ✅ |
 | `/wkz-ops/` | ReadOnly + verwerfen + manuell-verbuchen | ✅ |
 | `/objekte/<pk>/wkz-vorlagen/` | gefiltert nach Objekt | ✅ |
@@ -158,6 +166,10 @@
 | `/dokumente/` | Upload + Liste | ✅ |
 | `/vorgaenge/` | CRUD + status + kommentar + zuweisen + dokumente (ersetzt `/tickets/`, entfernt 2026-08-09) | ✅ |
 | `/vorgang-typen/` (+ `/admin`) | ReadOnly + Admin-CRUD der Vorgangstypen | ✅ |
+| `/portal/auth/magic-link/` | request (neutrale Antwort) + verify (Einladung & Magic Link) + logout | ✅ |
+| `/portal/meine-einheiten/` | WEG-Karten + Einheiten-Stammdaten des eingeloggten Eigentümers | ✅ |
+| `/portal/meine-daten/` | GET + PATCH (Adresse/Telefon) + `email/` + `email/bestaetigen/` + `bankverbindung/` | ✅ |
+| `/portal-verwaltung/zugaenge/` | intern: Liste + einladen + sperren + entsperren | ✅ |
 
 ---
 
@@ -206,8 +218,10 @@
 | | Kontoauszug (Sachkonto) | ✅ | Gegenkonto-Anzeige inkl. Personenkonto |
 | | Sollstellungen | ✅ | Simulation, Freigabe, Ausführung |
 | | Mahnwesen | ❌ | Model + API vorhanden, Frontend-Page fehlt |
-| | **Wiederkehrende Buchungen (WKZ)** | ✅ | VorlagenListe, VorlageWizard (4 Schritte), VorlageDetail, OPDetail, Forecast |
+| | **Wiederkehrende Buchungen (WKZ)** | ✅ | VorlagenListe, VorlageWizard (4 Schritte), VorlageDetail, OPDetail, Forecast; Anlage direkt aus dem Rechnungseingang, Freigabe unter Rechnungsfreigabe |
 | **Rechnungen** | RechnungenListe + DetailModal | ✅ | KI-OCR, Freigabe, BuchungsForm |
+| | Rechnungseingang (Inbox) | ✅ | Stufe-1-Prüfung; Button „↻ WKZ anlegen" je Beleg (Vorlage wird direkt eingereicht) |
+| | Rechnungsfreigabe (Stufe 2) | ✅ | Rechnungen mit Sachkonto-Korrektur + eingereichte WKZ-Vorlagen (Freigabe/Ablehnen) |
 | | KreditorenListe | ✅ | Inline-Editformular, Deaktivieren |
 | **Zahlungsverkehr** | Lastschrift | ✅ | SEPA pain.008; Protokoll, Buchungen beim XML-Download |
 | | Zahlungen | ✅ | SEPA pain.001 für Rechnungen |
@@ -218,7 +232,13 @@
 | | VorgaengeListe / VorgangDetail | ✅ | Ersetzt TicketsListe (entfernt 2026-08-09); Status-Workflow, Ereignisse, Dokument-Upload |
 | | MassenimportWEG | ✅ | CSV-Massenimport |
 | | Einstellungen | ✅ | Tabs: E-Banking, Rechnungen, Dokumente, **Freigabelimits (neu)** |
+| | KreditorDubletten | ✅ | Prüfliste angehaltener Kreditor-Neuanlagen; je Fall zuordnen / neu anlegen / ablehnen (Sidebar: „Kreditor-Prüfung") |
 | | Dashboard | ✅ | |
+| **Eigentümer-Portal** | PortalLogin / PortalAnmelden | ✅ | Magic-Link-Anmeldung unter `/portal/*`, eigener Token-Speicher (`portal_token`, Schema `Portal`) |
+| | MeineEinheiten | ✅ | WEG-Karten → Einheiten-Tabs, nur Stammdaten (kein Saldo/Buchungsverlauf — Spec 1a) |
+| | MeineDaten | ✅ | Adresse/Telefon, E-Mail mit Bestätigungs-Flow, Bankverbindung inkl. SEPA-Mandat-Hinweis |
+| | PortalEmailBestaetigen | ✅ | Anonym erreichbar — Link wird meist im neuen Postfach geöffnet |
+| | PortalZugangKarte (intern) | ✅ | Aktion „Portal-Zugang einladen" auf PersonDetail, nur für person_typ 100 |
 
 ---
 
@@ -274,6 +294,9 @@
 | Abw. 002 | Freigabe-Workflow: Betragsstufen konfigurierbar (Standard + pro Objekt); automatische Enforcement beim `freigeben`-Endpunkt noch ausstehend | Mittel | Teilweise behoben 30.04.2026 |
 | Abw. 003 | Prozess-Wizards: Schritt-Logik (Abgrenzungsberechnung, .950-Buchungen, PDF-Vorschau) fehlt | Mittel | Offen |
 | Abw. 006 | PostgreSQL Port 5433 statt 5432 (lokal belegt) | Gering | Akzeptiert |
+| Abw. 008 | WEG-Portal „Mini" (`aktuelle Umsetzung/CLAUDE_CODE_ANLEITUNG_WEG_PORTAL_MINI_v1_0.md`, Spec 1a) umgesetzt **ohne** die vorausgesetzte Spec 0 (Mandantenfähigkeit) — Portal läuft im bestehenden Single-Schema. Weitere Real-Code-Abweichungen: Autorisierung über `request.portal_zugang.person` statt `request.user.person` (Eigentümer haben bewusst keinen `auth.User`); `kontoinhaber` nicht bearbeitbar (Feld existiert weder auf `Person` noch `SEPAMandat`); MEA aus `VerteilerschluesselWert` (`vs_typ='mea'`) statt aus einem Einheit-Feld | Mittel | Umgesetzt 2026-08-28, lokal — Spec 0 offen |
+| Abw. 010 | Kreditor-Dublettenprüfung beim Rechnungsimport: der automatische Pfad legte Kreditoren bisher still an und verglich dabei nur exakt (IBAN oder `name_normalisiert`), zusätzlich mit `aktiv=True`-Filter — ein deaktivierter Kreditor wurde deshalb beim nächsten Beleg neu angelegt. Hauptursache der Doppelungen war eine **doppelte Normalisierung**: der Parser entfernte Rechtsformen, die manuelle Anlage in `views.py` (`name.lower()`) nicht. Jetzt: `name_normalisiert` entsteht ausschließlich in `Kreditor.save()`; ein gemeinsamer Abgleich-Service (`services/kreditor_matching.py`) für Import, Erkennung und manuelle Suche; Verdachtsfälle werden angehalten (Rechnung bleibt ohne Kreditor und damit nicht buchbar) und in `/rechnungen/kreditor-pruefung` von einem Menschen entschieden. Zusätzlich erkannt: bekannter Name mit abweichender IBAN (Rechnungsbetrug-Muster) und bekannte IBAN mit fremdem Namen | Mittel | Umgesetzt 2026-08-28, lokal |
+| Abw. 009 | Adressaufteilung: `Person` um `strasse`/`hausnummer`/`plz`/`ort` erweitert (Migration 0020 + Datenmigration 0021, 593 Bestandsadressen zerlegt). `Person.adresse` bleibt als zusammengesetzter Textblock erhalten, weil Anschreiben-PDF (Jahresabrechnung) und EV-Postversand ihn direkt als Anschrift lesen — `Person.save()` hält beides synchron, die Einzelfelder sind führend. 7 Sonderfälle (ausländische/unvollständige Adressen) stehen vollständig in `strasse` und sind in der Personenmaske nachzupflegen | Gering | Umgesetzt 2026-08-28, lokal |
 | Abw. 007 | Vorgang & DMS-Modul (`CLAUDE_CODE_ANLEITUNG_VORGANG_DMS_v1_0.md`): `Ticket` ersetzt durch generischen `Vorgang` (apps.vorgaenge); Owner-Regel B-Hybrid (höchstens ein Kontext-FK aus objekt/einheit/vorgang/person statt fixem `verknuepfung_typ`-Feld); `sha256` statt `inhalt_hash` als Duplikat-Kennung; separate App `apps.vorgaenge` statt Erweiterung von `apps.tickets`; automatischer E-Mail-/Portal-Import für Vorgänge stillgelegt (nur manuelle Anlage im MVP) | Gering | Umgesetzt 2026-08-09 |
 
 ---

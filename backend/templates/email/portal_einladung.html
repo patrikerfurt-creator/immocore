@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <title>Ihr Zugang zum Eigentümer-Portal</title>
+</head>
+<body style="font-family:Arial,Helvetica,sans-serif;color:#222;line-height:1.5;">
+  <h2>Ihr Zugang zum Eigentümer-Portal</h2>
+
+  <p>{% if person.briefanrede %}{{ person.briefanrede }}{% else %}Sehr geehrte Damen und Herren,{% endif %}</p>
+  {% if person.briefanrede2 %}<p>{{ person.briefanrede2 }}</p>{% endif %}
+
+  <p>wir haben für Sie einen Zugang zu unserem Eigentümer-Portal eingerichtet.
+     Dort sehen Sie Ihre Einheiten und können Ihre Kontakt- und Bankdaten
+     selbst pflegen.</p>
+
+  <p>Mit diesem Link melden Sie sich an — ein Passwort brauchen Sie nicht:</p>
+
+  <p>
+    <a href="{{ link }}"
+       style="display:inline-block;padding:12px 20px;background:#1d4ed8;color:#fff;
+              text-decoration:none;border-radius:4px;font-weight:bold;">
+      Portal-Zugang aktivieren
+    </a>
+  </p>
+
+  <p style="font-size:12px;color:#555;">
+    Falls der Button nicht funktioniert, kopieren Sie diese Adresse in Ihren Browser:<br>
+    <span style="word-break:break-all;">{{ link }}</span>
+  </p>
+
+  <p>Der Link ist <strong>{{ gueltig_stunden }} Stunden</strong> gültig und kann nur
+     einmal verwendet werden. Danach melden Sie sich jederzeit neu an, indem Sie auf
+     der Portal-Anmeldeseite Ihre E-Mail-Adresse eingeben — Sie erhalten dann einen
+     neuen Anmeldelink per E-Mail.</p>
+
+  <p style="font-size:12px;color:#555;">
+    Wenn Sie diesen Zugang nicht erwartet haben, können Sie diese E-Mail ignorieren.
+    Ohne Klick auf den Link wird kein Zugang aktiviert.
+  </p>
+
+  <p>Mit freundlichen Grüßen<br>
+     Demme Immobilien Verwaltung GmbH</p>
+</body>
+</html>

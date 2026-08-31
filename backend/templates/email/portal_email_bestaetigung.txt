@@ -1,0 +1,22 @@
+Bitte bestätigen Sie Ihre neue E-Mail-Adresse
+
+{% if person.briefanrede %}{{ person.briefanrede }}{% else %}Sehr geehrte Damen und Herren,{% endif %}
+{% if person.briefanrede2 %}{{ person.briefanrede2 }}{% endif %}
+
+Sie haben im Eigentümer-Portal {{ neue_email }} als neue E-Mail-Adresse
+angegeben. Bitte bestätigen Sie die Änderung über diesen Link:
+
+{{ link }}
+
+Der Link ist {{ gueltig_stunden }} Stunden gültig und kann nur einmal
+verwendet werden.
+
+Wichtig: Bis Sie die Änderung bestätigt haben, bleibt Ihre bisherige
+E-Mail-Adresse für die Anmeldung gültig. So können Sie sich auch bei
+einem Tippfehler weiterhin anmelden.
+
+Wenn Sie diese Änderung nicht veranlasst haben, ignorieren Sie diese
+E-Mail bitte — ohne Klick auf den Link ändert sich nichts.
+
+Mit freundlichen Grüßen
+Demme Immobilien Verwaltung GmbH

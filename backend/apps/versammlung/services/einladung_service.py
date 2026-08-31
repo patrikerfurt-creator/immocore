@@ -90,10 +90,14 @@ def _erste_email(person) -> str:
 def _hat_portalzugang(person) -> bool:
     """Portalzugang der Person.
 
-    Gibt bis zum Abschluss des Voraussetzungsmoduls "Eigentümer-Portal"
-    (Spec Kap. 11) immer ``False`` zurück — im Code existiert kein
-    ``PortalZugang``, ``Person`` hat keinen User-Bezug. Der Kanal ``portal``
-    ist damit vorbereitet, aber nie das Ergebnis der Kanalermittlung.
+    Gibt weiterhin immer ``False`` zurück — der Kanal ``portal`` ist
+    vorbereitet, aber nie das Ergebnis der Kanalermittlung.
+
+    Seit dem WEG-Portal „Mini" (Spec 1a) existiert zwar ``PortalZugang``
+    (``apps.portal``), das Portal hat in dieser Ausbaustufe aber bewusst
+    KEINEN Dokumentenbereich — eine Einladung, die dort abgelegt würde,
+    könnte der Eigentümer nicht abrufen. Umstellen erst, wenn Spec 1
+    (vollständig) den Dokumente-Tab bringt.
     """
     return False
 

@@ -1,0 +1,23 @@
+Ihr Zugang zum Eigentümer-Portal
+
+{% if person.briefanrede %}{{ person.briefanrede }}{% else %}Sehr geehrte Damen und Herren,{% endif %}
+{% if person.briefanrede2 %}{{ person.briefanrede2 }}{% endif %}
+
+wir haben für Sie einen Zugang zu unserem Eigentümer-Portal eingerichtet.
+Dort sehen Sie Ihre Einheiten und können Ihre Kontakt- und Bankdaten
+selbst pflegen.
+
+Mit diesem Link melden Sie sich an — ein Passwort brauchen Sie nicht:
+
+{{ link }}
+
+Der Link ist {{ gueltig_stunden }} Stunden gültig und kann nur einmal
+verwendet werden. Danach melden Sie sich jederzeit neu an, indem Sie auf
+der Portal-Anmeldeseite Ihre E-Mail-Adresse eingeben — Sie erhalten dann
+einen neuen Anmeldelink per E-Mail.
+
+Wenn Sie diesen Zugang nicht erwartet haben, können Sie diese E-Mail
+ignorieren. Ohne Klick auf den Link wird kein Zugang aktiviert.
+
+Mit freundlichen Grüßen
+Demme Immobilien Verwaltung GmbH
