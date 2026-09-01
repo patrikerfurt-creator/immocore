@@ -571,6 +571,27 @@ export interface KreditorOPAusbuchungResponse {
   }>
 }
 
+export interface EBankingObjektZeile {
+  objekt_id: string | null
+  objektnummer: string
+  bezeichnung: string
+  anzahl_gesamt: number
+  anzahl_erkannt: number
+  anzahl_vorschlag: number
+  anzahl_unklar: number
+  anzahl_importiert: number
+  summe_eingang: string
+  summe_ausgang: string
+  aeltestes_datum: string | null
+  neuestes_datum: string | null
+}
+
+export interface EBankingObjektUebersicht {
+  objekte: EBankingObjektZeile[]
+  summe_offen: number
+  objekte_mit_offenen: number
+}
+
 export interface BankMatchRegel {
   id: string
   bankkonto: string

@@ -4,6 +4,7 @@ import type {
   Buchungsart, OffenerPosten,
   CamtImportEinstellung, CamtImportLog, Kontoumsatz,
   BankBuchung, BankMatchRegel, KreditorOP, KreditorOPAusbuchungResponse,
+  EBankingObjektUebersicht,
   Mahnlauf, Mahnung, Mahnsperre,
   Forderungsfall, Basiszinssatz,
   RAPPosition, RAPAufloesung,
@@ -269,6 +270,9 @@ export const buchhaltungApi = {
   // E-Banking Phase E — BankBuchungen + BankMatchRegeln
   eBankingBuchungen: (params?: Record<string, string>) =>
     client.get<BankBuchung[]>('/e-banking/bank-buchungen/', { params }).then(r => r.data),
+  eBankingObjektUebersicht: (params?: Record<string, string>) =>
+    client.get<EBankingObjektUebersicht>(
+      '/e-banking/bank-buchungen/objekt-uebersicht/', { params }).then(r => r.data),
   eBankingBuchung: (id: string) =>
     client.get<BankBuchung>(`/e-banking/bank-buchungen/${id}/`).then(r => r.data),
   eBankingVerbuchen: (id: string, data: {
