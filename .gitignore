@@ -70,3 +70,8 @@ backend/celerybeat-schedule
 # Live-Daten (Personen, Bankverbindungen), die nie ins Repo gehören.
 local_seed/**/*.sql
 local_seed/**/*.sql.gz
+
+# Claude-Code-Berechtigungen: waechst mit jeder lokalen Freigabe, ist
+# maschinen- und benutzergebunden und gehoert deshalb nicht ins Repo.
+# Geteilte Projekteinstellungen kaemen nach .claude/settings.json.
+.claude/settings.local.json
