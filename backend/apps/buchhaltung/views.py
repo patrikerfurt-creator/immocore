@@ -2186,6 +2186,75 @@ class EBankingBuchungViewSet(viewsets.ModelViewSet):
         ku.refresh_from_db()
         return Response(BankBuchungSerializer(ku, context={'request': request}).data)
 
+    @action(detail=False, methods=['get'], url_path='objekt-uebersicht')
+    def objekt_uebersicht(self, request):
+        """
+        Objektuebergreifende Uebersicht der noch nicht verbuchten Kontoumsaetze.
+
+        Bewusst NICHT objektgefiltert - die Seite soll zeigen, bei welchem
+        Objekt noch Arbeit liegt. Umsaetze ohne Objektzuordnung
+        (objekt_id IS NULL) kommen als eigene Zeile mit objekt_id=None.
+        Optionale Filter: datum_von, datum_bis.
+        """
+        from django.db.models import (
+            Case, Count, DecimalField, Max, Min, Q, Sum, Value, When,
+        )
+        from django.db.models.functions import Coalesce
+
+        offene_status = ['importiert', 'erkannt', 'vorschlag', 'unklar', 'unbekannt']
+
+        qs = Kontoumsatz.objects.filter(status__in=offene_status)
+        p = self.request.query_params
+        if datum_von := p.get('datum_von'):
+            qs = qs.filter(buchungsdatum__gte=datum_von)
+        if datum_bis := p.get('datum_bis'):
+            qs = qs.filter(buchungsdatum__lte=datum_bis)
+
+        null_betrag = Value(0, output_field=DecimalField(max_digits=14, decimal_places=2))
+
+        zeilen = (
+            qs.values('objekt_id', 'objekt__objektnummer', 'objekt__bezeichnung')
+              .annotate(
+                  anzahl_gesamt=Count('id'),
+                  anzahl_erkannt=Count('id', filter=Q(status='erkannt')),
+                  anzahl_vorschlag=Count('id', filter=Q(status='vorschlag')),
+                  anzahl_unklar=Count('id', filter=Q(status__in=['unklar', 'unbekannt'])),
+                  anzahl_importiert=Count('id', filter=Q(status='importiert')),
+                  summe_eingang=Coalesce(
+                      Sum(Case(When(betrag__gt=0, then='betrag'))), null_betrag
+                  ),
+                  summe_ausgang=Coalesce(
+                      Sum(Case(When(betrag__lt=0, then='betrag'))), null_betrag
+                  ),
+                  aeltestes_datum=Min('buchungsdatum'),
+                  neuestes_datum=Max('buchungsdatum'),
+              )
+              .order_by('-anzahl_gesamt')
+        )
+
+        ergebnis = [
+            {
+                'objekt_id':          str(z['objekt_id']) if z['objekt_id'] else None,
+                'objektnummer':       z['objekt__objektnummer'] or '',
+                'bezeichnung':        z['objekt__bezeichnung'] or 'Ohne Objektzuordnung',
+                'anzahl_gesamt':      z['anzahl_gesamt'],
+                'anzahl_erkannt':     z['anzahl_erkannt'],
+                'anzahl_vorschlag':   z['anzahl_vorschlag'],
+                'anzahl_unklar':      z['anzahl_unklar'],
+                'anzahl_importiert':  z['anzahl_importiert'],
+                'summe_eingang':      str(z['summe_eingang']),
+                'summe_ausgang':      str(z['summe_ausgang']),
+                'aeltestes_datum':    z['aeltestes_datum'],
+                'neuestes_datum':     z['neuestes_datum'],
+            }
+            for z in zeilen
+        ]
+        return Response({
+            'objekte':            ergebnis,
+            'summe_offen':        sum(z['anzahl_gesamt'] for z in ergebnis),
+            'objekte_mit_offenen': len(ergebnis),
+        })
+
 
 class BankMatchRegelViewSet(viewsets.ModelViewSet):
     """

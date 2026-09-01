@@ -2,10 +2,14 @@ import { useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { buchhaltungApi } from '../../api/buchhaltung'
+import { objekteApi } from '../../api/objekte'
 import { Badge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import { useObjektStore } from '../../stores/objekt'
-import type { BankBuchung, Konto, HausgeldSollstellung, KreditorOP } from '../../types'
+import type {
+  BankBuchung, Konto, HausgeldSollstellung, KreditorOP,
+  EBankingObjektZeile, ObjektList,
+} from '../../types'
 
 const EUR   = (v: string | number) => Number(v).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })
 const DATUM = (s: string) => new Date(s).toLocaleDateString('de-DE')
@@ -595,14 +599,104 @@ function BuchungRow({
 }
 
 // ---------------------------------------------------------------------------
+// Objekt-Uebersicht: wo liegen noch unverbuchte Umsaetze?
+// ---------------------------------------------------------------------------
+
+function ObjektUebersicht({ onObjektWahl }: { onObjektWahl: (zeile: EBankingObjektZeile) => void }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['e-banking-objekt-uebersicht'],
+    queryFn: () => buchhaltungApi.eBankingObjektUebersicht(),
+  })
+
+  if (isLoading) return <div className="text-gray-400 text-sm">Lade…</div>
+
+  const zeilen = data?.objekte ?? []
+
+  if (zeilen.length === 0) {
+    return (
+      <div className="bg-white rounded-lg border p-10 text-center text-gray-500">
+        Keine unverbuchten Umsätze — alle Objekte sind abgearbeitet.
+      </div>
+    )
+  }
+
+  return (
+    <>
+      <div className="mb-3 text-sm text-gray-600">
+        <span className="font-medium text-gray-900">{data?.summe_offen ?? 0}</span> unverbuchte Umsätze
+        in <span className="font-medium text-gray-900">{data?.objekte_mit_offenen ?? 0}</span> Objekten
+      </div>
+      <div className="bg-white rounded-lg border overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 border-b">
+            <tr>
+              <th className="text-left  px-3 py-3 text-gray-600 font-medium">Objekt</th>
+              <th className="text-right px-3 py-3 text-gray-600 font-medium w-20">Offen</th>
+              <th className="text-right px-3 py-3 text-gray-600 font-medium w-24">Erkannt</th>
+              <th className="text-right px-3 py-3 text-gray-600 font-medium w-24">Vorschlag</th>
+              <th className="text-right px-3 py-3 text-gray-600 font-medium w-24">Unklar</th>
+              <th className="text-right px-3 py-3 text-gray-600 font-medium w-32">Eingänge</th>
+              <th className="text-right px-3 py-3 text-gray-600 font-medium w-32">Ausgänge</th>
+              <th className="text-left  px-3 py-3 text-gray-600 font-medium w-40">Zeitraum</th>
+            </tr>
+          </thead>
+          <tbody>
+            {zeilen.map((z) => {
+              const klickbar = !!z.objekt_id
+              return (
+                <tr
+                  key={z.objekt_id ?? 'ohne-objekt'}
+                  onClick={() => klickbar && onObjektWahl(z)}
+                  className={`border-t ${klickbar ? 'hover:bg-blue-50 cursor-pointer' : 'bg-amber-50'}`}
+                  title={klickbar ? 'Zu den Buchungen dieses Objekts' : 'Umsätze ohne Objektzuordnung'}
+                >
+                  <td className="px-3 py-2.5">
+                    <div className="font-medium text-gray-900">{z.bezeichnung}</div>
+                    <div className="text-xs text-gray-400">{z.objektnummer || 'keine Objektnummer'}</div>
+                  </td>
+                  <td className="px-3 py-2.5 text-right font-semibold tabular-nums">{z.anzahl_gesamt}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-gray-600">
+                    {z.anzahl_erkannt || <span className="text-gray-300">—</span>}
+                  </td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-gray-600">
+                    {z.anzahl_vorschlag || <span className="text-gray-300">—</span>}
+                  </td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">
+                    {z.anzahl_unklar + z.anzahl_importiert
+                      ? <span className="text-amber-700 font-medium">{z.anzahl_unklar + z.anzahl_importiert}</span>
+                      : <span className="text-gray-300">—</span>}
+                  </td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-green-700 whitespace-nowrap">
+                    {Number(z.summe_eingang) ? EUR(z.summe_eingang) : <span className="text-gray-300">—</span>}
+                  </td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-red-700 whitespace-nowrap">
+                    {Number(z.summe_ausgang) ? EUR(z.summe_ausgang) : <span className="text-gray-300">—</span>}
+                  </td>
+                  <td className="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap">
+                    {z.aeltestes_datum ? DATUM(z.aeltestes_datum) : '—'}
+                    {' – '}
+                    {z.neuestes_datum ? DATUM(z.neuestes_datum) : '—'}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Hauptkomponente
 // ---------------------------------------------------------------------------
 
-type TabKey = 'buchungen' | 'verbucht' | 'camt054'
+type TabKey = 'uebersicht' | 'buchungen' | 'verbucht' | 'camt054'
 
 export function EBanking() {
-  const objektId = useObjektStore(s => s.selectedId)
-  const [tab, setTab] = useState<TabKey>('buchungen')
+  const objektId    = useObjektStore(s => s.selectedId)
+  const setObjekt   = useObjektStore(s => s.setSelected)
+  const [tab, setTab] = useState<TabKey>(objektId ? 'buchungen' : 'uebersicht')
   const [selected, setSelected] = useState<BankBuchung | null>(null)
   const [suche, setSuche] = useState('')
   const [datumVon, setDatumVon] = useState('')
@@ -630,6 +724,25 @@ export function EBanking() {
     queryFn: () => buchhaltungApi.eBankingBuchungen(buildParams({ status: 'verbucht,storniert' })),
     enabled: !!objektId && tab === 'verbucht',
   })
+
+  // Cache der Sidebar - liefert objekt_typ fuer den Wechsel aus der Uebersicht
+  const { data: objekteListe } = useQuery({
+    queryKey: ['objekte-sidebar'],
+    queryFn: objekteApi.list,
+    enabled: tab === 'uebersicht',
+  })
+
+  function objektAusUebersichtWaehlen(zeile: EBankingObjektZeile) {
+    if (!zeile.objekt_id) return
+    const obj = (objekteListe as ObjektList[] | undefined)?.find(o => o.id === zeile.objekt_id)
+    setObjekt(
+      zeile.objekt_id,
+      obj?.bezeichnung   ?? zeile.bezeichnung,
+      obj?.objektnummer  ?? zeile.objektnummer,
+      obj?.objekt_typ    ?? '',
+    )
+    setTab('buchungen')
+  }
 
   const { data: camt054Liste } = useQuery({
     queryKey: ['camt054-liste'],
@@ -671,15 +784,9 @@ export function EBanking() {
   const rows = tab === 'buchungen' ? (buchungen ?? []) : (verbucht ?? [])
   const loading = tab === 'buchungen' ? loadingBuchungen : tab === 'verbucht' ? loadingVerbucht : false
 
-  if (!objektId) {
-    return (
-      <div className="p-6 text-gray-500">Bitte zuerst ein Objekt in der Seitenleiste auswählen.</div>
-    )
-  }
-
   return (
     <div>
-      {selected && (
+      {selected && objektId && (
         <DetailSlideOver
           buchung={selected}
           objektId={objektId}
@@ -708,7 +815,8 @@ export function EBanking() {
           <Button
             variant="secondary"
             onClick={() => fileInputRef.current?.click()}
-            disabled={scanMut.isPending}
+            disabled={scanMut.isPending || !objektId}
+            title={objektId ? undefined : 'Bitte zuerst ein Objekt wählen'}
           >
             {scanMut.isPending ? 'Importiere…' : 'CAMT importieren'}
           </Button>
@@ -723,7 +831,7 @@ export function EBanking() {
 
       {/* Tabs */}
       <div className="flex gap-1 border-b mb-4">
-        {([['buchungen', 'Buchungen'], ['verbucht', 'Verbucht'], ['camt054', 'camt.054']] as [TabKey, string][]).map(([key, label]) => (
+        {([['uebersicht', 'Übersicht (alle Objekte)'], ['buchungen', 'Buchungen'], ['verbucht', 'Verbucht'], ['camt054', 'camt.054']] as [TabKey, string][]).map(([key, label]) => (
           <button
             key={key}
             onClick={() => setTab(key)}
@@ -738,8 +846,13 @@ export function EBanking() {
         ))}
       </div>
 
+      {/* Objekt-Übersicht */}
+      {tab === 'uebersicht' && (
+        <ObjektUebersicht onObjektWahl={objektAusUebersichtWaehlen} />
+      )}
+
       {/* Filter (Buchungen + Verbucht) */}
-      {tab !== 'camt054' && (
+      {(tab === 'buchungen' || tab === 'verbucht') && (
         <div className="flex gap-3 mb-4 flex-wrap">
           <input
             type="text"
@@ -774,7 +887,12 @@ export function EBanking() {
       )}
 
       {/* Buchungen-Tabelle */}
-      {tab !== 'camt054' && (
+      {(tab === 'buchungen' || tab === 'verbucht') && (
+        !objektId ? (
+          <div className="bg-white rounded-lg border p-10 text-center text-gray-500">
+            Bitte zuerst ein Objekt in der Seitenleiste auswählen — oder oben in der Übersicht anklicken.
+          </div>
+        ) :
         loading ? (
           <div className="text-gray-400 text-sm">Lade…</div>
         ) : (
