@@ -97,7 +97,9 @@ class MagicLinkEinloesenView(APIView):
         serializer.is_valid(raise_exception=True)
 
         try:
-            session, tok = zugang_service.melde_an(serializer.validated_data['token'])
+            session, _tok, erstanmeldung = zugang_service.melde_an(
+                serializer.validated_data['token']
+            )
         except (TokenUngueltig, ZugangGesperrt):
             return Response(
                 {'detail': _UNGUELTIGER_LINK}, status=status.HTTP_401_UNAUTHORIZED
@@ -107,7 +109,7 @@ class MagicLinkEinloesenView(APIView):
             'token': session.token,
             'gueltig_bis': session.gueltig_bis,
             'gueltig_stunden': SESSION_GUELTIG_STUNDEN,
-            'erstanmeldung': tok.typ == tok.TYP_EINLADUNG,
+            'erstanmeldung': erstanmeldung,
             'name': session.zugang.person.name,
         })
 

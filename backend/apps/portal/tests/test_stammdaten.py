@@ -34,7 +34,7 @@ class PortalTestBasis(APITestCase):
         mail.outbox.clear()
         self.person = erstelle_eigentuemer(email='alt@example.org')
         self.zugang, token = zugang_service.lade_ein(self.person)
-        self.session, _ = zugang_service.melde_an(token.token)
+        self.session, _, _ = zugang_service.melde_an(token.token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Portal {self.session.token}')
 
     def eintraege(self, feld):

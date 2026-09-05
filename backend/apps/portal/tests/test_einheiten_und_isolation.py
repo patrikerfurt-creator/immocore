@@ -38,7 +38,7 @@ class MeineEinheitenTest(APITestCase):
             verknuepfe(self.person, einheit)
 
         self.zugang, token = zugang_service.lade_ein(self.person)
-        session, _ = zugang_service.melde_an(token.token)
+        session, _, _ = zugang_service.melde_an(token.token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Portal {session.token}')
 
     def test_liefert_eine_karte_je_weg(self):
@@ -125,7 +125,7 @@ class DatenisolationTest(APITestCase):
         verknuepfe(self.person_b, self.einheit_b)
 
         _, token_a = zugang_service.lade_ein(self.person_a)
-        self.session_a, _ = zugang_service.melde_an(token_a.token)
+        self.session_a, _, _ = zugang_service.melde_an(token_a.token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Portal {self.session_a.token}')
 
     def test_einheiten_zeigen_nur_die_eigene_weg(self):
