@@ -24,7 +24,7 @@ class IbanPruefEndpunktTest(APITestCase):
         cache.clear()
         self.person = erstelle_eigentuemer()
         self.zugang, token = zugang_service.lade_ein(self.person)
-        self.session, _ = zugang_service.melde_an(token.token)
+        self.session, _, _ = zugang_service.melde_an(token.token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Portal {self.session.token}')
 
     def test_gueltige_iban_wird_bestaetigt(self):
@@ -83,7 +83,7 @@ class IbanPruefungBeimSpeichernTest(APITestCase):
         self.person = erstelle_eigentuemer()
         self.mandat = erstelle_mandat(self.person)
         self.zugang, token = zugang_service.lade_ein(self.person)
-        session, _ = zugang_service.melde_an(token.token)
+        session, _, _ = zugang_service.melde_an(token.token)
         self.client.credentials(HTTP_AUTHORIZATION=f'Portal {session.token}')
 
     def test_falsche_pruefsumme_wird_beim_speichern_abgelehnt(self):

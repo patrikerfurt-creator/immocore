@@ -237,12 +237,20 @@ def loese_token_ein(token_wert: str, erwartete_typen: tuple[str, ...]) -> Portal
 
 
 @transaction.atomic
-def melde_an(token_wert: str) -> tuple[PortalSession, PortalToken]:
+def melde_an(token_wert: str) -> tuple[PortalSession, PortalToken, bool]:
     """Login per Einladungs- oder Magic-Link-Token.
 
     Beide Typen werden hier angenommen: fachlich ist die Einladung ein
-    Magic Link mit längerer Frist, der zusätzlich ``erstaktivierung_am``
-    setzt (Spec Kap. 3.1: "Klick aktiviert den Zugang und loggt direkt ein").
+    Magic Link mit längerer Frist (Spec Kap. 3.1: "Klick aktiviert den
+    Zugang und loggt direkt ein").
+
+    ``erstaktivierung_am`` haengt am ERFOLGREICHEN LOGIN, nicht am
+    Token-Typ: laesst der Eingeladene den 72-Stunden-Link verfallen und
+    meldet sich danach per Magic Link an, ist der Zugang genauso in
+    Benutzung — der Verwaltung als "eingeladen, noch nicht aktiviert"
+    anzuzeigen waere schlicht falsch.
+
+    Drittes Rueckgabeelement: ob DIESER Login die Erstaktivierung war.
     """
     tok = loese_token_ein(
         token_wert, (PortalToken.TYP_EINLADUNG, PortalToken.TYP_MAGIC)
@@ -252,7 +260,8 @@ def melde_an(token_wert: str) -> tuple[PortalSession, PortalToken]:
     jetzt = timezone.now()
     felder = ['letzter_login', 'geaendert_am']
     zugang.letzter_login = jetzt
-    if tok.typ == PortalToken.TYP_EINLADUNG and zugang.erstaktivierung_am is None:
+    erstanmeldung = zugang.erstaktivierung_am is None
+    if erstanmeldung:
         zugang.erstaktivierung_am = jetzt
         felder.append('erstaktivierung_am')
     zugang.save(update_fields=felder)
@@ -261,7 +270,7 @@ def melde_an(token_wert: str) -> tuple[PortalSession, PortalToken]:
         zugang=zugang,
         gueltig_bis=jetzt + timedelta(hours=SESSION_GUELTIG_STUNDEN),
     )
-    return session, tok
+    return session, tok, erstanmeldung
 
 
 def melde_ab(session: PortalSession) -> None:

@@ -145,6 +145,37 @@ class TokenEinloesenTest(APITestCase):
         )
         self.assertNotEqual(token2.token, self.einladung.token)
 
+    def test_magic_link_aktiviert_zugang_ebenfalls(self):
+        """Verfaellt der Einladungslink, aktiviert der erste Magic-Link-Login.
+
+        Sonst stuende ein nachweislich genutzter Zugang in der Verwaltung
+        dauerhaft als "eingeladen — noch nicht aktiviert".
+        """
+        self.einladung.gueltig_bis = timezone.now() - timedelta(hours=1)
+        self.einladung.save(update_fields=['gueltig_bis'])
+        magic = zugang_service.erzeuge_magic_link(self.zugang)
+
+        response = self.client.post(VERIFY_URL, {'token': magic.token})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['erstanmeldung'])
+        self.zugang.refresh_from_db()
+        self.assertIsNotNone(self.zugang.erstaktivierung_am)
+        self.assertEqual(self.zugang.status, 'aktiv')
+
+    def test_zweiter_magic_link_login_ist_keine_erstanmeldung(self):
+        erster = zugang_service.erzeuge_magic_link(self.zugang)
+        self.client.post(VERIFY_URL, {'token': erster.token})
+        self.zugang.refresh_from_db()
+        aktivierung = self.zugang.erstaktivierung_am
+
+        zweiter = zugang_service.erzeuge_magic_link(self.zugang)
+        response = self.client.post(VERIFY_URL, {'token': zweiter.token})
+
+        self.assertFalse(response.data['erstanmeldung'])
+        self.zugang.refresh_from_db()
+        self.assertEqual(self.zugang.erstaktivierung_am, aktivierung)
+
     def test_erneute_einladung_setzt_erstaktivierung_nicht_zurueck(self):
         self.client.post(VERIFY_URL, {'token': self.einladung.token})
         self.zugang.refresh_from_db()
@@ -163,7 +194,7 @@ class SitzungTest(APITestCase):
         cache.clear()
         self.person = erstelle_eigentuemer(email='login@example.org')
         self.zugang, token = zugang_service.lade_ein(self.person)
-        self.session, _ = zugang_service.melde_an(token.token)
+        self.session, _, _ = zugang_service.melde_an(token.token)
 
     def _auth(self):
         self.client.credentials(HTTP_AUTHORIZATION=f'Portal {self.session.token}')

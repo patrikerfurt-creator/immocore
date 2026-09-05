@@ -110,7 +110,7 @@ class PortalZugangVerwaltungTest(APITestCase):
     def test_portal_token_erreicht_den_internen_bereich_nicht(self):
         """Ein Eigentümer darf sich nicht selbst weitere Zugänge anlegen."""
         _, token = zugang_service.lade_ein(self.person)
-        session, _ = zugang_service.melde_an(token.token)
+        session, _, _ = zugang_service.melde_an(token.token)
 
         self.client.force_authenticate(user=None)
         self.client.credentials(HTTP_AUTHORIZATION=f'Portal {session.token}')
