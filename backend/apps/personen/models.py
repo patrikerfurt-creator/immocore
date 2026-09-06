@@ -37,6 +37,26 @@ class SEPAMandat(models.Model):
         return f"{self.mandatsreferenz} ({self.iban})"
 
 
+def erster_listenwert(liste, schluessel: tuple[str, ...]) -> str:
+    """Erster brauchbarer Wert einer Kontakt-JSON-Liste.
+
+    Eintraege koennen Strings oder Dicts sein (historisch gewachsen).
+    Gleiche Lesereihenfolge wie ``portal.services.zugang_service.person_email``
+    und ``versammlung.services.einladung_service._erste_email`` — die drei
+    muessen dieselbe Adresse liefern, sonst geht der Portal-Login gegen eine
+    andere Adresse als die Einladungsmail.
+    """
+    for eintrag in (liste or []):
+        if isinstance(eintrag, str) and eintrag.strip():
+            return eintrag.strip()
+        if isinstance(eintrag, dict):
+            for s in schluessel:
+                wert = (eintrag.get(s) or '').strip()
+                if wert:
+                    return wert
+    return ''
+
+
 class Person(models.Model):
     PERSON_TYP_CHOICES = [
         ('100', 'Eigentümer'),
@@ -169,6 +189,25 @@ class Person(models.Model):
             self.plz = teile['plz']
             self.ort = teile['ort']
 
+    def _synchronisiere_legacyfelder(self):
+        """Haelt ``email``/``telefon`` am ersten Eintrag der JSON-Listen.
+
+        Gelesen wird im Projekt zuerst aus ``emails``/``telefonnummern``,
+        geschrieben hat das Bearbeitungsformular aber nur diese Listen — das
+        Legacy-Feld behielt dadurch dauerhaft den Import-Wert, und Personen-
+        liste, Objekt- und Prozessansicht zeigten eine veraltete Adresse.
+
+        Nur uebernehmen, wenn die Liste einen Wert hergibt: bei den vielen
+        Bestandspersonen mit leerer Liste ist das Legacy-Feld die einzige
+        Quelle und darf nicht geleert werden.
+        """
+        mail = erster_listenwert(self.emails, ('adresse', 'email', 'wert'))
+        if mail:
+            self.email = mail
+        telefon = erster_listenwert(self.telefonnummern, ('nummer', 'telefon', 'wert'))
+        if telefon:
+            self.telefon = telefon
+
     def save(self, *args, **kwargs):
         if not self.briefanrede:
             self.briefanrede, self.briefanrede2 = self.auto_briefanreden(
@@ -176,6 +215,7 @@ class Person(models.Model):
                 titel=self.titel, titel2=self.titel2,
             )
         self._synchronisiere_adresse()
+        self._synchronisiere_legacyfelder()
 
         # Ein Teil-Save darf die mitgepflegten Adressfelder nicht verlieren:
         # wer 'strasse' speichert, meint auch das daraus gebaute 'adresse'.
@@ -183,9 +223,16 @@ class Person(models.Model):
         if felder is not None:
             felder = set(felder)
             if felder & {'strasse', 'hausnummer', 'plz', 'ort', 'adresse'}:
-                kwargs['update_fields'] = felder | {
+                felder = felder | {
                     'strasse', 'hausnummer', 'plz', 'ort', 'adresse',
                 }
+            # Analog fuer die Kontaktdaten: wer 'emails' speichert, meint
+            # auch das daraus gespiegelte 'email'.
+            if 'emails' in felder:
+                felder = felder | {'email'}
+            if 'telefonnummern' in felder:
+                felder = felder | {'telefon'}
+            kwargs['update_fields'] = felder
         super().save(*args, **kwargs)
 
     class Meta:
