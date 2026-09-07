@@ -104,6 +104,14 @@ services:
     volumes:
       - ./frontend/src:/app/src
       - ./frontend/public:/app/public
+      # Die Build-Konfiguration liegt sonst nur im Image: eine Änderung an
+      # tailwind.config.js wirkte dann lokal NICHT — die Klassen entstehen,
+      # bleiben aber leer, was im Browser wie ein Tippfehler aussieht.
+      # Einzeldatei-Mounts, damit node_modules im Container unberührt bleibt.
+      - ./frontend/tailwind.config.js:/app/tailwind.config.js
+      - ./frontend/postcss.config.js:/app/postcss.config.js
+      - ./frontend/vite.config.ts:/app/vite.config.ts
+      - ./frontend/index.html:/app/index.html
     depends_on:
       - backend
     restart: unless-stopped

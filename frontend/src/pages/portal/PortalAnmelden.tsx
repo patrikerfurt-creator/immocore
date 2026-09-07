@@ -27,21 +27,21 @@ export function PortalAnmelden() {
   }, [token, navigate])
 
   return (
-    <div className="min-h-screen bg-primary-900 flex items-center justify-center px-4">
+    <div className="min-h-screen bg-portal-brand flex items-center justify-center px-4">
       <div className="w-full max-w-sm bg-white rounded-xl shadow-xl p-8 text-center">
-        <h1 className="text-2xl font-bold text-primary-900 mb-4">Eigentümer-Portal</h1>
+        <h1 className="text-2xl font-bold text-portal-brand mb-4">Eigentümer-Portal</h1>
         {fehler ? (
           <>
-            <p className="text-sm text-red-600 mb-4">{fehler}</p>
+            <p className="text-sm text-portal-debit mb-4">{fehler}</p>
             <button
               onClick={() => navigate('/portal/login', { replace: true })}
-              className="text-sm text-primary-700 hover:underline"
+              className="text-sm text-portal-brand hover:underline"
             >
               Zur Anmeldung
             </button>
           </>
         ) : (
-          <p className="text-sm text-gray-600">Sie werden angemeldet…</p>
+          <p className="text-sm text-portal-soft">Sie werden angemeldet…</p>
         )}
       </div>
     </div>
