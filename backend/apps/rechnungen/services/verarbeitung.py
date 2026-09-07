@@ -64,6 +64,41 @@ def gleiche_kreditor_ab(supplier: str, iban: str):
     return gleiche_kreditoren(supplier, iban or '')
 
 
+def dubletten_notiz(abgleich, iban: str) -> str:
+    """Verarbeitungsnotiz zu einem angehaltenen Kreditor-Verdacht.
+
+    Nennt bewusst, WAS abweicht, und zeigt beide IBANs. Der alte Text
+    lautete fuer alle drei Anlaesse "aehnelt <Kreditor>" — bei
+    ``iban_abweichung`` ist der Name aber exakt gleich, und was fehlte,
+    war genau die Information, an der man den Fall entscheidet.
+    """
+    from .kreditor_matching import (
+        ANLASS_IBAN_ABWEICHUNG,
+        ANLASS_NAME_ABWEICHUNG,
+    )
+
+    bester = abgleich.kandidaten[0]
+    nummer = bester.kreditor.kreditorennummer or 'ohne Nummer'
+    ref = f'"{bester.kreditor.name}" [{nummer}]'
+    beleg_iban = iban or 'keine'
+
+    if abgleich.anlass == ANLASS_IBAN_ABWEICHUNG:
+        return (
+            f'Kreditor-Dublettenverdacht ({abgleich.anlass}): Name identisch mit {ref}, '
+            f'aber die Beleg-IBAN {beleg_iban} ist dort nicht hinterlegt '
+            f'(bekannt: {bester.kreditor.iban or "keine"}).'
+        )
+    if abgleich.anlass == ANLASS_NAME_ABWEICHUNG:
+        return (
+            f'Kreditor-Dublettenverdacht ({abgleich.anlass}): Beleg-IBAN {beleg_iban} '
+            f'gehoert zu {ref}, der Name auf dem Beleg weicht davon ab.'
+        )
+    return (
+        f'Kreditor-Dublettenverdacht ({abgleich.anlass}): '
+        f'aehnelt {ref} (Beleg-IBAN {beleg_iban}).'
+    )
+
+
 def finde_oder_erstelle_kreditor(supplier: str, supplier_normalized: str, iban: str) -> Kreditor | None:
     """Sicheren Treffer liefern oder neu anlegen — OHNE Dubletten-Sperre.
 
@@ -313,12 +348,7 @@ def verarbeite_datei(datei_pfad: str, archiv_root: Path) -> dict:
             # jede weitere Zuordnung (Objekt, Konto, Buchung) wertlos.
             status = 'prueffall'
             duplikat_typ = 'kreditor_dublette'
-            bester = abgleich.kandidaten[0]
-            notiz = (
-                f'Kreditor-Dublettenverdacht ({abgleich.anlass}): '
-                f'ähnelt "{bester.kreditor.name}" '
-                f'[{bester.kreditor.kreditorennummer or "ohne Nummer"}]'
-            )
+            notiz = dubletten_notiz(abgleich, parsed.get('iban') or '')
         else:
             # Stufe 1: Hash
             dup = _finde_duplikat_hash(sha256)
@@ -530,11 +560,8 @@ def ocr_erneut_ausfuehren(rechnung: Rechnung) -> Rechnung:
         # Kreditor greifen weder Kreditor-Regel noch Kontovorschlag.
         rechnung.status = 'prueffall'
         rechnung.duplikat_typ = 'kreditor_dublette'
-        bester = abgleich.kandidaten[0]
-        rechnung.verarbeitungsnotiz = (
-            f'Kreditor-Dublettenverdacht ({abgleich.anlass}): '
-            f'ähnelt "{bester.kreditor.name}" '
-            f'[{bester.kreditor.kreditorennummer or "ohne Nummer"}]'
+        rechnung.verarbeitungsnotiz = dubletten_notiz(
+            abgleich, parsed.get('iban') or '',
         )
         rechnung.save()
     else:

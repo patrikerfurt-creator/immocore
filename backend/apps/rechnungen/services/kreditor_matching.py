@@ -155,6 +155,21 @@ def gleiche_iban(kreditor: Kreditor, iban: str) -> bool:
     return kreditor.bankverbindungen.filter(iban=iban, aktiv=True).exists()
 
 
+def kennt_bankverbindung(kreditor: Kreditor) -> bool:
+    """Hat der Kreditor ueberhaupt eine Bankverbindung — egal welche?
+
+    Der Unterschied zu ``gleiche_iban`` ist der zwischen "andere IBAN" und
+    "noch keine IBAN". Ohne diese Unterscheidung meldete der Abgleich bei
+    jedem Kreditor ohne Bankverbindung eine "abweichende Bankverbindung" —
+    also das Betrugsmuster — obwohl es nichts gab, wovon die Beleg-IBAN
+    abweichen konnte. Auf Live liefen so 92 Belege desselben Kreditors in
+    die Pruefliste, bis jemand die IBAN nachtrug.
+    """
+    if (kreditor.iban or '').strip():
+        return True
+    return kreditor.bankverbindungen.filter(aktiv=True).exists()
+
+
 def gleiche_kreditoren(name: str, iban: str = '') -> AbgleichErgebnis:
     """Entscheidet, ob ein Beleg einem bestehenden Kreditor gehört.
 
@@ -190,15 +205,28 @@ def gleiche_kreditoren(name: str, iban: str = '') -> AbgleichErgebnis:
 
     if bester.match_typ == 'name_exakt':
         # Name stimmt exakt. Ohne IBAN auf dem Beleg ist das der bisherige
-        # Normalfall und bleibt ein sicherer Treffer.
+        # Normalfall und bleibt ein sicherer Treffer. Ebenso, wenn der
+        # Kreditor noch gar keine Bankverbindung kennt: dann ist die
+        # Beleg-IBAN die erste und keine Abweichung. Nur eine ANDERE
+        # bekannte IBAN ist das Betrugsmuster, auf das die Pruefung zielt.
         if not iban or gleiche_iban(bester.kreditor, iban):
+            return AbgleichErgebnis(kreditor=bester.kreditor)
+        if not kennt_bankverbindung(bester.kreditor):
             return AbgleichErgebnis(kreditor=bester.kreditor)
         return AbgleichErgebnis(kandidaten=kandidaten, anlass=ANLASS_IBAN_ABWEICHUNG)
 
     # Nur Ähnlichkeit — nie automatisch zuordnen.
+    #
+    # Verglichen wird die ROHE Ähnlichkeit, nicht ``bester.score``: der ist
+    # in ``finde_kandidaten`` auf 0.90 gedeckelt und konnte die Schwelle
+    # 0.95 nie erreichen — der Zweig war damit toter Code, jeder
+    # Fuzzy-Fall landete auf ``fuzzy_name``.
+    praktisch_identisch = (
+        aehnlichkeit(name, bester.kreditor.name) >= NAME_IDENTISCH_SCHWELLE
+    )
     anlass = (
         ANLASS_IBAN_ABWEICHUNG
-        if iban and bester.score >= NAME_IDENTISCH_SCHWELLE
+        if iban and praktisch_identisch and kennt_bankverbindung(bester.kreditor)
         else ANLASS_FUZZY_NAME
     )
     return AbgleichErgebnis(kandidaten=kandidaten, anlass=anlass)
