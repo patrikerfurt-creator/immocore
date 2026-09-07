@@ -29,9 +29,9 @@ function fehlertext(fehler: unknown, ersatz: string): string {
 
 function Sektion({ titel, children }: { titel: string; children: React.ReactNode }) {
   return (
-    <section className="bg-white rounded-xl border border-gray-200 shadow-sm">
-      <header className="px-5 py-3 border-b border-gray-100">
-        <h2 className="text-base font-semibold text-primary-900">{titel}</h2>
+    <section className="bg-white rounded-xl border border-portal-line shadow-sm">
+      <header className="px-5 py-3 border-b border-portal-line">
+        <h2 className="text-base font-semibold text-portal-brand">{titel}</h2>
       </header>
       <div className="px-5 py-4">{children}</div>
     </section>
@@ -116,10 +116,10 @@ function KontaktSektion({ daten }: { daten: PortalMeineDaten }) {
           value={telefon}
           onChange={e => setTelefon(e.target.value)}
         />
-        {meldung && <p className="text-sm text-green-700">{meldung}</p>}
-        {fehler && <p className="text-sm text-red-600">{fehler}</p>}
+        {meldung && <p className="text-sm text-portal-credit">{meldung}</p>}
+        {fehler && <p className="text-sm text-portal-debit">{fehler}</p>}
         <div>
-          <Button type="submit" disabled={mutation.isPending || unveraendert || plzUngueltig}>
+          <Button type="submit" variant="portal" disabled={mutation.isPending || unveraendert || plzUngueltig}>
             {mutation.isPending ? 'Wird gespeichert…' : 'Adresse und Telefon speichern'}
           </Button>
         </div>
@@ -172,7 +172,7 @@ function BankverbindungSektion({ daten }: { daten: PortalMeineDaten }) {
         {/* Transparenz-Hinweis (Spec Kap. 6.2): der Eigentümer soll wissen,
             dass die Änderung sein Lastschriftmandat mit umfasst. */}
         {daten.hat_aktives_mandat && (
-          <p className="text-sm text-gray-600 bg-blue-50 border border-blue-100 rounded p-3">
+          <p className="text-sm text-portal-soft bg-portal-brand-soft border border-portal-line rounded p-3">
             Für Sie besteht ein SEPA-Lastschriftmandat
             {daten.mandatsreferenz ? ` (${daten.mandatsreferenz})` : ''}.
             Eine Änderung der Bankverbindung gilt automatisch auch für dieses Mandat —
@@ -180,7 +180,7 @@ function BankverbindungSektion({ daten }: { daten: PortalMeineDaten }) {
           </p>
         )}
         <div className="flex flex-col gap-1">
-          <label className="text-sm font-medium text-gray-700">IBAN</label>
+          <label className="text-sm font-medium text-portal-ink">IBAN</label>
           {/* Prüft die Prüfsumme sofort im Browser und schlägt danach über
               den Portal-Endpunkt die Bank nach; die BIC wird dabei
               automatisch übernommen. Verbindlich geprüft wird beim
@@ -201,14 +201,14 @@ function BankverbindungSektion({ daten }: { daten: PortalMeineDaten }) {
           disabled={!daten.hat_aktives_mandat}
         />
         {!daten.hat_aktives_mandat && (
-          <p className="text-xs text-gray-500 -mt-2">
+          <p className="text-xs text-portal-soft -mt-2">
             Die BIC wird nur zusammen mit einem bestehenden Lastschriftmandat gespeichert.
           </p>
         )}
-        {meldung && <p className="text-sm text-green-700">{meldung}</p>}
-        {fehler && <p className="text-sm text-red-600">{fehler}</p>}
+        {meldung && <p className="text-sm text-portal-credit">{meldung}</p>}
+        {fehler && <p className="text-sm text-portal-debit">{fehler}</p>}
         <div>
-          <Button type="submit" disabled={mutation.isPending || unveraendert}>
+          <Button type="submit" variant="portal" disabled={mutation.isPending || unveraendert}>
             {mutation.isPending ? 'Wird gespeichert…' : 'Bankverbindung speichern'}
           </Button>
         </div>
@@ -246,9 +246,9 @@ function EmailSektion({ daten }: { daten: PortalMeineDaten }) {
 
   return (
     <Sektion titel="E-Mail-Adresse">
-      <div className="flex justify-between gap-4 pb-4 border-b border-gray-100">
-        <span className="text-sm text-gray-500">Aktuell</span>
-        <span className="text-sm font-medium text-gray-900">{daten.email || '—'}</span>
+      <div className="flex justify-between gap-4 pb-4 border-b border-portal-line">
+        <span className="text-sm text-portal-soft">Aktuell</span>
+        <span className="text-sm font-medium text-portal-ink">{daten.email || '—'}</span>
       </div>
 
       {daten.email_pending && (
@@ -267,14 +267,14 @@ function EmailSektion({ daten }: { daten: PortalMeineDaten }) {
           onChange={e => setNeueEmail(e.target.value)}
           required
         />
-        <p className="text-xs text-gray-500 -mt-2">
+        <p className="text-xs text-portal-soft -mt-2">
           Sie erhalten einen Bestätigungslink an die neue Adresse. Die Änderung wird
           erst danach wirksam — Ihre Anmeldung bleibt bis dahin unverändert möglich.
         </p>
-        {meldung && <p className="text-sm text-green-700">{meldung}</p>}
-        {fehler && <p className="text-sm text-red-600">{fehler}</p>}
+        {meldung && <p className="text-sm text-portal-credit">{meldung}</p>}
+        {fehler && <p className="text-sm text-portal-debit">{fehler}</p>}
         <div>
-          <Button type="submit" variant="secondary" disabled={mutation.isPending || !neueEmail}>
+          <Button type="submit" variant="portal-secondary" disabled={mutation.isPending || !neueEmail}>
             {mutation.isPending ? 'Wird gesendet…' : 'E-Mail-Adresse ändern'}
           </Button>
         </div>
@@ -289,28 +289,28 @@ export function MeineDaten() {
     queryFn: meineDaten,
   })
 
-  if (isLoading) return <p className="text-sm text-gray-500">Wird geladen…</p>
+  if (isLoading) return <p className="text-sm text-portal-soft">Wird geladen…</p>
   if (isError || !data) {
-    return <p className="text-sm text-red-600">Die Daten konnten nicht geladen werden.</p>
+    return <p className="text-sm text-portal-debit">Die Daten konnten nicht geladen werden.</p>
   }
 
   return (
     <div className="flex flex-col gap-5">
-      <section className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-4">
-        <h2 className="text-base font-semibold text-primary-900 mb-3">Stammdaten</h2>
+      <section className="bg-white rounded-xl border border-portal-line shadow-sm px-5 py-4">
+        <h2 className="text-base font-semibold text-portal-brand mb-3">Stammdaten</h2>
         <dl className="divide-y divide-gray-100">
           <div className="flex justify-between gap-4 py-2">
-            <dt className="text-sm text-gray-500">Name</dt>
-            <dd className="text-sm font-medium text-gray-900">{data.name}</dd>
+            <dt className="text-sm text-portal-soft">Name</dt>
+            <dd className="text-sm font-medium text-portal-ink">{data.name}</dd>
           </div>
           {data.personennummer && (
             <div className="flex justify-between gap-4 py-2">
-              <dt className="text-sm text-gray-500">Kundennummer</dt>
-              <dd className="text-sm font-medium text-gray-900">{data.personennummer}</dd>
+              <dt className="text-sm text-portal-soft">Kundennummer</dt>
+              <dd className="text-sm font-medium text-portal-ink">{data.personennummer}</dd>
             </div>
           )}
         </dl>
-        <p className="text-xs text-gray-500 mt-3">
+        <p className="text-xs text-portal-soft mt-3">
           Name und Kundennummer werden von der Hausverwaltung gepflegt. Wenden Sie sich
           bei einer Namensänderung bitte direkt an uns.
         </p>

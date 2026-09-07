@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>IMMOCORE Eigentümerportal — Mockup</title>
+<style>
+  :root{
+    --ink:#1c2430;
+    --ink-soft:#5a6472;
+    --paper:#f6f7f9;
+    --card:#ffffff;
+    --line:#e2e5ea;
+    --brand:#2f5d50;      /* ruhiges Waldgrün — Vertrauen, WEG/Immobilie */
+    --brand-soft:#eaf1ee;
+    --accent:#b5651d;      /* gedämpftes Ocker für Akzente/Warnungen */
+    --debit:#a13a3a;       /* Nachzahlung / Soll */
+    --credit:#2f7d5a;      /* Guthaben / Haben */
+    --radius:10px;
+    font-family: "Inter", -apple-system, "Segoe UI", sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--paper); color:var(--ink);
+    font-size:15px; line-height:1.45;
+  }
+  .app{max-width:960px; margin:0 auto; padding:0 20px 60px;}
+
+  /* Header */
+  header{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:22px 0 18px; border-bottom:1px solid var(--line);
+  }
+  .brand{display:flex; align-items:center; gap:10px;}
+  .brand-mark{
+    width:30px; height:30px; border-radius:8px; background:var(--brand);
+    display:flex; align-items:center; justify-content:center;
+    color:#fff; font-weight:700; font-size:14px;
+  }
+  .brand-name{font-weight:700; letter-spacing:.2px;}
+  .brand-sub{font-size:12px; color:var(--ink-soft);}
+  .user{display:flex; align-items:center; gap:10px; font-size:13px; color:var(--ink-soft);}
+  .user .avatar{
+    width:30px; height:30px; border-radius:50%; background:var(--brand-soft);
+    color:var(--brand); font-weight:700; font-size:12px;
+    display:flex; align-items:center; justify-content:center;
+  }
+
+  /* WEG switcher */
+  .section-label{
+    font-size:11px; text-transform:uppercase; letter-spacing:.08em;
+    color:var(--ink-soft); margin:26px 0 10px; font-weight:600;
+  }
+  .weg-list{display:flex; gap:8px; flex-wrap:wrap;}
+  .weg-btn{
+    cursor:pointer; padding:11px 18px; border-radius:8px;
+    border:1px solid var(--line); background:var(--card);
+    font-size:14px; font-weight:600; color:var(--ink);
+    transition:.15s border-color, .15s background, .15s color;
+  }
+  .weg-btn:hover{border-color:#c7cdd6;}
+  .weg-btn.active{
+    background:var(--brand); color:#fff; border-color:var(--brand);
+  }
+
+  /* Unit tabs */
+  .unit-tabs{display:flex; gap:6px; flex-wrap:wrap;}
+  .unit-tab{
+    cursor:pointer; padding:8px 14px; border-radius:8px;
+    border:1px solid var(--line); background:var(--card);
+    font-size:13.5px; color:var(--ink-soft); font-weight:500;
+  }
+  .unit-tab.active{
+    background:var(--ink); color:#fff; border-color:var(--ink);
+  }
+
+  /* Balance card */
+  .balance-row{display:flex; gap:14px; margin-top:18px; flex-wrap:wrap;}
+  .balance-card{
+    flex:1 1 200px; background:var(--card); border:1px solid var(--line);
+    border-radius:var(--radius); padding:16px 18px;
+  }
+  .balance-card .label{font-size:12px; color:var(--ink-soft); margin-bottom:6px;}
+  .balance-card .value{font-size:22px; font-weight:700; letter-spacing:-.01em;}
+  .value.pos{color:var(--credit);}
+  .value.neg{color:var(--debit);}
+  .balance-card .hint{font-size:11.5px; color:var(--ink-soft); margin-top:4px;}
+
+  /* Content tabs */
+  .content-tabs{
+    display:flex; gap:22px; margin-top:28px; border-bottom:1px solid var(--line);
+  }
+  .ctab{
+    padding:0 0 10px; font-size:13.5px; font-weight:600; color:var(--ink-soft);
+    cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-1px;
+  }
+  .ctab.active{color:var(--ink); border-color:var(--brand);}
+  .panel{display:none;}
+  .panel.active{display:block;}
+  .placeholder{
+    margin-top:18px; padding:26px; text-align:center; color:var(--ink-soft);
+    background:var(--card); border:1px dashed var(--line); border-radius:var(--radius);
+    font-size:13.5px;
+  }
+
+  /* Ledger table */
+  table{width:100%; border-collapse:collapse; margin-top:14px; font-size:13.5px;}
+  thead th{
+    text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.06em;
+    color:var(--ink-soft); font-weight:600; padding:8px 10px; border-bottom:1px solid var(--line);
+  }
+  tbody td{padding:11px 10px; border-bottom:1px solid var(--line); vertical-align:top;}
+  tbody tr:last-child td{border-bottom:none;}
+  .num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap;}
+  .soll{color:var(--debit);}
+  .haben{color:var(--credit);}
+  .buchtext{color:var(--ink); font-weight:500;}
+  .buchtext-meta{color:var(--ink-soft); font-size:12px; margin-top:1px;}
+  .saldo-cell{font-weight:600;}
+
+  .footnote{
+    margin-top:22px; font-size:12px; color:var(--ink-soft);
+    background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+    padding:12px 14px;
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header>
+    <div class="brand">
+      <div class="brand-mark">IC</div>
+      <div>
+        <div class="brand-name">IMMOCORE Portal</div>
+        <div class="brand-sub">Demme Immobilien Verwaltung GmbH</div>
+      </div>
+    </div>
+    <div class="user">
+      <span>Hans Müller</span>
+      <div class="avatar">HM</div>
+    </div>
+  </header>
+
+  <div class="section-label">Ihre WEGs (2)</div>
+  <div class="weg-list" id="wegList"></div>
+
+  <div class="section-label" id="unitLabel">Ihre Einheiten in dieser WEG</div>
+  <div class="unit-tabs" id="unitTabs"></div>
+
+  <div class="balance-row" id="balanceRow"></div>
+
+  <div class="content-tabs" id="contentTabs">
+    <div class="ctab active" data-panel="konto">Konto</div>
+    <div class="ctab" data-panel="dokumente">Dokumente</div>
+    <div class="ctab" data-panel="vorgaenge">Vorgänge</div>
+  </div>
+
+  <div class="panel active" id="panel-konto">
+    <table>
+      <thead>
+        <tr>
+          <th>Datum</th>
+          <th>Buchungstext</th>
+          <th class="num">Soll</th>
+          <th class="num">Haben</th>
+          <th class="num">Saldo</th>
+        </tr>
+      </thead>
+      <tbody id="ledgerBody"></tbody>
+    </table>
+  </div>
+
+  <div class="panel" id="panel-dokumente">
+    <div class="placeholder">Dokumente zu dieser Einheit erscheinen hier (Mockup-Platzhalter).</div>
+  </div>
+
+  <div class="panel" id="panel-vorgaenge">
+    <div class="placeholder">Vorgänge zu dieser Einheit erscheinen hier (Mockup-Platzhalter).</div>
+  </div>
+
+  <div class="footnote">
+    Hinweis (Mockup): Diese Ansicht zeigt ausschließlich Ihr eigenes Personenkonto —
+    serverseitig gefiltert auf Ihre Person, unabhängig davon, wie viele WEGs oder
+    Einheiten Sie besitzen. Andere Eigentümer sind für Sie nicht einsehbar.
+  </div>
+
+</div>
+
+<script>
+const data = {
+  weg_a: {
+    name: "Coventrystraße 32",
+    meta: "Frankfurt am Main · WEG",
+    units: {
+      "WE01": {
+        saldo: -180.00,
+        naechste_faelligkeit: "01.09.2026 · 250,00 €",
+        ledger: [
+          {datum:"01.08.2026", text:"Hausgeld August 2026", meta:"Sollstellung", soll:"250,00", haben:"", saldo:"-180,00"},
+          {datum:"15.07.2026", text:"Zahlungseingang Hausgeld Juli", meta:"SEPA-Lastschrift", soll:"", haben:"250,00", saldo:"70,00"},
+          {datum:"01.07.2026", text:"Hausgeld Juli 2026", meta:"Sollstellung", soll:"250,00", haben:"", saldo:"-180,00"},
+          {datum:"15.06.2026", text:"Zahlungseingang Hausgeld Juni", meta:"SEPA-Lastschrift", soll:"", haben:"250,00", saldo:"70,00"},
+        ]
+      },
+      "TG-04": {
+        saldo: 0.00,
+        naechste_faelligkeit: "01.09.2026 · 25,00 €",
+        ledger: [
+          {datum:"01.08.2026", text:"Tiefgaragenstellplatz August", meta:"Sollstellung", soll:"25,00", haben:"", saldo:"0,00"},
+          {datum:"15.07.2026", text:"Zahlungseingang TG-Stellplatz", meta:"SEPA-Lastschrift", soll:"", haben:"25,00", saldo:"25,00"},
+        ]
+      }
+    }
+  },
+  weg_b: {
+    name: "Musterstraße 10",
+    meta: "Offenbach am Main · WEG",
+    units: {
+      "WE03": {
+        saldo: 340.00,
+        naechste_faelligkeit: "keine offene Position",
+        ledger: [
+          {datum:"31.07.2026", text:"Guthaben aus Jahresabrechnung 2025", meta:"Auszahlungslauf, in Bearbeitung", soll:"", haben:"340,00", saldo:"340,00"},
+          {datum:"01.07.2026", text:"Hausgeld Juli 2026", meta:"Sollstellung", soll:"210,00", haben:"", saldo:"0,00"},
+          {datum:"15.06.2026", text:"Zahlungseingang Hausgeld Juni", meta:"SEPA-Lastschrift", soll:"", haben:"210,00", saldo:"210,00"},
+        ]
+      }
+    }
+  }
+};
+
+let currentWeg = "weg_a";
+let currentUnit = "WE01";
+
+function fmtEUR(v){
+  const n = typeof v === "number" ? v : parseFloat(v);
+  const sign = n < 0 ? "-" : "";
+  return sign + Math.abs(n).toLocaleString("de-DE", {minimumFractionDigits:2, maximumFractionDigits:2}) + " €";
+}
+
+function renderWegList(){
+  const el = document.getElementById("wegList");
+  el.innerHTML = "";
+  Object.entries(data).forEach(([key, weg]) => {
+    const btn = document.createElement("div");
+    btn.className = "weg-btn" + (key === currentWeg ? " active" : "");
+    btn.textContent = weg.name;
+    btn.onclick = () => {
+      currentWeg = key;
+      currentUnit = Object.keys(weg.units)[0];
+      renderAll();
+    };
+    el.appendChild(btn);
+  });
+}
+
+function renderUnitTabs(){
+  const weg = data[currentWeg];
+  const tabsEl = document.getElementById("unitTabs");
+  const labelEl = document.getElementById("unitLabel");
+  const unitKeys = Object.keys(weg.units);
+
+  labelEl.textContent = unitKeys.length > 1
+    ? `Ihre Einheiten in ${weg.name} (${unitKeys.length})`
+    : `Ihre Einheit in ${weg.name}`;
+
+  tabsEl.innerHTML = "";
+  tabsEl.style.display = "flex";
+  unitKeys.forEach(u => {
+    const tab = document.createElement("div");
+    tab.className = "unit-tab" + (u === currentUnit ? " active" : "");
+    tab.textContent = u;
+    tab.onclick = () => { currentUnit = u; renderAll(); };
+    tabsEl.appendChild(tab);
+  });
+}
+
+function renderBalance(){
+  const unit = data[currentWeg].units[currentUnit];
+  const el = document.getElementById("balanceRow");
+  const saldoClass = unit.saldo < 0 ? "neg" : (unit.saldo > 0 ? "pos" : "");
+  const saldoLabel = unit.saldo < 0 ? "Offener Saldo (Nachzahlung)" :
+                      unit.saldo > 0 ? "Guthaben zu Ihren Gunsten" : "Ausgeglichen";
+  el.innerHTML = `
+    <div class="balance-card">
+      <div class="label">Aktueller Saldo — ${currentUnit}</div>
+      <div class="value ${saldoClass}">${fmtEUR(unit.saldo)}</div>
+      <div class="hint">${saldoLabel}</div>
+    </div>
+    <div class="balance-card">
+      <div class="label">Nächste Fälligkeit</div>
+      <div class="value" style="font-size:16px; font-weight:600;">${unit.naechste_faelligkeit}</div>
+      <div class="hint">Hausgeld / Sollstellung</div>
+    </div>
+  `;
+}
+
+function renderLedger(){
+  const unit = data[currentWeg].units[currentUnit];
+  const body = document.getElementById("ledgerBody");
+  body.innerHTML = "";
+  unit.ledger.forEach(row => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${row.datum}</td>
+      <td><div class="buchtext">${row.text}</div><div class="buchtext-meta">${row.meta}</div></td>
+      <td class="num soll">${row.soll ? fmtEUR(row.soll) : ""}</td>
+      <td class="num haben">${row.haben ? fmtEUR(row.haben) : ""}</td>
+      <td class="num saldo-cell">${fmtEUR(row.saldo)}</td>
+    `;
+    body.appendChild(tr);
+  });
+}
+
+function renderAll(){
+  renderWegList();
+  renderUnitTabs();
+  renderBalance();
+  renderLedger();
+  document.querySelectorAll(".ctab").forEach(t => t.classList.remove("active"));
+  document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+  document.querySelector('.ctab[data-panel="konto"]').classList.add("active");
+  document.getElementById("panel-konto").classList.add("active");
+}
+
+document.getElementById("contentTabs").addEventListener("click", (e) => {
+  const tab = e.target.closest(".ctab");
+  if (!tab) return;
+  document.querySelectorAll(".ctab").forEach(t => t.classList.remove("active"));
+  document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+  tab.classList.add("active");
+  document.getElementById("panel-" + tab.dataset.panel).classList.add("active");
+});
+
+renderAll();
+</script>
+</body>
+</html>

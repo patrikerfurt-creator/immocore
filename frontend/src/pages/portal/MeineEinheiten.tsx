@@ -3,10 +3,17 @@ import { useQuery } from '@tanstack/react-query'
 import { meineEinheiten, PortalEinheit, PortalWegKarte } from '../../api/portal'
 
 /**
- * Einheiten-Ansicht (Spec 1a, Kap. 6.1): WEG-Karten, darin Einheiten-Tabs.
+ * Einheiten-Ansicht im Button-Layout (Layout-Update v1.0).
  *
- * Bewusst nur Stammdaten je Einheit — keine Saldo-Karte, kein
- * Buchungsverlauf. Das folgt in Spec 1 (vollständig).
+ * Optik und Verhalten 1:1 aus dem abgenommenen Mockup
+ * (docs/immocore_portal_mockup.html): WEG-Buttons (aktiv = Markengrün) →
+ * Einheiten-Tabs (aktiv = Ink) → Saldo-Karten → Reiter Konto/Dokumente/
+ * Vorgänge, wobei jeder Wechsel von WEG oder Einheit auf "Konto" zurückspringt.
+ *
+ * Inhaltlich weiterhin nur Stammdaten je Einheit (Spec 1a, Kap. 6.1).
+ * Personenkonto (Saldo, Buchungsverlauf), Dokumente und Vorgänge folgen in
+ * Spec 1 (vollständig) — ihre Flächen stehen hier bereits im Layout, aber mit
+ * Platzhalter statt erfundener Zahlen.
  */
 const NUTZUNGSART_LABEL: Record<string, string> = {
   Wohnung: 'Wohnung',
@@ -15,6 +22,14 @@ const NUTZUNGSART_LABEL: Record<string, string> = {
   Sonstiges: 'Sonstiges',
 }
 
+type ReiterId = 'konto' | 'dokumente' | 'vorgaenge'
+
+const REITER: { id: ReiterId; label: string }[] = [
+  { id: 'konto', label: 'Konto' },
+  { id: 'dokumente', label: 'Dokumente' },
+  { id: 'vorgaenge', label: 'Vorgänge' },
+]
+
 function formatMea(wert: string | null): string {
   if (wert === null) return '—'
   // Der MEA kommt als Dezimalstring mit vier Nachkommastellen; nachlaufende
@@ -22,6 +37,25 @@ function formatMea(wert: string | null): string {
   const zahl = Number(wert)
   if (Number.isNaN(zahl)) return wert
   return zahl.toLocaleString('de-DE', { maximumFractionDigits: 4 })
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-portal-soft mt-6 mb-2.5">
+      {children}
+    </p>
+  )
+}
+
+/** Saldo-Karte aus dem Mockup — Werte folgen mit Spec 1b (Personenkonto). */
+function KennzahlKarte({ label, wert, hinweis }: { label: string; wert: string; hinweis: string }) {
+  return (
+    <div className="flex-1 basis-[200px] bg-white border border-portal-line rounded-[10px] px-[18px] py-4">
+      <div className="text-xs text-portal-soft mb-1.5">{label}</div>
+      <div className="text-base font-semibold text-portal-soft">{wert}</div>
+      <div className="text-[11.5px] text-portal-soft mt-1">{hinweis}</div>
+    </div>
+  )
 }
 
 function EinheitDetails({ einheit }: { einheit: PortalEinheit }) {
@@ -34,57 +68,28 @@ function EinheitDetails({ einheit }: { einheit: PortalEinheit }) {
   ]
 
   return (
-    <dl className="divide-y divide-gray-100">
-      {zeilen.map(([label, wert]) => (
-        <div key={label} className="flex justify-between gap-4 py-2">
-          <dt className="text-sm text-gray-500">{label}</dt>
-          <dd className="text-sm font-medium text-gray-900 text-right">{wert}</dd>
+    <dl className="mt-4 bg-white border border-portal-line rounded-[10px] px-[18px] py-2">
+      {zeilen.map(([label, wert], i) => (
+        <div
+          key={label}
+          className={`flex justify-between gap-4 py-2.5 ${
+            i < zeilen.length - 1 ? 'border-b border-portal-line' : ''
+          }`}
+        >
+          <dt className="text-[13.5px] text-portal-soft">{label}</dt>
+          <dd className="text-[13.5px] font-medium text-portal-ink text-right">{wert}</dd>
         </div>
       ))}
     </dl>
   )
 }
 
-function WegKarte({ karte }: { karte: PortalWegKarte }) {
-  const [aktiv, setAktiv] = useState(0)
-  const einheit = karte.einheiten[aktiv] ?? karte.einheiten[0]
-
+/** Gestrichelte Platzhalterfläche aus dem Mockup (.placeholder). */
+function Platzhalter({ text }: { text: string }) {
   return (
-    <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-      <header className="px-5 py-4 border-b border-gray-100">
-        <h2 className="text-base font-semibold text-primary-900">{karte.bezeichnung}</h2>
-        <p className="text-sm text-gray-500">
-          {karte.strasse}, {karte.plz} {karte.ort}
-        </p>
-      </header>
-
-      {/* Tabs nur, wenn es in dieser WEG mehrere Einheiten gibt. */}
-      {karte.einheiten.length > 1 && (
-        <div className="flex flex-wrap gap-1 px-5 pt-3 border-b border-gray-100">
-          {karte.einheiten.map((e, i) => (
-            <button
-              key={e.einheit_id}
-              onClick={() => setAktiv(i)}
-              className={`px-3 py-1.5 text-sm rounded-t transition-colors ${
-                i === aktiv
-                  ? 'bg-primary-100 text-primary-900 font-medium'
-                  : 'text-gray-600 hover:bg-gray-50'
-              }`}
-            >
-              Einheit {e.einheit_nr}
-            </button>
-          ))}
-        </div>
-      )}
-
-      <div className="px-5 py-3">
-        {einheit ? (
-          <EinheitDetails einheit={einheit} />
-        ) : (
-          <p className="text-sm text-gray-500 py-2">Keine Einheiten hinterlegt.</p>
-        )}
-      </div>
-    </section>
+    <div className="mt-[18px] px-6 py-[26px] text-center text-[13.5px] text-portal-soft bg-white border border-dashed border-portal-line rounded-[10px]">
+      {text}
+    </div>
   )
 }
 
@@ -94,13 +99,22 @@ export function MeineEinheiten() {
     queryFn: meineEinheiten,
   })
 
-  if (isLoading) return <p className="text-sm text-gray-500">Wird geladen…</p>
-  if (isError) return <p className="text-sm text-red-600">Die Daten konnten nicht geladen werden.</p>
+  // Auswahl über IDs statt Indizes: so bleibt die Auswahl stabil, wenn der
+  // Server die Liste in anderer Reihenfolge liefert. `null` heißt "noch nichts
+  // gewählt" und fällt im Render auf den ersten Eintrag zurück.
+  const [wegId, setWegId] = useState<string | null>(null)
+  const [einheitId, setEinheitId] = useState<string | null>(null)
+  const [reiter, setReiter] = useState<ReiterId>('konto')
+
+  if (isLoading) return <p className="text-sm text-portal-soft">Wird geladen…</p>
+  if (isError) {
+    return <p className="text-sm text-portal-debit">Die Daten konnten nicht geladen werden.</p>
+  }
 
   if (!data?.length) {
     return (
-      <div className="bg-white rounded-xl border border-gray-200 p-6">
-        <p className="text-sm text-gray-600">
+      <div className="bg-white border border-portal-line rounded-[10px] p-6">
+        <p className="text-sm text-portal-soft">
           Zu Ihrem Zugang sind derzeit keine Einheiten hinterlegt. Bitte wenden Sie sich
           an Ihre Hausverwaltung.
         </p>
@@ -108,9 +122,136 @@ export function MeineEinheiten() {
     )
   }
 
+  const weg: PortalWegKarte = data.find(w => w.objekt_id === wegId) ?? data[0]
+  // Nach einem WEG-Wechsel zeigt `einheitId` unter Umständen noch auf die alte
+  // WEG; der Fallback greift dann die erste Einheit der neuen WEG.
+  const einheit = weg.einheiten.find(e => e.einheit_id === einheitId) ?? weg.einheiten[0]
+
+  function wegWaehlen(gewaehlt: PortalWegKarte) {
+    setWegId(gewaehlt.objekt_id)
+    setEinheitId(gewaehlt.einheiten[0]?.einheit_id ?? null)
+    // WEG-Wechsel springt zurück auf "Konto" — ein offener Dokumente- oder
+    // Vorgänge-Reiter bezöge sich sonst plötzlich auf eine andere Einheit.
+    setReiter('konto')
+  }
+
+  function einheitWaehlen(gewaehlt: PortalEinheit) {
+    setEinheitId(gewaehlt.einheit_id)
+    setReiter('konto')
+  }
+
+  const einheitenLabel = weg.einheiten.length > 1
+    ? `Ihre Einheiten in ${weg.bezeichnung} (${weg.einheiten.length})`
+    : `Ihre Einheit in ${weg.bezeichnung}`
+
   return (
-    <div className="flex flex-col gap-5">
-      {data.map(karte => <WegKarte key={karte.objekt_id} karte={karte} />)}
+    <div>
+      {/* Ebene 1: WEG-Auswahl — eine Reihe, bei vielen WEGs umbrechend. */}
+      <SectionLabel>
+        {data.length > 1 ? `Ihre WEGs (${data.length})` : 'Ihre WEG'}
+      </SectionLabel>
+      <div className="flex flex-wrap gap-2">
+        {data.map(karte => {
+          const aktiv = karte.objekt_id === weg.objekt_id
+          return (
+            <button
+              key={karte.objekt_id}
+              onClick={() => wegWaehlen(karte)}
+              aria-pressed={aktiv}
+              className={`px-[18px] py-[11px] rounded-lg border text-sm font-semibold transition-colors ${
+                aktiv
+                  ? 'bg-portal-brand border-portal-brand text-white'
+                  : 'bg-white border-portal-line text-portal-ink hover:border-[#c7cdd6]'
+              }`}
+            >
+              {karte.bezeichnung}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Ebene 2: Einheiten-Auswahl — auch bei nur einer Einheit sichtbar. */}
+      <SectionLabel>{einheitenLabel}</SectionLabel>
+      <p className="-mt-1.5 mb-2.5 text-xs text-portal-soft">
+        {weg.strasse}, {weg.plz} {weg.ort}
+      </p>
+      {weg.einheiten.length ? (
+        <div className="flex flex-wrap gap-1.5">
+          {weg.einheiten.map(e => {
+            const aktiv = e.einheit_id === einheit?.einheit_id
+            return (
+              <button
+                key={e.einheit_id}
+                onClick={() => einheitWaehlen(e)}
+                aria-pressed={aktiv}
+                className={`px-3.5 py-2 rounded-lg border text-[13.5px] font-medium transition-colors ${
+                  aktiv
+                    ? 'bg-portal-ink border-portal-ink text-white'
+                    : 'bg-white border-portal-line text-portal-soft hover:border-[#c7cdd6]'
+                }`}
+              >
+                {e.einheit_nr}
+              </button>
+            )
+          })}
+        </div>
+      ) : (
+        <p className="text-[13.5px] text-portal-soft">Keine Einheiten hinterlegt.</p>
+      )}
+
+      {/* Ebene 3: Kennzahlen + Reiter — erst wenn eine Einheit ausgewählt ist. */}
+      {einheit && (
+        <>
+          <div className="flex flex-wrap gap-3.5 mt-[18px]">
+            <KennzahlKarte
+              label={`Aktueller Saldo — ${einheit.einheit_nr}`}
+              wert="wird in Kürze angezeigt"
+              hinweis="Personenkonto in Vorbereitung"
+            />
+            <KennzahlKarte
+              label="Nächste Fälligkeit"
+              wert="wird in Kürze angezeigt"
+              hinweis="Hausgeld / Sollstellung"
+            />
+          </div>
+
+          <div className="flex gap-[22px] mt-7 border-b border-portal-line">
+            {REITER.map(({ id, label }) => (
+              <button
+                key={id}
+                onClick={() => setReiter(id)}
+                aria-current={id === reiter ? 'page' : undefined}
+                className={`pb-2.5 -mb-px text-[13.5px] font-semibold border-b-2 transition-colors ${
+                  id === reiter
+                    ? 'text-portal-ink border-portal-brand'
+                    : 'text-portal-soft border-transparent hover:text-portal-ink'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {reiter === 'konto' && (
+            <>
+              <EinheitDetails einheit={einheit} />
+              <Platzhalter text="Ihr Kontostand und der Buchungsverlauf zu dieser Einheit erscheinen hier." />
+            </>
+          )}
+          {reiter === 'dokumente' && (
+            <Platzhalter text="Dokumente zu dieser Einheit erscheinen hier." />
+          )}
+          {reiter === 'vorgaenge' && (
+            <Platzhalter text="Vorgänge zu dieser Einheit erscheinen hier." />
+          )}
+        </>
+      )}
+
+      <div className="mt-[22px] bg-white border border-portal-line rounded-[10px] px-3.5 py-3 text-xs text-portal-soft">
+        Diese Ansicht zeigt ausschließlich Ihre eigenen Einheiten — serverseitig
+        gefiltert auf Ihre Person, unabhängig davon, wie viele WEGs oder Einheiten Sie
+        besitzen. Andere Eigentümer sind für Sie nicht einsehbar.
+      </div>
     </div>
   )
 }

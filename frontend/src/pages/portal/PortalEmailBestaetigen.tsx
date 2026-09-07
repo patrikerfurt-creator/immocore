@@ -33,18 +33,18 @@ export function PortalEmailBestaetigen() {
   const angemeldet = Boolean(getPortalToken())
 
   return (
-    <div className="min-h-screen bg-primary-900 flex items-center justify-center px-4">
+    <div className="min-h-screen bg-portal-brand flex items-center justify-center px-4">
       <div className="w-full max-w-sm bg-white rounded-xl shadow-xl p-8 text-center">
-        <h1 className="text-2xl font-bold text-primary-900 mb-4">E-Mail-Adresse bestätigen</h1>
+        <h1 className="text-2xl font-bold text-portal-brand mb-4">E-Mail-Adresse bestätigen</h1>
 
-        {zustand === 'laedt' && <p className="text-sm text-gray-600">Wird geprüft…</p>}
-        {zustand === 'ok' && <p className="text-sm text-green-700 mb-4">{meldung}</p>}
-        {zustand === 'fehler' && <p className="text-sm text-red-600 mb-4">{meldung}</p>}
+        {zustand === 'laedt' && <p className="text-sm text-portal-soft">Wird geprüft…</p>}
+        {zustand === 'ok' && <p className="text-sm text-portal-credit mb-4">{meldung}</p>}
+        {zustand === 'fehler' && <p className="text-sm text-portal-debit mb-4">{meldung}</p>}
 
         {zustand !== 'laedt' && (
           <button
             onClick={() => navigate(angemeldet ? '/portal/daten' : '/portal/login', { replace: true })}
-            className="text-sm text-primary-700 hover:underline"
+            className="text-sm text-portal-brand hover:underline"
           >
             {angemeldet ? 'Zurück zu meinen Daten' : 'Zur Anmeldung'}
           </button>

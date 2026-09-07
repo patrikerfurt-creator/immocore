@@ -31,27 +31,27 @@ export function PortalLogin() {
   }
 
   return (
-    <div className="min-h-screen bg-primary-900 flex items-center justify-center px-4">
+    <div className="min-h-screen bg-portal-brand flex items-center justify-center px-4">
       <div className="w-full max-w-sm bg-white rounded-xl shadow-xl p-8">
-        <h1 className="text-2xl font-bold text-primary-900 mb-1">Eigentümer-Portal</h1>
-        <p className="text-sm text-gray-500 mb-6">Demme Immobilien Verwaltung GmbH</p>
+        <h1 className="text-2xl font-bold text-portal-brand mb-1">Eigentümer-Portal</h1>
+        <p className="text-sm text-portal-soft mb-6">Demme Immobilien Verwaltung GmbH</p>
 
         {gesendet ? (
           <div className="flex flex-col gap-4">
-            <p className="text-sm text-gray-700">
+            <p className="text-sm text-portal-ink">
               Falls ein Zugang besteht, wurde eine E-Mail versendet. Bitte öffnen Sie
               den Anmeldelink darin — er ist 15 Minuten gültig.
             </p>
             <button
               onClick={() => { setGesendet(false); setEmail('') }}
-              className="text-sm text-primary-700 hover:underline text-left"
+              className="text-sm text-portal-brand hover:underline text-left"
             >
               Andere E-Mail-Adresse verwenden
             </button>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-portal-soft">
               Geben Sie Ihre E-Mail-Adresse ein. Sie erhalten einen Anmeldelink —
               ein Passwort brauchen Sie nicht.
             </p>
@@ -63,8 +63,8 @@ export function PortalLogin() {
               autoFocus
               required
             />
-            {fehler && <p className="text-sm text-red-600">{fehler}</p>}
-            <Button type="submit" disabled={laedt} className="mt-2">
+            {fehler && <p className="text-sm text-portal-debit">{fehler}</p>}
+            <Button type="submit" variant="portal" disabled={laedt} className="mt-2">
               {laedt ? 'Wird gesendet…' : 'Anmeldelink anfordern'}
             </Button>
           </form>
