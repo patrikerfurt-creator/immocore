@@ -7,7 +7,8 @@ LLM-Konfidenz. Ausschließlich hier die Logik — nicht im Model, nicht in Signa
 
 Eingabe `ocr_ergebnis`: {feld: {"wert": ..., "konfidenz": 0.0..1.0, ...}}.
 Für die Rechenprobe darf `betrag_brutto` zusätzlich `netto`/`ust_betrag` tragen,
-für den Kreditor eine `iban`.
+für den Kreditor eine `iban` (Zahlweg) und eine `id` (verknüpfter Kreditor);
+`wert` ist beim Kreditor der Lieferantenname.
 Ausgabe: {"ampel", "gesamt_konfidenz", "felder": {feld: {...}}}.
 """
 from datetime import date, datetime, timedelta
@@ -112,10 +113,30 @@ def iban_gueltig(iban: str) -> bool:
         return False
 
 
-def validiere_kreditor(iban: str) -> tuple[str, str]:
-    """(validierung, hinweis). Format+Prüfziffer und Treffer in Stammdaten."""
+def validiere_kreditor(iban: str = "", name: str = "", kreditor_id=None) -> tuple[str, str]:
+    """(validierung, hinweis) für das kritische Feld ``kreditor``.
+
+    Zwei Fragen in fester Reihenfolge — WER ist der Lieferant, und erst
+    danach WOHIN wird gezahlt:
+
+    1. Gibt es überhaupt einen Lieferanten (verknüpfter Kreditor oder
+       mindestens ein erkannter Name)? Wenn nein, ist das ein harter
+       Fehler: ohne Kreditor ist die Rechnung nicht buchbar.
+    2. Trägt die IBAN. Eine FEHLENDE IBAN ist dabei nur eine Warnung —
+       viele Kreditoren haben keine hinterlegt (Zahlung per Lastschrift
+       oder bar). Erst eine VORHANDENE, aber falsche IBAN ist ein Fehler.
+
+    Vorher gab es nur Frage 2, und der Aufrufer schob bei fehlender IBAN
+    ersatzweise den NAMEN in die Prüfziffernprüfung. Ergebnis war eine
+    exakt verdrehte Bewertung: ein korrekt erkannter Kreditor ohne IBAN
+    wurde als "IBAN ungültig" rot mit 0 %, eine Rechnung ohne jeden
+    Kreditor dagegen gelb mit 100 %. Auf Live betraf das 19 von 20 roten
+    Rechnungen.
+    """
+    if not kreditor_id and not (name or "").strip():
+        return "fehler", "Kein Kreditor zugeordnet."
     if not iban:
-        return "warnung", "Keine IBAN zur Prüfung vorhanden."
+        return "warnung", "Keine IBAN hinterlegt — Zahlweg vor Freigabe prüfen."
     if not iban_gueltig(iban):
         return "fehler", "IBAN ungültig (Format/Prüfziffer)."
     from ..models import Kreditor
@@ -212,8 +233,15 @@ def validiere_kostenverursacher(einheit_id, objekt_id) -> tuple[str, str]:
 # ===========================================================================
 
 _VALIDATOR_MAP = {
+    # Kein ``or``-Fallback von der IBAN auf den Namen: der Name ist keine
+    # IBAN und darf nie in die Prüfziffernprüfung geraten. Beide Angaben
+    # gehen getrennt hinein, weil sie verschiedene Fragen beantworten.
     "kreditor": lambda o, obj, r: validiere_kreditor(
-        o.get("kreditor", {}).get("iban") or o.get("kreditor", {}).get("wert")
+        iban=o.get("kreditor", {}).get("iban") or "",
+        name=o.get("kreditor", {}).get("wert") or "",
+        kreditor_id=(
+            getattr(r, "kreditor_id", None) if r else o.get("kreditor", {}).get("id")
+        ),
     ),
     "betrag_brutto": lambda o, obj, r: validiere_betrag_brutto(
         o.get("betrag_brutto", {}).get("wert"),
@@ -264,6 +292,10 @@ def ampel_eingabe_aus_ocr(felder: dict, rechnung=None) -> dict:
             "wert": g("lieferant_name").get("wert"),
             "konfidenz": g("lieferant_name").get("konfidenz", 0.0),
             "iban": g("lieferant_iban").get("wert"),
+            # ``id`` ist der Rückfallweg für Aufrufer ohne Rechnungsobjekt —
+            # ohne ihn konnte der Validator die Existenzfrage dort nie
+            # beantworten (er las einen Schlüssel, den niemand setzte).
+            "id": getattr(rechnung, "kreditor_id", None) if rechnung else None,
         },
         "betrag_brutto": {
             "wert": g("betrag_brutto").get("wert"),
@@ -329,7 +361,13 @@ def _rechnung_zu_felder(rechnung) -> dict:
     rd = rechnung.rechnungsdatum
     sfb = rechnung.skonto_faellig_bis
     return {
-        "lieferant_name": {"wert": kred.name if kred else rechnung.lieferant_name, "konfidenz": 1.0},
+        # Konfidenz 1.0 heißt "der Wert steht fest", nicht "das Feld wurde
+        # betrachtet". Ein leerer Lieferant hat keine 100 % — sonst trägt
+        # eine Rechnung ohne Kreditor die volle Gesamtkonfidenz.
+        "lieferant_name": {
+            "wert": kred.name if kred else rechnung.lieferant_name,
+            "konfidenz": 1.0 if (kred or rechnung.lieferant_name) else 0.0,
+        },
         "lieferant_iban": {"wert": (kred.iban if kred else rechnung.lieferant_iban) or ""},
         "betrag_netto": {"wert": rechnung.betrag_netto},
         "betrag_brutto": {"wert": rechnung.betrag_brutto, "konfidenz": 1.0},
