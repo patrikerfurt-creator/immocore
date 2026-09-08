@@ -1,6 +1,16 @@
 """
 Rechnungsparser – portiert aus DOPRE
-OCR (PyMuPDF + Tesseract) + Claude-KI-Extraktion
+
+Drei Quellen in fester Rangfolge:
+
+1. **E-Rechnungs-XML** (ZUGFeRD 2.x / Factur-X), sofern im PDF eingebettet.
+   Exakte Feldwerte des Ausstellers — nichts daran ist geschätzt.
+2. **PDF-Textlayer** (PyMuPDF), ersatzweise OCR (Tesseract).
+3. **Claude-Extraktion** über diesen Text, bzw. direkt über das PDF, wenn
+   der Textlayer zu dünn ist.
+
+Die XML hat Vorrang, aber nur mit einem ECHTEN Wert — Details in
+``extract_invoice_data``.
 """
 import base64
 import hashlib
@@ -12,6 +22,8 @@ from decimal import Decimal, InvalidOperation
 from typing import Optional
 
 from django.conf import settings
+
+from .facturx_parser import lese_facturx
 
 try:
     import fitz
@@ -254,42 +266,109 @@ def _safe_date(value):
     return None
 
 
+def _leer(wert) -> bool:
+    """Ist der Wert eine Lücke? ``False`` und ``0`` sind KEINE Lücke."""
+    return wert is None or wert == '' or wert == []
+
+
+def _waehle(feld: str, bevorzugt: dict, ersatz: dict,
+            quellen: dict, namen: tuple = ('xml', 'ki')):
+    """Feldwert aus zwei Quellen, mit Herkunftsprotokoll.
+
+    Die bevorzugte Quelle gewinnt nur mit einem ECHTEN Wert. Das ist der
+    Kern der Zusammenführung: ein leeres XML-Element ist keine Aussage
+    "unbekannt", sondern eine Lücke. Ein Lieferant im Bestand liefert
+    ``<ram:SellerTradeParty/>`` — würde die XML dort trotzdem "gewinnen",
+    ersetzte sie den vom Textpfad korrekt erkannten Namen durch Leere und
+    die Erweiterung machte solche Belege schlechter als vorher.
+    """
+    wert = bevorzugt.get(feld)
+    if not _leer(wert):
+        quellen[feld] = namen[0]
+        return wert
+    wert = ersatz.get(feld)
+    if not _leer(wert):
+        quellen[feld] = namen[1]
+        return wert
+    return None
+
+
 def extract_invoice_data(filepath: str) -> dict:
-    """Hauptfunktion: OCR + KI-Parsing. Gibt strukturiertes Dict zurück."""
+    """Hauptfunktion: E-Rechnungs-XML + OCR + KI-Parsing.
+
+    Rangfolge je Feld: XML vor KI — mit zwei begründeten Ausnahmen.
+
+    ``description`` kommt bevorzugt von der KI. Aus diesem Feld entsteht
+    ``leistungstext`` und daraus der ``leistungstext_hash``, an dem die
+    gelernten ``RechnungsMatchRegel`` hängen (auf Live 61 aktive Regeln,
+    206 Rechnungen mit Hash). Die XML liefert rohe Positionsbezeichnungen,
+    die KI einen zusammenfassenden Satz — ein Quellenwechsel würde jeden
+    bestehenden Hash verschieben und die gelernten Regeln wirkungslos
+    machen. Die XML-Positionen bleiben der Rückfall, wenn die KI nichts
+    liefert.
+
+    ``property_address`` kommt ausschließlich von der KI. Die XML hat für
+    die Liegenschaft kein verlässliches Feld: in ``ShipToTradeParty``
+    steht bei WEG-Belegen die Adresse der Verwaltung, während die
+    Liegenschaft im Namen der Lieferpartei steckt. Siehe
+    ``facturx_parser.lese_facturx``.
+
+    Der KI-Aufruf entfällt NICHT, auch wenn die XML vollständig ist. Das
+    wäre die naheliegende Ersparnis (13 von 25 Belegen tragen eine XML),
+    kostet aber ``property_address`` und damit die Objekterkennung über
+    die Anschrift. Diese Optimierung braucht zuerst eine Objekterkennung,
+    die nicht an einem KI-Feld hängt.
+
+    Zusätzlich im Ergebnis: ``quellen`` (Feld → 'xml'|'ki') und
+    ``e_rechnung_profil`` — damit später nachvollziehbar ist, welcher Wert
+    belegt und welcher geschätzt war.
+    """
+    xml = lese_facturx(filepath) or {}
     text = extract_text(filepath)
     if len(text) < PDF_MIN_TEXT_LENGTH and filepath.lower().endswith('.pdf'):
         ai = _parse_pdf_direct_with_ai(filepath)
     else:
         ai = _parse_with_ai(text)
 
-    invoice_number_raw = ai.get('invoice_number')
-    iban_raw = ai.get('iban')
+    quellen: dict = {}
 
-    gross_raw = _safe_decimal(ai.get('gross_amount'))
-    net_raw   = _safe_decimal(ai.get('net_amount'))
+    invoice_number_raw = _waehle('invoice_number', xml, ai, quellen)
+    iban_raw           = _waehle('iban', xml, ai, quellen)
+    supplier           = _waehle('supplier', xml, ai, quellen)
+    kundennummer       = _waehle('customer_number', xml, ai, quellen)
 
-    # is_credit_note: KI-Flag oder aus negativem Betrag ableiten
-    is_credit_note = bool(ai.get('is_credit_note')) or (gross_raw is not None and gross_raw < 0)
+    gross_raw = _safe_decimal(_waehle('gross_amount', xml, ai, quellen))
+    net_raw   = _safe_decimal(_waehle('net_amount', xml, ai, quellen))
+
+    # is_credit_note: XML-Typcode 381, KI-Flag oder negativer Betrag.
+    is_credit_note = bool(_waehle('is_credit_note', xml, ai, quellen)) \
+        or (gross_raw is not None and gross_raw < 0)
 
     # betrag_brutto / betrag_netto immer positiv speichern — Flag ist_gutschrift trägt das Vorzeichen
     gross_amount = abs(gross_raw) if gross_raw is not None else None
     net_amount   = abs(net_raw)   if net_raw   is not None else None
 
+    if not _leer(ai.get('property_address')):
+        quellen['property_address'] = 'ki'
+
     return {
         'text': text,
         'invoice_number': invoice_number_raw,
         'invoice_number_normalized': normalize_invoice_number(invoice_number_raw),
-        'invoice_date': _safe_date(ai.get('invoice_date')),
-        'due_date': _safe_date(ai.get('due_date')),
+        'invoice_date': _safe_date(_waehle('invoice_date', xml, ai, quellen)),
+        'due_date': _safe_date(_waehle('due_date', xml, ai, quellen)),
         'gross_amount': gross_amount,
         'net_amount': net_amount,
-        'vat_rate': _safe_decimal(ai.get('vat_rate')),
-        'currency': ai.get('currency') or 'EUR',
-        'supplier': ai.get('supplier'),
-        'supplier_normalized': normalize_supplier_name(ai.get('supplier')),
+        'vat_rate': _safe_decimal(_waehle('vat_rate', xml, ai, quellen)),
+        'currency': _waehle('currency', xml, ai, quellen) or 'EUR',
+        'supplier': supplier,
+        'supplier_normalized': normalize_supplier_name(supplier),
         'iban': normalize_iban(iban_raw),
-        'description': ai.get('description'),
+        # Rangfolge bewusst umgekehrt — siehe Docstring.
+        'description': _waehle('description', ai, xml, quellen, namen=('ki', 'xml')),
         'property_address': ai.get('property_address'),
-        'customer_number': str(ai.get('customer_number')).strip() if ai.get('customer_number') else '',
+        'customer_number': str(kundennummer).strip() if kundennummer else '',
         'is_credit_note': is_credit_note,
+        'quellen': quellen,
+        'e_rechnung_profil': xml.get('profil') or '',
     }

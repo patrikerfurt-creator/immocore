@@ -327,11 +327,11 @@ class ValidierungDBTest(TestCase):
 
     def test_kreditor_iban_in_stammdaten_ok(self):
         Kreditor.objects.create(name="K", kreditorennummer="70001", iban=VALID_IBAN)
-        v, _ = amp.validiere_kreditor(VALID_IBAN)
+        v, _ = amp.validiere_kreditor(VALID_IBAN, name="K")
         self.assertEqual(v, "ok")
 
     def test_kreditor_iban_gueltig_aber_unbekannt_warnung(self):
-        v, _ = amp.validiere_kreditor(VALID_IBAN)
+        v, _ = amp.validiere_kreditor(VALID_IBAN, name="K")
         self.assertEqual(v, "warnung")
 
     def test_rechnungsnummer_duplikat_fehler(self):
@@ -342,6 +342,82 @@ class ValidierungDBTest(TestCase):
         self.assertEqual(v, "fehler")
         v, _ = amp.validiere_rechnungsnummer("NEU-1", kreditor_id=k.id)
         self.assertEqual(v, "ok")
+
+    # --- Kreditor-Existenz vs. Zahlweg (Baustein 1) ----------------------
+
+    def test_kein_kreditor_und_kein_name_ist_fehler(self):
+        """Ohne Lieferant ist die Rechnung nicht buchbar → hartes Veto."""
+        v, hinweis = amp.validiere_kreditor()
+        self.assertEqual(v, "fehler")
+        self.assertIn("Kein Kreditor", hinweis)
+
+    def test_kreditor_ohne_iban_ist_warnung_nicht_fehler(self):
+        """Der reale Normalfall: Kreditor erkannt, keine IBAN hinterlegt."""
+        v, hinweis = amp.validiere_kreditor(name="Sicherheitstechnik Erbacher + Kolb GmbH")
+        self.assertEqual(v, "warnung")
+        self.assertNotIn("ungültig", hinweis)
+
+    def test_name_wird_nicht_als_iban_geprueft(self):
+        """Regression: der Name landete früher in der Prüfziffernprüfung und
+        machte jeden Kreditor ohne IBAN zu 'IBAN ungültig'."""
+        felder = {"kreditor": {"wert": "Action Deutschland GmbH", "konfidenz": 1.0, "iban": ""}}
+        ergebnis = amp.berechne_ampel(felder)
+        self.assertEqual(ergebnis["felder"]["kreditor"]["validierung"], "warnung")
+
+    def test_verknuepfter_kreditor_ohne_namen_ist_kein_fehler(self):
+        """kreditor_id allein belegt die Existenz — der Name darf fehlen."""
+        k = Kreditor.objects.create(name="K", kreditorennummer="70003")
+        v, _ = amp.validiere_kreditor(kreditor_id=k.id)
+        self.assertEqual(v, "warnung")
+
+    def test_vorhandene_falsche_iban_bleibt_fehler(self):
+        v, hinweis = amp.validiere_kreditor("DE00000000000000000000", name="K")
+        self.assertEqual(v, "fehler")
+        self.assertIn("ungültig", hinweis)
+
+
+# ---------------------------------------------------------------------------
+# Baustein 1 — Gesamtampel bei fehlendem Kreditor
+# ---------------------------------------------------------------------------
+
+class AmpelKreditorFehltTest(TestCase):
+    """Der Live-Fall R021376: Factur-X-Beleg mit leerem SellerTradeParty,
+    dessen Textlayer den Lieferanten nur als Bearbeiternamen enthält. Weder
+    Name noch IBAN wurden erkannt — die Ampel meldete gelb bei 100 %."""
+
+    def setUp(self):
+        self.objekt, *_ = _objekt_und_konten()
+
+    def _rechnung(self, **kwargs):
+        werte = dict(
+            objekt=self.objekt, rechnungsnummer="R021376",
+            rechnungsdatum=date.today(), betrag_brutto=Decimal("242.76"),
+        )
+        werte.update(kwargs)
+        return Rechnung.objects.create(**werte)
+
+    def test_ohne_kreditor_rot_und_null_prozent(self):
+        r = self._rechnung()
+        amp.berechne_und_speichere_ampel(r)
+        self.assertEqual(r.erkennung_ampel, "rot")
+        self.assertEqual(float(r.erkennung_gesamt_konfidenz), 0.0)
+        self.assertEqual(r.erkennung_details["kreditor"]["hinweis"], "Kein Kreditor zugeordnet.")
+        self.assertEqual(r.erkennung_details["kreditor"]["llm_konfidenz"], 0.0)
+
+    def test_kreditor_ohne_iban_gelb_statt_rot(self):
+        k = Kreditor.objects.create(name="Erbacher + Kolb GmbH", kreditorennummer="70027")
+        r = self._rechnung(kreditor=k, rechnungsnummer="2641261")
+        amp.berechne_und_speichere_ampel(r)
+        self.assertEqual(r.erkennung_ampel, "gelb")
+        self.assertEqual(r.erkennung_details["kreditor"]["validierung"], "warnung")
+
+    def test_kreditor_mit_bekannter_iban_bleibt_gruen(self):
+        k = Kreditor.objects.create(name="Karl-Heinz Haus GmbH",
+                                    kreditorennummer="70098", iban=VALID_IBAN)
+        r = self._rechnung(kreditor=k, rechnungsnummer="RE2603676")
+        amp.berechne_und_speichere_ampel(r)
+        self.assertEqual(r.erkennung_ampel, "gruen")
+        self.assertEqual(float(r.erkennung_gesamt_konfidenz), 100.0)
 
 
 # ---------------------------------------------------------------------------
