@@ -50,6 +50,23 @@ def _system_user():
 # Kreditor-Abgleich
 # ---------------------------------------------------------------------------
 
+def _herkunft(parsed: dict) -> dict:
+    """Woher stammt welcher Feldwert — XML des Ausstellers oder KI-Schätzung?
+
+    Landet in ``Rechnung.ki_extraktion``. Für eine Rückfrage der Prüfung
+    ist das der Unterschied zwischen "belegt" und "vermutet": ein Wert aus
+    der E-Rechnungs-XML kommt unverändert vom Aussteller, ein Wert aus der
+    KI ist eine Interpretation des Bildes.
+
+    ``parsed`` kann aus einem Test mit ersetztem Parser kommen und die
+    Schlüssel nicht führen — dann bleibt das Protokoll eben leer.
+    """
+    return {
+        'quellen': parsed.get('quellen') or {},
+        'e_rechnung_profil': parsed.get('e_rechnung_profil') or '',
+    }
+
+
 def gleiche_kreditor_ab(supplier: str, iban: str):
     """Abgleich OHNE Nebenwirkung — legt nichts an.
 
@@ -423,6 +440,7 @@ def verarbeite_datei(datei_pfad: str, archiv_root: Path) -> dict:
             kundennummer=kundennummer,
             vorgeschlagenes_konto=vorgeschlagenes_konto,
             ist_gutschrift=ist_gutschrift,
+            ki_extraktion=_herkunft(parsed),
         )
 
         # Dublettenprüfung anlegen — braucht die Rechnungs-ID, deshalb erst
@@ -551,6 +569,7 @@ def ocr_erneut_ausfuehren(rechnung: Rechnung) -> Rechnung:
     rechnung.kreditor                = kreditor
     rechnung.kundennummer            = kundennummer
     rechnung.ist_gutschrift          = parsed.get('is_credit_note', False)
+    rechnung.ki_extraktion           = _herkunft(parsed)
 
     if fehlende:
         rechnung.verarbeitungsnotiz = f'OCR wiederholt – noch unvollständig: {", ".join(fehlende)}'
