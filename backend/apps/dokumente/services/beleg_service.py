@@ -2,7 +2,7 @@ import hashlib
 from pathlib import Path
 
 from django.conf import settings
-from django.core.exceptions import ValidationError
+from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.core.files.base import ContentFile
 from django.db import transaction
 from django.utils import timezone
@@ -110,3 +110,36 @@ def sperre_beleg_revisionssicher(dokument: Dokument) -> Dokument:
     dokument.revisionssicher_seit = timezone.now()
     dokument.save(update_fields=['revisionssicher', 'revisionssicher_seit'])
     return dokument
+
+
+def loeschsperre_grund(dokument: Dokument) -> str | None:
+    """Einzige Quelle für die Lösch-Entscheidung eines Dokuments (API-Vertrag
+    Belegübersicht-Anreicherung, Nachtrag v1.1). Wird sowohl vom DokumentSerializer
+    (Felder `loeschbar`/`loeschsperre_grund`) als auch von DokumentViewSet.destroy()
+    genutzt — die Regel liegt damit an genau einer Stelle und beide können nicht
+    auseinanderdriften.
+
+    Regelreihenfolge (erste zutreffende gewinnt), gibt `None` zurück, wenn nichts
+    gegen ein Löschen spricht:
+    1. `revisionssicher` (GoBD, unumkehrbar).
+    2. verknüpfte Rechnung ist geprüft (`Rechnung.STATUS_GEPRUEFT`) — der Dokumenttyp
+       ist dabei irrelevant, entscheidend ist allein die vorhandene Verknüpfung
+       (anders als bei der Belegübersicht-Anreicherung, die zusätzlich
+       `dokument_typ == 'beleg'` verlangt, weil sie nur echte Belegzeilen mit
+       Rechnungsdaten füllen soll — hier geht es um die reine Löschbarkeit).
+    3. verknüpfte Rechnung vorhanden, aber (noch) ungeprüft.
+    """
+    if dokument.revisionssicher:
+        return 'Revisionssicherer Beleg (GoBD) — Löschen nicht zulässig.'
+
+    try:
+        rechnung = dokument.rechnung
+    except ObjectDoesNotExist:
+        return None
+
+    if rechnung.ist_geprueft:
+        return (
+            f'Rechnung ist geprüft (Status: {rechnung.get_status_display()}) — '
+            'Beleg muss erhalten bleiben.'
+        )
+    return 'Beleg ist mit einer Rechnung verknüpft — zuerst die Rechnung entfernen.'

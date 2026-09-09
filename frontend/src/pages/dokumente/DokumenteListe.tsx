@@ -4,8 +4,64 @@ import { useSearchParams } from 'react-router-dom'
 import { dokumenteApi } from '../../api/dokumente'
 import { objekteApi } from '../../api/objekte'
 import { Button } from '../../components/ui/Button'
+import type { Dokument } from '../../types'
 
 const KATEGORIEN = ['allgemein', 'vertrag', 'rechnung', 'protokoll', 'beschluss', 'korrespondenz', 'sonstiges']
+
+// Sortierbare Spalten der Belegübersicht (API-Vertrag v1.0, Abschnitt "Sortierung").
+type SortFeld = 'rechnung__rechnungsdatum' | 'rechnung__betrag_brutto'
+type Ordering = SortFeld | `-${SortFeld}`
+
+function formatDatum(iso: string | null): string {
+  if (!iso) return '–'
+  return new Date(iso).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })
+}
+
+function formatBetrag(brutto: string | null): string {
+  if (brutto === null) return '–'
+  const zahl = Number(brutto)
+  if (Number.isNaN(zahl)) return '–'
+  return `${zahl.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`
+}
+
+/** Fünf Belegspalten (Kreditor … Eingangsdatum) einer Tabellenzeile.
+ * Ohne Rechnungsbezug (alle Felder null) werden sie zu einer leeren Zelle
+ * zusammengefasst statt fünf verwirrenden „–"-Platzhaltern (Spec Abschnitt 6). */
+function BelegSpalten({ d }: { d: Dokument }) {
+  const ohneRechnungsbezug =
+    d.rechnungsdatum === null &&
+    d.eingangsdatum === null &&
+    d.kreditor_name === null &&
+    d.kreditor_unbestaetigt === null &&
+    d.betrag_brutto === null &&
+    d.kurztext === null
+
+  if (ohneRechnungsbezug) {
+    return <td colSpan={5} className="px-4 py-3" />
+  }
+
+  return (
+    <>
+      <td className="px-4 py-3 text-gray-600">
+        {d.kreditor_name ?? '–'}
+        {d.kreditor_unbestaetigt === true && (
+          <span
+            className="ml-1 text-amber-500"
+            title="Kreditor nicht eindeutig zugeordnet – Name aus Rechnungstext, kein Stammdatensatz"
+          >
+            ⚠
+          </span>
+        )}
+      </td>
+      <td className="px-4 py-3 text-gray-600" title={d.kurztext_volltext ?? undefined}>
+        {d.kurztext ?? '–'}
+      </td>
+      <td className="px-4 py-3 text-right text-gray-600">{formatBetrag(d.betrag_brutto)}</td>
+      <td className="px-4 py-3 text-gray-600">{formatDatum(d.rechnungsdatum)}</td>
+      <td className="px-4 py-3 text-gray-600">{formatDatum(d.eingangsdatum)}</td>
+    </>
+  )
+}
 
 export function DokumenteListe() {
   const [searchParams] = useSearchParams()
@@ -14,19 +70,31 @@ export function DokumenteListe() {
   const [uploadObjektId, setUploadObjektId] = useState('')
   const [uploadKategorie, setUploadKategorie] = useState('allgemein')
   const [beschreibung, setBeschreibung] = useState('')
+  const [ordering, setOrdering] = useState<Ordering | ''>('')
   const fileRef = useRef<HTMLInputElement>(null)
   const queryClient = useQueryClient()
 
   const { data: objekte } = useQuery({ queryKey: ['objekte'], queryFn: objekteApi.list })
   const { data: dokumente, isLoading } = useQuery({
-    queryKey: ['dokumente', objektId, kategorie],
+    queryKey: ['dokumente', objektId, kategorie, ordering],
     queryFn: () => {
       const params: Record<string, string> = {}
       if (objektId) params.objekt = objektId
       if (kategorie) params.kategorie = kategorie
+      if (ordering) params.ordering = ordering
       return dokumenteApi.list(params)
     },
   })
+
+  function toggleOrdering(feld: SortFeld) {
+    setOrdering(prev => (prev === feld ? `-${feld}` : feld))
+  }
+
+  function sortIndikator(feld: SortFeld): string {
+    if (ordering === feld) return ' ▲'
+    if (ordering === `-${feld}`) return ' ▼'
+    return ''
+  }
 
   const uploadMutation = useMutation({
     mutationFn: ({ file }: { file: File }) =>
@@ -127,7 +195,21 @@ export function DokumenteListe() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Dateiname</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Kreditor</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Kurztext</th>
+                <th
+                  className="text-right px-4 py-3 font-medium text-gray-600 cursor-pointer select-none"
+                  onClick={() => toggleOrdering('rechnung__betrag_brutto')}
+                >
+                  Bruttobetrag{sortIndikator('rechnung__betrag_brutto')}
+                </th>
+                <th
+                  className="text-left px-4 py-3 font-medium text-gray-600 cursor-pointer select-none"
+                  onClick={() => toggleOrdering('rechnung__rechnungsdatum')}
+                >
+                  Rechnungsdatum{sortIndikator('rechnung__rechnungsdatum')}
+                </th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Eingangsdatum</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Kategorie</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Beschreibung</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Hochgeladen am</th>
@@ -137,25 +219,34 @@ export function DokumenteListe() {
             <tbody>
               {dokumente?.map(d => (
                 <tr key={d.id} className="border-b border-gray-100 hover:bg-gray-50">
-                  <td className="px-4 py-3">
+                  <BelegSpalten d={d} />
+                  <td className="px-4 py-3 text-gray-600">{d.kategorie}</td>
+                  <td className="px-4 py-3 text-gray-600">{d.beschreibung || '–'}</td>
+                  <td className="px-4 py-3 text-gray-600">
+                    {formatDatum(d.hochgeladen_am)}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap">
                     {/* Auslieferung über /dokumente/{id}/datei/ — der direkte MEDIA-Link
                         greift nicht, wenn ablage_wurzel='rechnungen' ist. */}
                     <button
                       onClick={() => dokumenteApi.openDatei(d.id)}
-                      className="text-primary-600 hover:underline text-left"
+                      className="text-xs text-primary-600 hover:underline"
+                      title={d.dateiname}
                     >
-                      {d.dateiname}
+                      Öffnen
                     </button>
-                  </td>
-                  <td className="px-4 py-3 text-gray-600">{d.kategorie}</td>
-                  <td className="px-4 py-3 text-gray-600">{d.beschreibung || '–'}</td>
-                  <td className="px-4 py-3 text-gray-600">
-                    {new Date(d.hochgeladen_am).toLocaleDateString('de-DE')}
-                  </td>
-                  <td className="px-4 py-3">
                     <button
-                      onClick={() => deleteMutation.mutate(d.id)}
-                      className="text-xs text-red-600 hover:underline"
+                      onClick={() => {
+                        if (!d.loeschbar) return
+                        deleteMutation.mutate(d.id)
+                      }}
+                      disabled={!d.loeschbar}
+                      title={!d.loeschbar ? (d.loeschsperre_grund ?? undefined) : undefined}
+                      className={
+                        d.loeschbar
+                          ? 'ml-3 text-xs text-red-600 hover:underline'
+                          : 'ml-3 text-xs text-gray-400 cursor-not-allowed'
+                      }
                     >
                       Löschen
                     </button>
@@ -164,7 +255,7 @@ export function DokumenteListe() {
               ))}
               {dokumente?.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
+                  <td colSpan={9} className="px-4 py-8 text-center text-gray-400">
                     Keine Dokumente gefunden.
                   </td>
                 </tr>

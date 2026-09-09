@@ -76,6 +76,20 @@ class RechnungAdmin(admin.ModelAdmin):
     date_hierarchy = 'rechnungsdatum'
     readonly_fields = ['erstellt_am', 'ki_extraktion']
 
+    def has_delete_permission(self, request, obj=None):
+        # Löschsperre für geprüfte Rechnungen (Nachtrag v1.1) auch im Admin —
+        # der Admin geht am RechnungViewSet vorbei.
+        if obj is not None and obj.ist_geprueft:
+            return False
+        return super().has_delete_permission(request, obj)
+
+    def get_actions(self, request):
+        # 'delete_selected' löscht über das QuerySet und ruft Rechnung.delete()
+        # NICHT auf — die Sperre wäre damit umgehbar. Aktion daher entfernen.
+        actions = super().get_actions(request)
+        actions.pop('delete_selected', None)
+        return actions
+
 
 @admin.register(Freigabe)
 class FreigabeAdmin(admin.ModelAdmin):

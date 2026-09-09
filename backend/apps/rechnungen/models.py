@@ -221,6 +221,14 @@ class Rechnung(models.Model):
         ('storniert',     'Storniert'),
         ('fehler',        'Fehler'),
     ]
+    # Status, ab denen die Stufe-1-Prüfung bestanden ist — der zugehörige Beleg
+    # (Dokument) darf ab hier nicht mehr gelöscht werden (Löschsperre, s. API-Vertrag
+    # Nachtrag v1.1). Bewusst statusbasiert und nicht an `revisionssicher` (GoBD)
+    # gekoppelt: die GoBD-Sperre ist unumkehrbar, eine später abgelehnte/stornierte
+    # Rechnung soll ihren Beleg dagegen wieder freigeben können.
+    STATUS_GEPRUEFT = frozenset({
+        'zur_freigabe', 'freigegeben', 'teilbezahlt', 'bezahlt', 'wkz_beleg',
+    })
     ERKENNUNGS_STUFE_CHOICES = [
         ('1', 'Stufe 1 — Erkannt'),
         ('2', 'Stufe 2 — Prüffall (Objektbetreuer)'),
@@ -419,6 +427,25 @@ class Rechnung(models.Model):
         verbose_name = 'Rechnung'
         verbose_name_plural = 'Rechnungen'
         ordering = ['-erstellt_am']
+
+    @property
+    def ist_geprueft(self):
+        """True, wenn die Stufe-1-Prüfung bestanden ist (Löschsperre für den Beleg)."""
+        return self.status in self.STATUS_GEPRUEFT
+
+    def delete(self, *args, **kwargs):
+        """Löschsperre auf Model-Ebene (Nachtrag v1.1).
+
+        Der RechnungViewSet prüft dasselbe und antwortet mit HTTP 400; dieser Guard
+        deckt die Pfade ab, die am ViewSet vorbeigehen — allen voran der Django-Admin
+        unter /admin/. Analog zu Dokument.delete() (GoBD-Sperre).
+        """
+        if self.ist_geprueft:
+            raise ValidationError(
+                f'Rechnung ist geprüft (Status: {self.get_status_display()}) — '
+                'Löschen nicht zulässig.'
+            )
+        return super().delete(*args, **kwargs)
 
     def clean(self):
         """Fachliche Validierungen (Spec Kap. 3.1). betrag_brutto kann NULL sein

@@ -1,4 +1,5 @@
 import logging
+from django.db.models import ProtectedError
 from rest_framework import viewsets, filters, status
 
 logger = logging.getLogger(__name__)
@@ -277,6 +278,26 @@ class RechnungViewSet(viewsets.ModelViewSet):
         if self.action == 'list':
             return RechnungListSerializer
         return RechnungSerializer
+
+    def destroy(self, request, *args, **kwargs):
+        """Löschsperre für geprüfte Rechnungen (API-Vertrag Nachtrag v1.1) — Status
+        in Rechnung.STATUS_GEPRUEFT ist gesperrt. Zusätzliches Sicherheitsnetz:
+        ProtectedError (z. B. ein bereits gebuchter KreditorOP) liefert 400 statt 500."""
+        instance = self.get_object()
+        if instance.ist_geprueft:
+            return Response(
+                {'error': f'Rechnung ist geprüft (Status: {instance.get_status_display()}) '
+                          '— kann nicht gelöscht werden.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            return super().destroy(request, *args, **kwargs)
+        except ProtectedError:
+            return Response(
+                {'error': 'Rechnung kann nicht gelöscht werden: es existieren abhängige Datensätze '
+                          '(z. B. ein offener Posten).'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
     # ── Umbau v1.0: OCR-Vorbefüllung + Verifikations-Ampel ───────────────
     @action(detail=True, methods=['post'], url_path='ocr')

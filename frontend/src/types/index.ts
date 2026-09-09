@@ -941,6 +941,20 @@ export interface Dokument {
   datei: string
   hochgeladen_am: string
   beschreibung: string
+  // Belegübersicht-Anreicherung (API-Vertrag v1.0): nur bei dokument_typ === 'beleg'
+  // mit verknüpfter Rechnung befüllt, sonst alle sieben Felder null.
+  rechnungsdatum: string | null
+  eingangsdatum: string | null
+  kreditor_name: string | null
+  kreditor_unbestaetigt: boolean | null
+  betrag_brutto: string | null
+  kurztext: string | null
+  kurztext_volltext: string | null
+  // Löschsperre (API-Vertrag v1.1): anders als die sieben Anreicherungsfelder
+  // oben IMMER befüllt, auch für Dokumente ohne Rechnungsbezug — loeschbar ist
+  // nie null, loeschsperre_grund nur bei loeschbar === false gesetzt.
+  loeschbar: boolean
+  loeschsperre_grund: string | null
 }
 
 export type DokumentTyp = 'beleg' | 'vertrag' | 'korrespondenz' | 'beschluss' | 'abrechnung' | 'sonstiges'
