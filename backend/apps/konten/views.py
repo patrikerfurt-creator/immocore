@@ -353,6 +353,10 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
         Haben = Zahlungseingänge (Buchung, verknüpft via Personenkonto oder SollstellungZahlung).
         Beide Listen werden nach Datum gemischt und chronologisch sortiert.
 
+        Stornierte Sollstellungen werden mit ausgeliefert (storniert=True) —
+        ohne Saldowirkung, aber nachvollziehbar (z.B. Storni aus einem
+        Eigentümerwechsel). Der Saldo bleibt dadurch unverändert.
+
         Vorzeichen aus Eigentümersicht: negativer Saldo = Rückstand,
         positiver Saldo = Guthaben.
         """
@@ -362,10 +366,10 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
         ev = pk_obj.vertrag
         wj_id = request.query_params.get('wirtschaftsjahr')
 
-        # --- Soll-Seite: Sollstellungen aus Nebenbuch ---
+        # --- Soll-Seite: Sollstellungen aus Nebenbuch (inkl. Storni) ---
         ss_qs = (
             HausgeldSollstellung.objects
-            .filter(eigentumsverhaeltnis=ev, storniert_am__isnull=True)
+            .filter(eigentumsverhaeltnis=ev)
             .select_related('sollstellungslauf')
             .order_by('periode', 'erstellt_am')
         )
@@ -391,6 +395,7 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
         eintraege = []
         for ss in ss_qs:
             typ_label = {'hausgeld': 'Hausgeld', 'sonderumlage': 'Sonderumlage', 'abrechnungsergebnis': 'Abrechnung'}.get(ss.sollstellungs_typ, ss.sollstellungs_typ)
+            ist_storniert = ss.storniert_am is not None
             eintraege.append({
                 '_datum': ss.periode,
                 '_sort2': ss.erstellt_am,
@@ -403,8 +408,11 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
                 'soll': float(ss.soll_betrag) if ss.soll_betrag > 0 else None,
                 'haben': float(abs(ss.soll_betrag)) if ss.soll_betrag < 0 else None,
                 'hat_detail': False,
-                'status': ss.status_cached,
+                'status': 'storniert' if ist_storniert else ss.status_cached,
                 'ist_betrag': float(ss.ist_betrag),
+                'storniert': ist_storniert,
+                'storniert_am': ss.storniert_am.date().isoformat() if ist_storniert else None,
+                'storniert_grund': ss.storniert_grund or None,
             })
         for b in haben_qs:
             eintraege.append({
@@ -421,6 +429,9 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
                 'hat_detail': b.teilbuchungen.exists(),
                 'status': None,
                 'ist_betrag': None,
+                'storniert': False,
+                'storniert_am': None,
+                'storniert_grund': None,
             })
 
         eintraege.sort(key=lambda x: (x['_datum'], x['_sort2'] or ''))
@@ -428,8 +439,12 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
         saldo = Decimal('0.00')
         positionen = []
         for e in eintraege:
-            soll_val  = Decimal(str(e['soll']))  if e['soll']  is not None else Decimal('0')
-            haben_val = Decimal(str(e['haben'])) if e['haben'] is not None else Decimal('0')
+            # Stornierte Positionen werden angezeigt, wirken aber nicht auf den Saldo.
+            if e['storniert']:
+                soll_val = haben_val = Decimal('0')
+            else:
+                soll_val  = Decimal(str(e['soll']))  if e['soll']  is not None else Decimal('0')
+                haben_val = Decimal(str(e['haben'])) if e['haben'] is not None else Decimal('0')
             saldo += haben_val - soll_val
             e['saldo'] = float(saldo)
             e.pop('_datum')
