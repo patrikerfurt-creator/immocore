@@ -223,6 +223,11 @@ interface PortalFaelligkeitenSeite {
   results: PortalFaelligkeit[]
 }
 
+/** Notbremse: 50 Seiten à 50 Posten reichen für jeden realistischen Fall
+ *  und verhindern eine Endlosschleife, falls der Server dauerhaft ein
+ *  `next` liefert. */
+const MAX_FAELLIGKEITEN_SEITEN = 50
+
 /**
  * Der Endpunkt ist paginiert; das Portal zeigt aber immer die komplette,
  * überschaubare Liste der Fälligkeiten einer Person — deshalb werden hier
@@ -231,11 +236,18 @@ interface PortalFaelligkeitenSeite {
  */
 export async function meineFaelligkeiten(): Promise<PortalFaelligkeit[]> {
   const alle: PortalFaelligkeit[] = []
-  let url: string | null = '/faelligkeiten/'
-  while (url) {
-    const { data }: { data: PortalFaelligkeitenSeite } = await portalClient.get<PortalFaelligkeitenSeite>(url)
+  // Seiten selbst durchzählen statt `next` zu folgen: DRF baut dort eine
+  // ABSOLUTE URL aus dem Request (auf Live z.B. http://87.106.219.148/…).
+  // Der Browser läuft auf einer anderen Origin — der Folgeaufruf scheitert
+  // und riss vorher die ganze Abfrage mit, sodass gar keine Fälligkeit
+  // erschien. Mit einer relativen URL greift wieder der Portal-Client
+  // samt Auth-Interceptor.
+  for (let seite = 1; seite <= MAX_FAELLIGKEITEN_SEITEN; seite++) {
+    const { data } = await portalClient.get<PortalFaelligkeitenSeite>(
+      '/faelligkeiten/', { params: { page: seite } },
+    )
     alle.push(...data.results)
-    url = data.next
+    if (!data.next) break
   }
   return alle
 }
