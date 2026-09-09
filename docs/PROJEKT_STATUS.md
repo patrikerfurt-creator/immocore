@@ -152,7 +152,7 @@
 | `/jahresabrechnungen/` | CRUD + sperren/freigeben | ✅ |
 | `/einzelabrechnungen/` | CRUD | ✅ |
 | `/lastschrift-laeufe/` | CRUD + xml (pain.008 Download + Buchungen erstellen) | ✅ |
-| `/rechnungen/` | CRUD + ki-ocr + freigeben + ablehnen + buchen + sepa-export | ✅ |
+| `/rechnungen/` | CRUD + ki-ocr + freigeben + ablehnen + buchen + sepa-export; `DELETE` gesperrt ab Status `zur_freigabe` | ✅ |
 | `/kreditoren/` | CRUD + deaktivieren | ✅ |
 | `/kreditor-dubletten/` | Liste offener Prüffälle + als-neu-anlegen / zuordnen / ablehnen | ✅ |
 | `/wkz-vorlagen/` | CRUD + einreichen + freigeben + pausieren + reaktivieren + beenden + ersetzen + forecast | ✅ |
@@ -163,7 +163,7 @@
 | `/freigabelimits-standard/` | GET + PUT (globale Standard-Freigabelimits) | ✅ |
 | `/mitarbeiter-zuordnungen/` | GET + POST + PATCH (aufgabe) + DELETE | ✅ |
 | `/prozesse/` | start + schritte + schritt-speichern + abbrechen | ✅ |
-| `/dokumente/` | Upload + Liste | ✅ |
+| `/dokumente/` | Upload + Liste (mit Rechnungsdaten angereichert: Kreditor, Betrag, Kurztext, Rechnungs-/Eingangsdatum; sortierbar über `rechnung__*`) + Löschsperre | ✅ |
 | `/vorgaenge/` | CRUD + status + kommentar + zuweisen + dokumente (ersetzt `/tickets/`, entfernt 2026-08-09) | ✅ |
 | `/vorgang-typen/` (+ `/admin`) | ReadOnly + Admin-CRUD der Vorgangstypen | ✅ |
 | `/portal/auth/magic-link/` | request (neutrale Antwort) + verify (Einladung & Magic Link) + logout | ✅ |
@@ -197,6 +197,7 @@
 | ObjektStore (Zustand) | ✅ | Globale Objekt-Auswahl in der Sidebar |
 | Sidebar mit Navigation | ✅ | Kollabierbare Sektionen, Objekt-Switcher |
 | API-Client (axios) | ✅ | `src/api/` mit typisierten Modulen |
+| Frontend-Tests (vitest) | ✅ | vitest + @testing-library/react + jsdom, Konfiguration in `vite.config.ts`, `npm test` (neu 09.09.2026) |
 
 ### 6.2 Module / Pages
 
@@ -228,7 +229,7 @@
 | **Prozesse** | ProzessWizard (WEG anlegen) | 🔄 | Schritte 1–11 definiert; Schritt-Logik unvollständig |
 | | Eigentümerwechsel-Wizard | 🔄 | Schritte definiert; Abgrenzung fehlt |
 | | Jahresabrechnungs-Wizard | 🔄 | Schritte definiert; .950-Buchung + PDF fehlt |
-| **Sonstige** | DokumenteListe | ✅ | Upload + Liste |
+| **Sonstige** | DokumenteListe | ✅ | Upload + Liste; Belegspalten Kreditor (⚠ bei unbestätigtem Kreditor) / Kurztext / Bruttobetrag / Rechnungs- / Eingangsdatum, sortierbar nach Betrag und Rechnungsdatum; Löschen-Button gesperrt bei geprüften Belegen |
 | | VorgaengeListe / VorgangDetail | ✅ | Ersetzt TicketsListe (entfernt 2026-08-09); Status-Workflow, Ereignisse, Dokument-Upload |
 | | MassenimportWEG | ✅ | CSV-Massenimport |
 | | Einstellungen | ✅ | Tabs: E-Banking, Rechnungen, Dokumente, **Freigabelimits (neu)** |
@@ -273,6 +274,8 @@
 | Celery Tasks (Eskalation, Fristüberwachung) | Niedrig | Redis läuft, Celery konfiguriert |
 | E-Mail-Benachrichtigungen | Niedrig | Django Email + SMTP |
 | BWA / Summen-Saldenliste | Niedrig | Auswertungs-Reports |
+| `Freigabe.rechnung` auf PROTECT/SET_NULL | Niedrig | Aktuell `CASCADE`: beim Löschen einer ungeprüften Rechnung verschwindet ihr Freigabe-Protokoll still mit. Braucht eine Migration ⚠️ Abw. 013 |
+| Anzeigename für Dokumente ohne Rechnungsbezug | Niedrig | Verträge/Beschlüsse werden in der Dokumente-Liste über den Dateinamen identifiziert; ein echtes Titelfeld (ggf. KI-Vorschlag) ist eigenes Thema |
 
 ### Phase 2 (nicht im MVP-Scope)
 | Punkt |
@@ -297,6 +300,8 @@
 | Abw. 008 | WEG-Portal „Mini" (`aktuelle Umsetzung/CLAUDE_CODE_ANLEITUNG_WEG_PORTAL_MINI_v1_0.md`, Spec 1a) umgesetzt **ohne** die vorausgesetzte Spec 0 (Mandantenfähigkeit) — Portal läuft im bestehenden Single-Schema. Weitere Real-Code-Abweichungen: Autorisierung über `request.portal_zugang.person` statt `request.user.person` (Eigentümer haben bewusst keinen `auth.User`); `kontoinhaber` nicht bearbeitbar (Feld existiert weder auf `Person` noch `SEPAMandat`); MEA aus `VerteilerschluesselWert` (`vs_typ='mea'`) statt aus einem Einheit-Feld | Mittel | Umgesetzt 2026-08-28, lokal — Spec 0 offen |
 | Abw. 010 | Kreditor-Dublettenprüfung beim Rechnungsimport: der automatische Pfad legte Kreditoren bisher still an und verglich dabei nur exakt (IBAN oder `name_normalisiert`), zusätzlich mit `aktiv=True`-Filter — ein deaktivierter Kreditor wurde deshalb beim nächsten Beleg neu angelegt. Hauptursache der Doppelungen war eine **doppelte Normalisierung**: der Parser entfernte Rechtsformen, die manuelle Anlage in `views.py` (`name.lower()`) nicht. Jetzt: `name_normalisiert` entsteht ausschließlich in `Kreditor.save()`; ein gemeinsamer Abgleich-Service (`services/kreditor_matching.py`) für Import, Erkennung und manuelle Suche; Verdachtsfälle werden angehalten (Rechnung bleibt ohne Kreditor und damit nicht buchbar) und in `/rechnungen/kreditor-pruefung` von einem Menschen entschieden. Zusätzlich erkannt: bekannter Name mit abweichender IBAN (Rechnungsbetrug-Muster) und bekannte IBAN mit fremdem Namen | Mittel | Umgesetzt 2026-08-28, lokal |
 | Abw. 009 | Adressaufteilung: `Person` um `strasse`/`hausnummer`/`plz`/`ort` erweitert (Migration 0020 + Datenmigration 0021, 593 Bestandsadressen zerlegt). `Person.adresse` bleibt als zusammengesetzter Textblock erhalten, weil Anschreiben-PDF (Jahresabrechnung) und EV-Postversand ihn direkt als Anschrift lesen — `Person.save()` hält beides synchron, die Einzelfelder sind führend. 7 Sonderfälle (ausländische/unvollständige Adressen) stehen vollständig in `strasse` und sind in der Personenmaske nachzupflegen | Gering | Umgesetzt 2026-08-28, lokal |
+| Abw. 012 | Belegübersicht-Anreicherung (`CLAUDE_CODE_ANLEITUNG_BELEGUEBERSICHT_ANREICHERUNG_v1_0.md`): Spec Abschnitt 6/9 verlangt, den Dateinamen als sekundäre Spalte bzw. Download-Link zu erhalten — auf Wunsch des Auftraggebers entfernt, das Öffnen hängt jetzt am „Öffnen"-Button (Dateiname als Tooltip). Für Dokumente **ohne** Rechnungsbezug wird er in der zusammengefassten Zelle angezeigt, sonst hätten Verträge/Beschlüsse keinen Identifikator mehr (das von Spec Abschnitt 10 vertagte Anzeigenamen-Thema). Zweite Abweichung: Spec Abschnitt 6 gibt die Spaltenreihenfolge vor, umgesetzt ist die vom Auftraggeber gewünschte (Kreditor, Kurztext, Bruttobetrag, Rechnungs-, Eingangsdatum, Kategorie). Dritte: Arbeitspaket D setzte eine Frontend-Testinfrastruktur voraus, die es nicht gab — vitest neu eingerichtet | Gering | Umgesetzt 2026-09-09, lokal |
+| Abw. 013 | Löschsperre geprüfter Belege (API-Vertrag Nachtrag v1.1): Sperre bewusst **statusbasiert zum Löschzeitpunkt** statt über ein früher gesetztes `revisionssicher` — letzteres ist als GoBD-Sperre unumkehrbar, eine später abgelehnte Rechnung soll ihren Beleg wieder freigeben können. Schwelle `zur_freigabe`. Dabei aufgedeckt und mitbehoben: `Rechnung.beleg_dokument` ist `PROTECT`, jeder Löschversuch eines Belegs war ein unbehandelter `ProtectedError` (HTTP 500); `RechnungViewSet` hatte keinen `destroy`-Override, faktisch geschützt waren nur Rechnungen mit `KreditorOP` (entsteht erst bei Freigabe), `zur_freigabe`/`wkz_beleg` waren löschbar; der Django-Admin umging beide ViewSets (jetzt Guard in `Rechnung.delete()`, `has_delete_permission`, Massenaktion `delete_selected` entfernt). Offen: `Freigabe.rechnung` ist `CASCADE` — beim Löschen einer ungeprüften Rechnung verschwindet ihr Freigabe-Protokoll | Gering | Umgesetzt 2026-09-09, lokal |
 | Abw. 007 | Vorgang & DMS-Modul (`CLAUDE_CODE_ANLEITUNG_VORGANG_DMS_v1_0.md`): `Ticket` ersetzt durch generischen `Vorgang` (apps.vorgaenge); Owner-Regel B-Hybrid (höchstens ein Kontext-FK aus objekt/einheit/vorgang/person statt fixem `verknuepfung_typ`-Feld); `sha256` statt `inhalt_hash` als Duplikat-Kennung; separate App `apps.vorgaenge` statt Erweiterung von `apps.tickets`; automatischer E-Mail-/Portal-Import für Vorgänge stillgelegt (nur manuelle Anlage im MVP) | Gering | Umgesetzt 2026-08-09 |
 
 ---
@@ -316,5 +321,5 @@
 
 ---
 
-*Zuletzt aktualisiert: 09.08.2026 (Vorgang & DMS-Modul: Ticket-Cleanup Phase E)*
+*Zuletzt aktualisiert: 09.09.2026 (Belegübersicht-Anreicherung + Löschsperre geprüfter Belege)*
 *Nächste Priorität: Mahnwesen Frontend-Page*
