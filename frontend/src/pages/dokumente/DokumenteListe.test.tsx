@@ -169,7 +169,10 @@ describe('DokumenteListe – Belegübersicht-Anreicherung', () => {
     // Zusammengefasste Belegzelle (colSpan=5) + Kategorie/Beschreibung/Hochgeladen/Aktionen = 5 <td>
     expect(zellen).toHaveLength(5)
     expect(zellen[0]).toHaveAttribute('colspan', '5')
-    expect(zellen[0].textContent).toBe('')
+    // In der Sammelzelle steht der Dateiname — ohne Rechnungsbezug ist er der
+    // einzige Identifikator der Zeile. Keine „–"-Platzhalter.
+    expect(zellen[0].textContent).toBe('vertrag.pdf')
+    expect(zellen[0].textContent).not.toContain('–')
   })
 
   it('zeigt die Spalten in der geforderten Reihenfolge ohne Dateiname-Spalte', async () => {
@@ -201,6 +204,29 @@ describe('DokumenteListe – Belegübersicht-Anreicherung', () => {
 
     await userEvent.setup().click(screen.getByRole('button', { name: 'Öffnen' }))
     expect(dokumenteApi.openDatei).toHaveBeenCalledWith('dok-42')
+  })
+
+  it('zeigt den Dateinamen nur ohne Rechnungsbezug, nicht bei Belegen', async () => {
+    mockList.mockResolvedValue([
+      baseDokument({ id: 'beleg-1', dateiname: 'scan_beleg.pdf' }),
+      baseDokument({
+        id: 'vertrag-1',
+        dateiname: 'mietvertrag.pdf',
+        rechnungsdatum: null,
+        eingangsdatum: null,
+        kreditor_name: null,
+        kreditor_unbestaetigt: null,
+        betrag_brutto: null,
+        kurztext: null,
+        kurztext_volltext: null,
+      }),
+    ])
+
+    renderKomponente()
+
+    // Vertrag: Dateiname sichtbar. Beleg: nur als Tooltip am Öffnen-Button.
+    expect(await screen.findByText('mietvertrag.pdf')).toBeInTheDocument()
+    expect(screen.queryByText('scan_beleg.pdf')).not.toBeInTheDocument()
   })
 
   it('sortiert nach Bruttobetrag: erster Klick aufsteigend, zweiter Klick absteigend', async () => {

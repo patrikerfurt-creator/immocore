@@ -25,8 +25,11 @@ function formatBetrag(brutto: string | null): string {
 }
 
 /** Fünf Belegspalten (Kreditor … Eingangsdatum) einer Tabellenzeile.
- * Ohne Rechnungsbezug (alle Felder null) werden sie zu einer leeren Zelle
- * zusammengefasst statt fünf verwirrenden „–"-Platzhaltern (Spec Abschnitt 6). */
+ * Ohne Rechnungsbezug (alle Felder null) werden sie zu EINER Zelle zusammengefasst
+ * statt fünf verwirrenden „–"-Platzhaltern (Spec Abschnitt 6). Dort steht dann der
+ * Dateiname: Verträge, Beschlüsse und Korrespondenz haben sonst keinen sichtbaren
+ * Identifikator mehr, seit die Dateiname-Spalte entfallen ist. Für Belege bleibt er
+ * ausgeblendet — die stehen mit Kreditor, Betrag und Kurztext für sich. */
 function BelegSpalten({ d }: { d: Dokument }) {
   const ohneRechnungsbezug =
     d.rechnungsdatum === null &&
@@ -37,7 +40,11 @@ function BelegSpalten({ d }: { d: Dokument }) {
     d.kurztext === null
 
   if (ohneRechnungsbezug) {
-    return <td colSpan={5} className="px-4 py-3" />
+    return (
+      <td colSpan={5} className="px-4 py-3 text-gray-500">
+        {d.dateiname}
+      </td>
+    )
   }
 
   return (
