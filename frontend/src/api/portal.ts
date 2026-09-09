@@ -179,6 +179,130 @@ export async function emailBestaetigen(token: string): Promise<{ detail: string;
 }
 
 // ---------------------------------------------------------------------------
+// Personenkonto und Fälligkeiten (Spec 1, Kap. 8.1)
+// ---------------------------------------------------------------------------
+
+export interface PortalSaldoAufschluesselung {
+  bezeichnung: string
+  betrag: string
+}
+
+export interface PortalSaldo {
+  objekt_id: string
+  objekt_bezeichnung: string
+  einheit_id: string | null
+  einheit_nr: string
+  kontonummer: string
+  gesamtsaldo: string
+  stand_am: string
+  aufschluesselung: PortalSaldoAufschluesselung[]
+}
+
+export async function meinSaldo(): Promise<PortalSaldo[]> {
+  const { data } = await portalClient.get<PortalSaldo[]>('/personenkonto/saldo/')
+  return data
+}
+
+export interface PortalFaelligkeit {
+  objekt_id: string
+  objekt_bezeichnung: string
+  einheit_id: string | null
+  einheit_nr: string
+  periode: string
+  bezeichnung: string
+  faellig_am: string
+  soll_betrag: string
+  offener_betrag: string
+  ueberfaellig: boolean
+}
+
+interface PortalFaelligkeitenSeite {
+  count: number
+  next: string | null
+  previous: string | null
+  results: PortalFaelligkeit[]
+}
+
+/**
+ * Der Endpunkt ist paginiert; das Portal zeigt aber immer die komplette,
+ * überschaubare Liste der Fälligkeiten einer Person — deshalb werden hier
+ * alle Seiten eingesammelt statt Pagination bis in die Komponente
+ * durchzureichen.
+ */
+export async function meineFaelligkeiten(): Promise<PortalFaelligkeit[]> {
+  const alle: PortalFaelligkeit[] = []
+  let url: string | null = '/faelligkeiten/'
+  while (url) {
+    const { data }: { data: PortalFaelligkeitenSeite } = await portalClient.get<PortalFaelligkeitenSeite>(url)
+    alle.push(...data.results)
+    url = data.next
+  }
+  return alle
+}
+
+// ---------------------------------------------------------------------------
+// Vorgänge (Spec 1, Kap. 8.2)
+// ---------------------------------------------------------------------------
+
+export interface PortalVorgangTyp {
+  id: string
+  bezeichnung: string
+}
+
+export async function vorgangTypen(): Promise<PortalVorgangTyp[]> {
+  const { data } = await portalClient.get<PortalVorgangTyp[]>('/vorgang-typen/')
+  return data
+}
+
+export interface PortalVorgang {
+  id: string
+  nummer: string
+  typ: string
+  betreff: string
+  status: string
+  erstellt_am: string
+  faellig_am: string | null
+  objekt_id: string | null
+  objekt_bezeichnung: string | null
+  einheit_id: string | null
+  einheit_nr: string | null
+}
+
+export interface PortalVorgangEreignis {
+  typ: string
+  typ_anzeige: string
+  text: string | null
+  erstellt_am: string
+}
+
+export interface PortalVorgangDetail extends PortalVorgang {
+  beschreibung: string | null
+  ereignisse: PortalVorgangEreignis[]
+}
+
+export async function meineVorgaenge(): Promise<PortalVorgang[]> {
+  const { data } = await portalClient.get<PortalVorgang[]>('/vorgaenge/')
+  return data
+}
+
+export async function vorgangDetail(id: string): Promise<PortalVorgangDetail> {
+  const { data } = await portalClient.get<PortalVorgangDetail>(`/vorgaenge/${id}/`)
+  return data
+}
+
+export interface NeuerVorgang {
+  typ_id: string
+  betreff: string
+  beschreibung?: string
+  einheit_id: string
+}
+
+export async function vorgangAnlegen(werte: NeuerVorgang): Promise<PortalVorgangDetail> {
+  const { data } = await portalClient.post<PortalVorgangDetail>('/vorgaenge/', werte)
+  return data
+}
+
+// ---------------------------------------------------------------------------
 // Interner Bereich (Mitarbeiter-JWT) — Portal-Zugänge verwalten
 // ---------------------------------------------------------------------------
 

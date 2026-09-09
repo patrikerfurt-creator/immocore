@@ -135,6 +135,10 @@ REST_FRAMEWORK = {
         # (5 Magic-Link-Anfragen je E-Mail-Adresse pro Stunde) sitzt
         # zusätzlich im Service, weil es je ADRESSE zählt, nicht je IP.
         'portal_auth': '60/hour',
+        # Vorgangsanlage aus dem Portal (Spec Portal-Erweiterung v1.1
+        # Kap. 5.3). Zählt je Portal-Identität, weil ``PortalNutzer.pk``
+        # gesetzt und ``is_authenticated`` True ist — nicht je IP.
+        'portal_vorgang_erstellen': '20/day',
     },
     # Bewusst KEIN globales 'DEFAULT_PAGINATION_CLASS' — würde die
     # Antwortform ALLER bestehenden Endpunkte ändern (Frontend erwartet

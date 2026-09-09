@@ -273,8 +273,7 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
         saldo_offen < 0 = Rückstand (weniger gezahlt als gefordert),
         saldo_offen > 0 = Guthaben.
         """
-        from django.db.models import Sum
-        from apps.buchhaltung.models import Buchung, HausgeldSollstellung
+        from .services.personenkonto_service import saldi_je_personenkonto
 
         objekt_id = request.query_params.get('objekt')
         if not objekt_id:
@@ -287,45 +286,12 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
             .order_by('kontonummer')
         )
 
-        ev_ids = [pk.vertrag_id for pk in pks if pk.vertrag_id]
-        pk_ids  = [pk.id for pk in pks]
-        wj_id   = request.query_params.get('wirtschaftsjahr')
-
-        # Soll aus Nebenbuch: Summe der nicht-stornierten Sollstellungen je EV
-        ss_qs = (
-            HausgeldSollstellung.objects
-            .filter(eigentumsverhaeltnis_id__in=ev_ids, storniert_am__isnull=True)
-        )
-        if wj_id:
-            from apps.objekte.models import Wirtschaftsjahr
-            try:
-                wj = Wirtschaftsjahr.objects.get(pk=wj_id)
-                ss_qs = ss_qs.filter(periode__year=wj.jahr)
-            except Wirtschaftsjahr.DoesNotExist:
-                pass
-        soll_per_ev = dict(
-            ss_qs.values('eigentumsverhaeltnis_id')
-            .annotate(s=Sum('soll_betrag'))
-            .values_list('eigentumsverhaeltnis_id', 's')
-        )
-
-        # Haben aus Buchungen (Zahlungseingänge)
-        haben_qs = (
-            Buchung.objects
-            .filter(personenkonto_id__in=pk_ids, soll_konto__isnull=False, parent_buchung__isnull=True)
-            .exclude(status='storniert')
-        )
-        if wj_id:
-            haben_qs = haben_qs.filter(wirtschaftsjahr_id=wj_id)
-        haben_per_pk = dict(
-            haben_qs.values('personenkonto_id').annotate(s=Sum('betrag')).values_list('personenkonto_id', 's')
-        )
+        wj_id = request.query_params.get('wirtschaftsjahr')
+        salden = saldi_je_personenkonto(pks, wirtschaftsjahr_id=wj_id)
 
         result = []
         for pk in pks:
-            soll  = soll_per_ev.get(pk.vertrag_id) or Decimal('0')
-            haben = haben_per_pk.get(pk.id) or Decimal('0')
-            saldo = haben - soll
+            saldo = salden[pk.id]['saldo']
             einheit_nr = ''
             try:
                 einheit_nr = pk.vertrag.einheit.einheit_nr

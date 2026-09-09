@@ -12,7 +12,13 @@ from .views import (
     MeineDatenView,
     MeineEinheitenView,
 )
+from .views_konto import PortalFaelligkeitenView, PortalSaldoView
 from .views_verwaltung import PortalZugangViewSet
+from .views_vorgaenge import (
+    PortalVorgaengeView,
+    PortalVorgangDetailView,
+    PortalVorgangTypenView,
+)
 
 router = DefaultRouter()
 # Interner Bereich — klar getrennt von den Portal-Routen unterhalb von
@@ -40,4 +46,20 @@ urlpatterns = router.urls + [
     path('portal/meine-daten/bankverbindung/', BankverbindungView.as_view(),
          name='portal-bankverbindung'),
     path('portal/iban-check/', IbanPruefenView.as_view(), name='portal-iban-check'),
+
+    # Vorgänge (Spec Portal-Erweiterung v1.1, Kap. 4/5). 'vorgang-typen'
+    # steht vor der Detailroute — keine überlappenden Präfixe, aber die
+    # Lesbarkeit folgt der Reihenfolge im Formular.
+    path('portal/vorgang-typen/', PortalVorgangTypenView.as_view(),
+         name='portal-vorgang-typen'),
+    path('portal/vorgaenge/', PortalVorgaengeView.as_view(), name='portal-vorgaenge'),
+    path('portal/vorgaenge/<uuid:vorgang_id>/', PortalVorgangDetailView.as_view(),
+         name='portal-vorgang-detail'),
+
+    # Konto-Reiter (Spec Portal-Erweiterung v1.1, Kap. 6/7). Bewusst ohne
+    # ID im Pfad: die Zuordnung kommt ausschließlich aus der Sitzung, damit
+    # eine geratene fremde ID nichts erreichen kann.
+    path('portal/personenkonto/saldo/', PortalSaldoView.as_view(), name='portal-saldo'),
+    path('portal/faelligkeiten/', PortalFaelligkeitenView.as_view(),
+         name='portal-faelligkeiten'),
 ]

@@ -3,7 +3,7 @@ from pathlib import Path
 
 from django.db.models import Max
 
-from .models import Abrechnungsart, Konto, Personenkonto
+from ..models import Abrechnungsart, Konto, Personenkonto
 
 
 FIXTURE_PATH = Path(__file__).resolve().parent.parent.parent / 'fixtures' / 'musterkontenrahmen_weg.csv'
