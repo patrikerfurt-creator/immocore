@@ -1,6 +1,11 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { meineEinheiten, PortalEinheit, PortalWegKarte } from '../../api/portal'
+import {
+  meineEinheiten, meineFaelligkeiten, meinSaldo,
+  PortalEinheit, PortalFaelligkeit, PortalSaldo, PortalWegKarte,
+} from '../../api/portal'
+import { findNaechsteFaelligkeit, findSaldoFuerEinheit, formatDatum, formatGeld, KontoReiter } from './KontoReiter'
+import { VorgaengeReiter } from './VorgaengeReiter'
 
 /**
  * Einheiten-Ansicht im Button-Layout (Layout-Update v1.0).
@@ -10,10 +15,9 @@ import { meineEinheiten, PortalEinheit, PortalWegKarte } from '../../api/portal'
  * Einheiten-Tabs (aktiv = Ink) → Saldo-Karten → Reiter Konto/Dokumente/
  * Vorgänge, wobei jeder Wechsel von WEG oder Einheit auf "Konto" zurückspringt.
  *
- * Inhaltlich weiterhin nur Stammdaten je Einheit (Spec 1a, Kap. 6.1).
- * Personenkonto (Saldo, Buchungsverlauf), Dokumente und Vorgänge folgen in
- * Spec 1 (vollständig) — ihre Flächen stehen hier bereits im Layout, aber mit
- * Platzhalter statt erfundener Zahlen.
+ * Stammdaten je Einheit (Spec 1a, Kap. 6.1) sowie Personenkonto und
+ * Vorgänge (Spec 1, Kap. 8) sind hier mit echten Daten gefüllt; der
+ * Dokumente-Reiter bleibt bewusst Platzhalter (folgt separat).
  */
 const NUTZUNGSART_LABEL: Record<string, string> = {
   Wohnung: 'Wohnung',
@@ -47,13 +51,83 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   )
 }
 
-/** Saldo-Karte aus dem Mockup — Werte folgen mit Spec 1b (Personenkonto). */
-function KennzahlKarte({ label, wert, hinweis }: { label: string; wert: string; hinweis: string }) {
+/** Kennzahl-Karte aus dem Mockup — `wertKlasse` erlaubt die Guthaben-/
+ * Rückstand-Einfärbung der Saldo-Karte, ohne dass die Fälligkeits-Karte
+ * eine Farbe erzwingen muss. */
+function KennzahlKarte({
+  label, wert, hinweis, wertKlasse = 'text-portal-soft',
+}: { label: string; wert: string; hinweis: string; wertKlasse?: string }) {
   return (
     <div className="flex-1 basis-[200px] bg-white border border-portal-line rounded-[10px] px-[18px] py-4">
       <div className="text-xs text-portal-soft mb-1.5">{label}</div>
-      <div className="text-base font-semibold text-portal-soft">{wert}</div>
+      <div className={`text-base font-semibold ${wertKlasse}`}>{wert}</div>
       <div className="text-[11.5px] text-portal-soft mt-1">{hinweis}</div>
+    </div>
+  )
+}
+
+/** Die beiden Kennzahl-Karten oberhalb der Reiter — Saldo und nächste
+ * Fälligkeit der gewählten Einheit. Eigene Komponente, damit die
+ * Lade-/Fehler-/Leer-Fallunterscheidung nicht den Hauptrender aufbläht. */
+function KennzahlKartenPaar({
+  einheit,
+  saldo, saldoLaedt, saldoFehler,
+  faelligkeit, faelligkeitLaedt, faelligkeitFehler,
+}: {
+  einheit: PortalEinheit
+  saldo: PortalSaldo | undefined
+  saldoLaedt: boolean
+  saldoFehler: boolean
+  faelligkeit: PortalFaelligkeit | undefined
+  faelligkeitLaedt: boolean
+  faelligkeitFehler: boolean
+}) {
+  let saldoWert = 'Wird geladen…'
+  let saldoHinweis = ''
+  let saldoKlasse = 'text-portal-soft'
+  if (saldoFehler) {
+    saldoWert = '—'
+    saldoHinweis = 'Konnte nicht geladen werden.'
+  } else if (!saldoLaedt) {
+    if (saldo) {
+      saldoWert = formatGeld(saldo.gesamtsaldo)
+      const istGuthaben = Number(saldo.gesamtsaldo) >= 0
+      saldoHinweis = istGuthaben ? 'Guthaben' : 'Rückstand'
+      saldoKlasse = istGuthaben ? 'text-portal-credit' : 'text-portal-debit'
+    } else {
+      saldoWert = '—'
+      saldoHinweis = 'Kein Personenkonto hinterlegt'
+    }
+  }
+
+  let faelligkeitWert = 'Wird geladen…'
+  let faelligkeitHinweis = ''
+  if (faelligkeitFehler) {
+    faelligkeitWert = '—'
+    faelligkeitHinweis = 'Konnte nicht geladen werden.'
+  } else if (!faelligkeitLaedt) {
+    if (faelligkeit) {
+      faelligkeitWert = formatGeld(faelligkeit.offener_betrag)
+      faelligkeitHinweis = `${faelligkeit.bezeichnung} · fällig am ${formatDatum(faelligkeit.faellig_am)}`
+    } else {
+      faelligkeitWert = '—'
+      faelligkeitHinweis = 'Keine offene Fälligkeit'
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap gap-3.5 mt-[18px]">
+      <KennzahlKarte
+        label={`Aktueller Saldo — ${einheit.einheit_nr}`}
+        wert={saldoWert}
+        hinweis={saldoHinweis}
+        wertKlasse={saldoKlasse}
+      />
+      <KennzahlKarte
+        label="Nächste Fälligkeit"
+        wert={faelligkeitWert}
+        hinweis={faelligkeitHinweis}
+      />
     </div>
   )
 }
@@ -98,6 +172,12 @@ export function MeineEinheiten() {
     queryKey: ['portal', 'einheiten'],
     queryFn: meineEinheiten,
   })
+
+  // Dieselben queryKeys wie in KontoReiter — react-query teilt sich die
+  // Anfrage, die Kennzahl-Karten oben brauchen die Werte aber unabhängig
+  // vom gerade aktiven Reiter.
+  const saldoQuery = useQuery({ queryKey: ['portal', 'saldo'], queryFn: meinSaldo })
+  const faelligkeitenQuery = useQuery({ queryKey: ['portal', 'faelligkeiten'], queryFn: meineFaelligkeiten })
 
   // Auswahl über IDs statt Indizes: so bleibt die Auswahl stabil, wenn der
   // Server die Liste in anderer Reihenfolge liefert. `null` heißt "noch nichts
@@ -202,18 +282,15 @@ export function MeineEinheiten() {
       {/* Ebene 3: Kennzahlen + Reiter — erst wenn eine Einheit ausgewählt ist. */}
       {einheit && (
         <>
-          <div className="flex flex-wrap gap-3.5 mt-[18px]">
-            <KennzahlKarte
-              label={`Aktueller Saldo — ${einheit.einheit_nr}`}
-              wert="wird in Kürze angezeigt"
-              hinweis="Personenkonto in Vorbereitung"
-            />
-            <KennzahlKarte
-              label="Nächste Fälligkeit"
-              wert="wird in Kürze angezeigt"
-              hinweis="Hausgeld / Sollstellung"
-            />
-          </div>
+          <KennzahlKartenPaar
+            einheit={einheit}
+            saldo={findSaldoFuerEinheit(saldoQuery.data, einheit.einheit_id)}
+            saldoLaedt={saldoQuery.isLoading}
+            saldoFehler={saldoQuery.isError}
+            faelligkeit={findNaechsteFaelligkeit(faelligkeitenQuery.data, einheit.einheit_id)}
+            faelligkeitLaedt={faelligkeitenQuery.isLoading}
+            faelligkeitFehler={faelligkeitenQuery.isError}
+          />
 
           <div className="flex gap-[22px] mt-7 border-b border-portal-line">
             {REITER.map(({ id, label }) => (
@@ -235,14 +312,14 @@ export function MeineEinheiten() {
           {reiter === 'konto' && (
             <>
               <EinheitDetails einheit={einheit} />
-              <Platzhalter text="Ihr Kontostand und der Buchungsverlauf zu dieser Einheit erscheinen hier." />
+              <KontoReiter einheitId={einheit.einheit_id} />
             </>
           )}
           {reiter === 'dokumente' && (
             <Platzhalter text="Dokumente zu dieser Einheit erscheinen hier." />
           )}
           {reiter === 'vorgaenge' && (
-            <Platzhalter text="Vorgänge zu dieser Einheit erscheinen hier." />
+            <VorgaengeReiter einheitId={einheit.einheit_id} objektId={weg.objekt_id} />
           )}
         </>
       )}

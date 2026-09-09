@@ -123,3 +123,80 @@ class KontenJahresFilterTest(TestCase):
         """Kein Wirtschaftsjahr 2019 → Liste bleibt nutzbar statt leer."""
         ids = self._ids_fuer({'objekt': str(self.objekt.id), 'jahr': '2019'})
         self.assertEqual(ids, {str(self.konto2026.id)})
+
+
+class KontoauszugStornoTest(TestCase):
+    """
+    Stornierte Sollstellungen müssen im Kontoauszug sichtbar bleiben — sonst
+    verschwinden z.B. die Storni eines Eigentümerwechsels rückstandslos und
+    der Vorgang ist im Personenkonto nicht nachvollziehbar. Sie dürfen dabei
+    den Saldo nicht verändern.
+    """
+
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+        from django.utils import timezone
+        from apps.buchhaltung.models import HausgeldSollstellung
+        from apps.konten.models import Personenkonto
+        from apps.objekte.models import Objekt, Einheit
+        from apps.personen.models import EigentumsVerhaeltnis, Person
+
+        self.user = get_user_model().objects.create_user(username='ka_storno', password='x')
+        self.objekt = Objekt.objects.create(
+            bezeichnung='Test-WEG-Storno', objektnummer='KS001', objekt_typ='WEG',
+            strasse='Teststr. 2', plz='60000', ort='Teststadt',
+            verwaltung_seit=date(2020, 1, 1),
+        )
+        self.einheit = Einheit.objects.create(
+            objekt=self.objekt, einheit_nr='W01', lage='EG links',
+        )
+        person = Person.objects.create(
+            vorname='Storno', nachname='Tester', person_typ='100',
+        )
+        self.ev = EigentumsVerhaeltnis.objects.create(
+            einheit=self.einheit, person=person, beginn=date(2026, 1, 1),
+        )
+        # Personenkonto wird per post_save-Signal angelegt.
+        self.pk_obj = Personenkonto.objects.get(vertrag=self.ev)
+
+        gemeinsam = dict(
+            objekt=self.objekt, eigentumsverhaeltnis=self.ev,
+            sollstellungs_typ='hausgeld', erstellt_von=self.user,
+        )
+        self.offen = HausgeldSollstellung.objects.create(
+            periode=date(2026, 7, 1), faellig_am=date(2026, 7, 1), opos_nr='KS-0001',
+            soll_betrag=Decimal('100.00'), status_cached='offen', **gemeinsam,
+        )
+        self.storniert = HausgeldSollstellung.objects.create(
+            periode=date(2026, 8, 1), faellig_am=date(2026, 8, 1), opos_nr='KS-0002',
+            soll_betrag=Decimal('250.00'), status_cached='storniert',
+            storniert_am=timezone.now(), storniert_von=self.user,
+            storniert_grund='Eigentümerwechsel Stichtag 2026-08-01', **gemeinsam,
+        )
+
+    def _auszug(self):
+        from apps.konten.views import PersonenkontoViewSet
+        req = APIRequestFactory().get('/')
+        req.user = self.user
+        view = PersonenkontoViewSet.as_view({'get': 'kontoauszug'})
+        return view(req, pk=str(self.pk_obj.id)).data
+
+    def test_stornierte_sollstellung_erscheint_im_auszug(self):
+        daten = self._auszug()
+        nach_opos = {p['opos_nr']: p for p in daten['positionen']}
+        self.assertIn('KS-0002', nach_opos, 'Storno fehlt im Kontoauszug')
+        self.assertTrue(nach_opos['KS-0002']['storniert'])
+        self.assertEqual(nach_opos['KS-0002']['status'], 'storniert')
+        self.assertEqual(
+            nach_opos['KS-0002']['storniert_grund'],
+            'Eigentümerwechsel Stichtag 2026-08-01',
+        )
+
+    def test_storno_veraendert_den_saldo_nicht(self):
+        daten = self._auszug()
+        # Nur die offene Sollstellung über 100 € wirkt: Rückstand = -100.
+        self.assertEqual(daten['saldo_gesamt'], -100.0)
+
+    def test_offene_sollstellung_bleibt_unmarkiert(self):
+        nach_opos = {p['opos_nr']: p for p in self._auszug()['positionen']}
+        self.assertFalse(nach_opos['KS-0001']['storniert'])

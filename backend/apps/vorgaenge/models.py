@@ -33,6 +33,12 @@ class VorgangTyp(models.Model):
         help_text='Erzeugt bei Anlage eines Vorgangs dieses Typs automatisch '
                   'einen KI-Antwortvorschlag (Folgeauftrag KI-Antwortvorschlag).',
     )
+    portal_erstellbar = models.BooleanField(
+        default=False,
+        verbose_name='Im Portal erstellbar',
+        help_text='Steuert, ob der Typ im Portal-Formular "Neuer Vorgang" zur '
+                  'Auswahl steht (Spec Portal-Erweiterung v1.1, Kap. 4).',
+    )
     erstellt_am = models.DateTimeField(auto_now_add=True)
     erstellt_von = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT,

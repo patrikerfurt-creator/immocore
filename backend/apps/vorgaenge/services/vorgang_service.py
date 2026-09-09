@@ -7,11 +7,22 @@ eines ``Vorgang``. Statuswechsel laufen AUSSCHLIESSLICH über
 ungültige Übergänge und fehlende Audit-Einträge (``VorgangEreignis``)
 ausgeschlossen sind (GoBD-Prinzip: keine stille Änderung).
 """
+from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.vorgaenge.models import Vorgang, VorgangEreignis
+
+# Technischer System-User für ``Vorgang.erstellt_von`` bei Portal-Anlagen.
+# Portal-Identitäten (``PortalNutzer``/``PortalSession``) haben BEWUSST
+# keinen ``auth.User`` (siehe apps.portal.auth) — wer tatsächlich Antragsteller
+# ist, steht in ``Vorgang.person`` zusammen mit ``quelle='portal'``.
+# ``erstellt_von`` ist aber ein Pflichtfeld (PROTECT-FK), daher dieser
+# unbenutzbare Platzhalter-User (analog ``immocore-autopilot``, siehe
+# ``apps.buchhaltung.migrations.0025_autopilot_user``).
+PORTAL_SYSTEM_USERNAME = 'immocore-portal'
 
 # Erlaubte Statusübergänge (Spec Kap. 1.3). Terminal-Stati (erledigt,
 # storniert) haben KEINEN Eintrag oder eine leere Zielmenge.
@@ -192,12 +203,16 @@ def setze_portal_sichtbar(vorgang: Vorgang, sichtbar: bool) -> Vorgang:
 
 
 def portal_ansicht(vorgang: Vorgang) -> dict:
-    """Liefert genau das, was ein Eigentümer im (noch nicht existierenden)
-    Portal sehen dürfte — Grundlage/Lesepfad, siehe Modul- und Auftrags-
-    Dokumentation. Es gibt aktuell KEINEN öffentlichen Endpunkt und KEINEN
-    Auth-Layer für Externe; dieser Lesepfad hängt hinter ``IsAuthenticated``
-    und dient Mitarbeitern als Vorschau ("was sieht der Eigentümer?") sowie
-    später dem Portal als Datenquelle.
+    """Liefert genau das, was ein Eigentümer im Portal sehen dürfte.
+
+    Der echte Portal-Endpunkt (``apps.portal.views_vorgaenge``) hat eine
+    eigene, schlanke Serialisierung mit exaktem Response-Contract und nutzt
+    diese Funktion NICHT direkt — er baut auf denselben Regeln auf (nur
+    ``intern=False``-Ereignisse, keine internen Felder). Diese Funktion dient
+    weiterhin Mitarbeitern als interne Vorschau ("was sieht der Eigentümer?",
+    Endpunkt ``portal-vorschau``, hängt hinter ``IsAuthenticated``) und bleibt
+    aus Kompatibilitätsgründen (bestehende Tests/Vorschau-Endpunkt) unverändert
+    in ihrer bisherigen Form — additiv um ``typ`` und ``faellig_am`` erweitert.
 
     Ist ``vorgang.portal_sichtbar`` nicht gesetzt, wird ein klarer
     "nicht freigegeben"-Zustand zurückgegeben (``{'sichtbar': False}``) —
@@ -233,12 +248,97 @@ def portal_ansicht(vorgang: Vorgang) -> dict:
     return {
         'sichtbar': True,
         'nummer': vorgang.nummer,
+        'typ': vorgang.typ.bezeichnung,
         'betreff': vorgang.betreff,
         'beschreibung': vorgang.beschreibung,
         'status': vorgang.status,
         'status_anzeige': vorgang.get_status_display(),
+        'faellig_am': vorgang.faellig_am,
         'erstellt_am': vorgang.erstellt_am,
         'objekt_bezeichnung': vorgang.objekt.bezeichnung if vorgang.objekt_id else None,
         'einheit_nr': vorgang.einheit.einheit_nr if vorgang.einheit_id else None,
         'ereignisse': ereignisse,
     }
+
+
+def portal_system_user():
+    """Holt den technischen System-User für ``erstellt_von`` bei Vorgängen aus
+    dem Portal (siehe ``PORTAL_SYSTEM_USERNAME`` oben).
+
+    ``get_or_create`` ist reine Absicherung für eine Alt-DB, in der die
+    Datenmigration (``apps.vorgaenge.migrations`` — System-User anlegen)
+    noch nicht gelaufen ist — der Normalfall ist ein simples ``get``.
+    """
+    User = get_user_model()
+    user, _ = User.objects.get_or_create(
+        username=PORTAL_SYSTEM_USERNAME,
+        defaults={
+            'first_name': 'IMMOCORE',
+            'last_name': 'Portal',
+            'email': 'portal@noreply.immocore.local',
+            'is_active': False,
+            'is_staff': False,
+            'is_superuser': False,
+        },
+    )
+    if user.has_usable_password():
+        user.set_unusable_password()
+        user.save(update_fields=['password'])
+    return user
+
+
+def portal_sichtbare_vorgaenge(person):
+    """Liefert die für ``person`` im Eigentümer-Portal sichtbaren Vorgänge
+    (Sichtbarkeitsregel Kap. 4.2, Spec Portal-Erweiterung v1.1), neueste
+    zuerst:
+
+    ``portal_sichtbar=True`` UND (Einheit unter den EVs dieser Person ODER
+    Vorgang.person == person ODER (Einheit leer UND Objekt unter den EVs
+    dieser Person)).
+
+    Für die ANSICHT zählen bewusst auch bereits BEENDETE Eigentumsverhältnisse
+    (ein ehemaliger Eigentümer muss z.B. Rückfragen zur Schlussabrechnung nach
+    dem Verkauf noch sehen können) — anders als bei der ANLAGE eines neuen
+    Vorgangs (siehe ``portal_aktive_einheit``), wo nur ein aktuelles EV zählt.
+
+    Der Objekt-Zweig ist bewusst auf einheitenlose Vorgänge
+    (``einheit__isnull=True``) beschränkt: sonst würde die bloße Mitgliedschaft
+    in derselben WEG auch Vorgänge zu fremden Nachbareinheiten sichtbar machen.
+    """
+    from apps.personen.models import EigentumsVerhaeltnis
+
+    evs = EigentumsVerhaeltnis.objects.filter(person=person)
+    einheit_ids = list(evs.values_list('einheit_id', flat=True))
+    objekt_ids = list(evs.values_list('einheit__objekt_id', flat=True))
+
+    return (
+        Vorgang.objects
+        .filter(portal_sichtbar=True)
+        .filter(
+            Q(einheit_id__in=einheit_ids) |
+            Q(person=person) |
+            Q(einheit__isnull=True, objekt_id__in=objekt_ids)
+        )
+        .select_related('typ', 'objekt', 'einheit')
+        .order_by('-erstellt_am')
+    )
+
+
+def portal_aktive_einheit(person, einheit_id):
+    """Prüft für die ANLAGE eines Portal-Vorgangs, dass ``einheit_id`` zu
+    einem AKTIVEN Eigentumsverhältnis dieser Person gehört (``beginn`` <=
+    heute, ``ende`` leer oder >= heute) — unabhängig davon, was das Frontend
+    anzeigt (Kap. 4.3). Gibt bei Erfolg die zugehörige ``Einheit`` zurück
+    (mit geladenem ``objekt``), sonst ``None``.
+    """
+    from apps.personen.models import EigentumsVerhaeltnis
+
+    heute = timezone.localdate()
+    ev = (
+        EigentumsVerhaeltnis.objects
+        .filter(person=person, einheit_id=einheit_id, beginn__lte=heute)
+        .filter(Q(ende__isnull=True) | Q(ende__gte=heute))
+        .select_related('einheit', 'einheit__objekt')
+        .first()
+    )
+    return ev.einheit if ev is not None else None

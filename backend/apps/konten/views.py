@@ -273,8 +273,7 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
         saldo_offen < 0 = Rückstand (weniger gezahlt als gefordert),
         saldo_offen > 0 = Guthaben.
         """
-        from django.db.models import Sum
-        from apps.buchhaltung.models import Buchung, HausgeldSollstellung
+        from .services.personenkonto_service import saldi_je_personenkonto
 
         objekt_id = request.query_params.get('objekt')
         if not objekt_id:
@@ -287,45 +286,12 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
             .order_by('kontonummer')
         )
 
-        ev_ids = [pk.vertrag_id for pk in pks if pk.vertrag_id]
-        pk_ids  = [pk.id for pk in pks]
-        wj_id   = request.query_params.get('wirtschaftsjahr')
-
-        # Soll aus Nebenbuch: Summe der nicht-stornierten Sollstellungen je EV
-        ss_qs = (
-            HausgeldSollstellung.objects
-            .filter(eigentumsverhaeltnis_id__in=ev_ids, storniert_am__isnull=True)
-        )
-        if wj_id:
-            from apps.objekte.models import Wirtschaftsjahr
-            try:
-                wj = Wirtschaftsjahr.objects.get(pk=wj_id)
-                ss_qs = ss_qs.filter(periode__year=wj.jahr)
-            except Wirtschaftsjahr.DoesNotExist:
-                pass
-        soll_per_ev = dict(
-            ss_qs.values('eigentumsverhaeltnis_id')
-            .annotate(s=Sum('soll_betrag'))
-            .values_list('eigentumsverhaeltnis_id', 's')
-        )
-
-        # Haben aus Buchungen (Zahlungseingänge)
-        haben_qs = (
-            Buchung.objects
-            .filter(personenkonto_id__in=pk_ids, soll_konto__isnull=False, parent_buchung__isnull=True)
-            .exclude(status='storniert')
-        )
-        if wj_id:
-            haben_qs = haben_qs.filter(wirtschaftsjahr_id=wj_id)
-        haben_per_pk = dict(
-            haben_qs.values('personenkonto_id').annotate(s=Sum('betrag')).values_list('personenkonto_id', 's')
-        )
+        wj_id = request.query_params.get('wirtschaftsjahr')
+        salden = saldi_je_personenkonto(pks, wirtschaftsjahr_id=wj_id)
 
         result = []
         for pk in pks:
-            soll  = soll_per_ev.get(pk.vertrag_id) or Decimal('0')
-            haben = haben_per_pk.get(pk.id) or Decimal('0')
-            saldo = haben - soll
+            saldo = salden[pk.id]['saldo']
             einheit_nr = ''
             try:
                 einheit_nr = pk.vertrag.einheit.einheit_nr
@@ -353,6 +319,10 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
         Haben = Zahlungseingänge (Buchung, verknüpft via Personenkonto oder SollstellungZahlung).
         Beide Listen werden nach Datum gemischt und chronologisch sortiert.
 
+        Stornierte Sollstellungen werden mit ausgeliefert (storniert=True) —
+        ohne Saldowirkung, aber nachvollziehbar (z.B. Storni aus einem
+        Eigentümerwechsel). Der Saldo bleibt dadurch unverändert.
+
         Vorzeichen aus Eigentümersicht: negativer Saldo = Rückstand,
         positiver Saldo = Guthaben.
         """
@@ -362,10 +332,10 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
         ev = pk_obj.vertrag
         wj_id = request.query_params.get('wirtschaftsjahr')
 
-        # --- Soll-Seite: Sollstellungen aus Nebenbuch ---
+        # --- Soll-Seite: Sollstellungen aus Nebenbuch (inkl. Storni) ---
         ss_qs = (
             HausgeldSollstellung.objects
-            .filter(eigentumsverhaeltnis=ev, storniert_am__isnull=True)
+            .filter(eigentumsverhaeltnis=ev)
             .select_related('sollstellungslauf')
             .order_by('periode', 'erstellt_am')
         )
@@ -391,6 +361,7 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
         eintraege = []
         for ss in ss_qs:
             typ_label = {'hausgeld': 'Hausgeld', 'sonderumlage': 'Sonderumlage', 'abrechnungsergebnis': 'Abrechnung'}.get(ss.sollstellungs_typ, ss.sollstellungs_typ)
+            ist_storniert = ss.storniert_am is not None
             eintraege.append({
                 '_datum': ss.periode,
                 '_sort2': ss.erstellt_am,
@@ -403,8 +374,11 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
                 'soll': float(ss.soll_betrag) if ss.soll_betrag > 0 else None,
                 'haben': float(abs(ss.soll_betrag)) if ss.soll_betrag < 0 else None,
                 'hat_detail': False,
-                'status': ss.status_cached,
+                'status': 'storniert' if ist_storniert else ss.status_cached,
                 'ist_betrag': float(ss.ist_betrag),
+                'storniert': ist_storniert,
+                'storniert_am': ss.storniert_am.date().isoformat() if ist_storniert else None,
+                'storniert_grund': ss.storniert_grund or None,
             })
         for b in haben_qs:
             eintraege.append({
@@ -421,6 +395,9 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
                 'hat_detail': b.teilbuchungen.exists(),
                 'status': None,
                 'ist_betrag': None,
+                'storniert': False,
+                'storniert_am': None,
+                'storniert_grund': None,
             })
 
         eintraege.sort(key=lambda x: (x['_datum'], x['_sort2'] or ''))
@@ -428,8 +405,12 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
         saldo = Decimal('0.00')
         positionen = []
         for e in eintraege:
-            soll_val  = Decimal(str(e['soll']))  if e['soll']  is not None else Decimal('0')
-            haben_val = Decimal(str(e['haben'])) if e['haben'] is not None else Decimal('0')
+            # Stornierte Positionen werden angezeigt, wirken aber nicht auf den Saldo.
+            if e['storniert']:
+                soll_val = haben_val = Decimal('0')
+            else:
+                soll_val  = Decimal(str(e['soll']))  if e['soll']  is not None else Decimal('0')
+                haben_val = Decimal(str(e['haben'])) if e['haben'] is not None else Decimal('0')
             saldo += haben_val - soll_val
             e['saldo'] = float(saldo)
             e.pop('_datum')

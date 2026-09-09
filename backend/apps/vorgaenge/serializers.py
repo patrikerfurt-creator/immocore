@@ -36,7 +36,7 @@ class VorgangTypSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'code', 'bezeichnung', 'standard_prioritaet',
             'aktiv', 'sortierung', 'antwort_vorschlag_aktiv',
-            'erstellt_am', 'erstellt_von',
+            'portal_erstellbar', 'erstellt_am', 'erstellt_von',
         ]
         read_only_fields = ['id', 'erstellt_am']
 

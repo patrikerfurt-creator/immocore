@@ -2,15 +2,26 @@
 Tests für die Einheiten-Ansicht (Spec 1a, Kap. 6.1) und — der wichtigste
 Test dieser Spec — die Datenisolation zwischen zwei Eigentümern
 (Akzeptanzkriterium Kap. 8, letzter Punkt).
+
+Ergänzung (Phase 5, Portal-Erweiterung v1.1, Kap. 9.5 Test 1): dieselbe
+Isolations-Stichprobe zusätzlich über die fünf neuen Vorgangs-/Konto-
+Endpunkte, im selben ``DatenisolationTest`` mit denselben zwei Eigentümern.
+Die bestehenden 12 Tests dieser Datei bleiben dabei unverändert.
 """
 from datetime import date
 
+from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from apps.buchhaltung.models import HausgeldSollstellung
+from apps.konten.models import Personenkonto
+from apps.personen.models import EigentumsVerhaeltnis
 from apps.portal.services import zugang_service
+from apps.vorgaenge.models import Vorgang, VorgangTyp
+from apps.vorgaenge.services import vorgang_service
 from .basis import (
     erstelle_eigentuemer,
     erstelle_einheit,
@@ -20,6 +31,9 @@ from .basis import (
 
 EINHEITEN_URL = '/api/v1/portal/meine-einheiten/'
 DATEN_URL = '/api/v1/portal/meine-daten/'
+VORGAENGE_URL = '/api/v1/portal/vorgaenge/'
+SALDO_URL = '/api/v1/portal/personenkonto/saldo/'
+FAELLIGKEITEN_URL = '/api/v1/portal/faelligkeiten/'
 
 
 @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
@@ -166,3 +180,108 @@ class DatenisolationTest(APITestCase):
         self.person_b.refresh_from_db()
         self.assertEqual(self.person_a.ibans[0], 'DE89370400440532013000')
         self.assertEqual(self.person_b.ibans, [])
+
+    # ------------------------------------------------------------------
+    # Ergänzung (Portal-Erweiterung v1.1, Kap. 9.5 Test 1): dieselbe
+    # IDOR-Stichprobe über die fünf neuen Endpunkte, mit denselben zwei
+    # Eigentümern/WEGs aus ``setUp``. Fremde IDs werden hier bewusst dort
+    # mitgeschickt, wo der jeweilige Endpunkt sie gar nicht vorsieht.
+    # ------------------------------------------------------------------
+
+    def _mitarbeiter(self, username='iso-erweiterung-tester'):
+        return get_user_model().objects.create_user(username=username, password='x')
+
+    def _typ(self, code='iso-erweiterung-typ'):
+        return VorgangTyp.objects.create(
+            code=code, bezeichnung='Mängelmeldung',
+            portal_erstellbar=True, aktiv=True,
+        )
+
+    def test_vorgaenge_liste_ignoriert_fremde_id_als_query_parameter(self):
+        mitarbeiter = self._mitarbeiter()
+        typ = self._typ()
+        fremder_vorgang = vorgang_service.erstelle_vorgang(
+            typ=typ, betreff='Anliegen von B', erstellt_von=mitarbeiter,
+            objekt=self.weg_b, einheit=self.einheit_b, portal_sichtbar=True,
+        )
+        response = self.client.get(VORGAENGE_URL, {
+            'einheit_id': str(self.einheit_b.id),
+            'objekt_id': str(self.weg_b.id),
+            'person_id': str(self.person_b.id),
+            'typ_id': str(typ.id),
+        })
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        ids = {eintrag['id'] for eintrag in response.data}
+        self.assertNotIn(str(fremder_vorgang.id), ids)
+
+    def test_vorgang_detail_mit_fremder_id_im_pfad_liefert_404(self):
+        mitarbeiter = self._mitarbeiter()
+        typ = self._typ()
+        fremder_vorgang = vorgang_service.erstelle_vorgang(
+            typ=typ, betreff='Anliegen von B', erstellt_von=mitarbeiter,
+            objekt=self.weg_b, einheit=self.einheit_b, portal_sichtbar=True,
+        )
+        response = self.client.get(f'/api/v1/portal/vorgaenge/{fremder_vorgang.id}/')
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_vorgang_anlage_mit_fremder_einheit_id_im_body_scheitert(self):
+        typ = self._typ()
+        anzahl_vorher = Vorgang.objects.count()
+        response = self.client.post(VORGAENGE_URL, {
+            'typ_id': str(typ.id),
+            'betreff': 'Fremdzugriff über Einheit',
+            'einheit_id': str(self.einheit_b.id),
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(Vorgang.objects.count(), anzahl_vorher)
+
+    def test_vorgang_anlage_ignoriert_fremde_person_id_im_body(self):
+        """``PortalVorgangCreateSerializer`` kennt kein ``person``/``person_id``
+        — eine trotzdem mitgeschickte fremde ID darf den neuen Vorgang nicht
+        Eigentümer B zuordnen."""
+        typ = self._typ()
+        response = self.client.post(VORGAENGE_URL, {
+            'typ_id': str(typ.id),
+            'betreff': 'Eigener Vorgang mit fremder Person im Body',
+            'einheit_id': str(self.einheit_a.id),
+            'person_id': str(self.person_b.id),
+            'person': str(self.person_b.id),
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        vorgang = Vorgang.objects.get(id=response.data['id'])
+        self.assertEqual(vorgang.person_id, self.person_a.id)
+
+    def test_saldo_ignoriert_fremde_id_als_query_parameter(self):
+        """``kontonummer`` allein ist NICHT objektübergreifend eindeutig
+        (unique_together mit ``objekt``) — Isolation wird deshalb über die
+        Objekt-Zugehörigkeit geprüft, nicht über die reine Kontonummer."""
+        ev_b = EigentumsVerhaeltnis.objects.get(person=self.person_b, einheit=self.einheit_b)
+        pk_b = Personenkonto.objects.get(vertrag=ev_b)
+        response = self.client.get(SALDO_URL, {
+            'person_id': str(self.person_b.id),
+            'personenkonto_id': str(pk_b.id),
+            'objekt_id': str(self.weg_b.id),
+        })
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        objekt_ids = {eintrag['objekt_id'] for eintrag in response.data}
+        self.assertNotIn(str(self.weg_b.id), objekt_ids)
+        self.assertEqual(objekt_ids, {str(self.weg_a.id)})
+
+    def test_faelligkeiten_ignoriert_fremde_id_als_query_parameter(self):
+        mitarbeiter = self._mitarbeiter('iso-faelligkeiten-tester')
+        ev_b = EigentumsVerhaeltnis.objects.get(person=self.person_b, einheit=self.einheit_b)
+        HausgeldSollstellung.objects.create(
+            objekt=self.weg_b, eigentumsverhaeltnis=ev_b, erstellt_von=mitarbeiter,
+            sollstellungs_typ='hausgeld', periode=date(2030, 1, 1),
+            faellig_am=date(2030, 1, 5), opos_nr='ISO-B-0001',
+            soll_betrag='100.00', status_cached='offen',
+        )
+        response = self.client.get(FAELLIGKEITEN_URL, {
+            'person_id': str(self.person_b.id),
+            'eigentumsverhaeltnis_id': str(ev_b.id),
+            'objekt_id': str(self.weg_b.id),
+        })
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 0)
+        self.assertEqual(response.data['results'], [])
