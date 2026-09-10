@@ -263,6 +263,41 @@ class VerbuchungsVorzeichenTest(TestCase):
         self.assertEqual(b.haben_konto_id, self.bank_konto.id)
         self.assertEqual(b.betrag, Decimal('100.00'))
 
+    def test_ruecklagen_bestandskonto_099xx_buchbar(self):
+        """Zinsen, KESt, Soli und Bankgebühren auf dem Rücklagen-Bankkonto
+        gehören gegen das Bestandskonto der Rücklage — trotz
+        direktes_buchen=False."""
+        for nr in ('09911', '09931'):
+            bestandskonto = Konto.objects.create(
+                wirtschaftsjahr=self.wj, kontonummer=nr,
+                kontoname=f'Rücklagenbestandskonto {nr}',
+                kontoart='standard', direktes_buchen=False,
+            )
+            ku = Kontoumsatz.objects.create(
+                objekt=self.objekt, bankkonto=self.bankkonto,
+                sha256_hash=f'h_{nr}',
+                betrag=Decimal('84.07'), buchungsdatum=date(2026, 1, 15),
+            )
+            b = verbuche(ku, verbucht_von=self.user, gegenkonto=bestandskonto)
+            # Habenzinsen: Geldeingang → Bank im Soll, Bestandskonto im Haben
+            self.assertEqual(b.haben_konto_id, bestandskonto.id)
+            self.assertEqual(b.soll_konto_id, self.bank_konto.id)
+
+    def test_konto_ausserhalb_des_ruecklagen_bereichs_bleibt_gesperrt(self):
+        """09910 gibt es nicht (Suffix .910 ist nie vergeben), 09932 auch nicht."""
+        for nr in ('09910', '09932'):
+            konto = Konto.objects.create(
+                wirtschaftsjahr=self.wj, kontonummer=nr, kontoname=f'K {nr}',
+                kontoart='standard', direktes_buchen=False,
+            )
+            ku = Kontoumsatz.objects.create(
+                objekt=self.objekt, bankkonto=self.bankkonto,
+                sha256_hash=f'h_grenze_{nr}',
+                betrag=Decimal('-10.00'), buchungsdatum=date(2026, 1, 15),
+            )
+            with self.assertRaises(ValidationError):
+                verbuche(ku, verbucht_von=self.user, gegenkonto=konto)
+
     def test_bereits_verbuchter_umsatz_wirft_fehler(self):
         ku = Kontoumsatz.objects.create(
             objekt=self.objekt, bankkonto=self.bankkonto,

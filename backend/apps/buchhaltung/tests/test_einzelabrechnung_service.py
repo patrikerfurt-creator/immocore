@@ -24,6 +24,7 @@ from apps.buchhaltung.services.jahresabrechnung.einzelabrechnung_service import 
     berechne_alle_einzelabrechnungen,
     berechne_einzelabrechnung,
     berechne_hausgeld_soll,
+    berechne_rueckstand_ruecklage,
     hat_eigentuemerwechsel_im_wj,
 )
 from apps.konten.models import Konto
@@ -320,3 +321,78 @@ class RuecklagenJsonTest(EinzelAbrechnungServiceTestBase):
         r = ea.ruecklagen[0]
         self.assertEqual(r['endbestand'], '10000.00')
         self.assertEqual(r['anteil_eigentuemer'], '3000.00')  # × MEA 0,3
+        # Der Umsatz liegt VOR WJ-Beginn und ist damit der Anfangsbestand —
+        # ohne Bewegung im WJ deckt sich der berechnete Endbestand mit dem
+        # Bankauszug, ein Klärungsfall entsteht nicht. Den Klärungsfall selbst
+        # deckt test_ruecklagen_ausweis.KlaerungsfallTest ab.
+        self.assertEqual(r['endbestand_berechnet'], '10000.00')
+        self.assertEqual(r['abweichung'], '0.00')
+        self.assertFalse(r['klaerungsfall'])
+        # Kap. 4.5-Ergänzung: kein 911-Split in diesem Testaufbau → kein Rückstand
+        self.assertEqual(r['rueckstand_zufuehrung'], '0')
+
+    def test_ruecklagen_json_mit_rueckstand(self):
+        """Kap. 4.5-Ergänzung: Rückstände auf die Erhaltungsrücklage im JSON."""
+        from apps.buchhaltung.models import Buchungsart, SollstellungSplit
+        Bankkonto.objects.create(
+            objekt=self.objekt, konto_typ='ruecklage',
+            bezeichnung='Rücklage 1', reihenfolge=1)
+        ba_911, _ = Buchungsart.objects.get_or_create(
+            nr='911',
+            defaults=dict(bezeichnung='BA 911', ruecklagen_relevant=True,
+                          bankkonto_typ='ruecklage_nach_index'),
+        )
+        ss = self._create_soll(self.ev1, '50.00', date(2025, 1, 1))
+        SollstellungSplit.objects.create(
+            sollstellung=ss, ba=ba_911, betrag=Decimal('50.00'),
+            ist_betrag_split=Decimal('20.00'),
+        )
+        ea = berechne_einzelabrechnung(self.ja, self.e1)
+        r = ea.ruecklagen[0]
+        self.assertEqual(r['rueckstand_zufuehrung'], '30.00')
+
+
+class RueckstandRuecklageTest(EinzelAbrechnungServiceTestBase):
+    """Kap. 4.5-Ergänzung: Rückstände auf die Erhaltungsrücklage sind auszuweisen."""
+
+    def _ba_911(self):
+        from apps.buchhaltung.models import Buchungsart
+        ba, _ = Buchungsart.objects.get_or_create(
+            nr='911',
+            defaults=dict(bezeichnung='BA 911', ruecklagen_relevant=True,
+                          bankkonto_typ='ruecklage_nach_index'),
+        )
+        return ba
+
+    def _split(self, ev, betrag, ist_betrag, periode):
+        from apps.buchhaltung.models import SollstellungSplit
+        ss = self._create_soll(ev, betrag, periode)
+        return SollstellungSplit.objects.create(
+            sollstellung=ss, ba=self._ba_911(), betrag=Decimal(betrag),
+            ist_betrag_split=Decimal(ist_betrag),
+        )
+
+    def test_kein_rueckstand_bei_voller_zahlung(self):
+        self._split(self.ev1, '50.00', '50.00', date(2025, 1, 1))
+        self.assertEqual(
+            berechne_rueckstand_ruecklage(self.ev1, '911', self.wj), Decimal('0.00'))
+
+    def test_rueckstand_bei_teilzahlung_kumuliert_ueber_perioden(self):
+        self._split(self.ev1, '50.00', '20.00', date(2025, 1, 1))
+        self._split(self.ev1, '50.00', '0.00', date(2025, 2, 1))
+        self.assertEqual(
+            berechne_rueckstand_ruecklage(self.ev1, '911', self.wj), Decimal('80.00'))
+
+    def test_andere_einheit_nicht_vermischt(self):
+        self._split(self.ev1, '50.00', '0.00', date(2025, 1, 1))
+        self.assertEqual(
+            berechne_rueckstand_ruecklage(self.ev2, '911', self.wj), Decimal('0.00'))
+
+    def test_andere_ba_nr_nicht_vermischt(self):
+        self._split(self.ev1, '50.00', '0.00', date(2025, 1, 1))
+        self.assertEqual(
+            berechne_rueckstand_ruecklage(self.ev1, '912', self.wj), Decimal('0.00'))
+
+    def test_ohne_splits_kein_rueckstand(self):
+        self.assertEqual(
+            berechne_rueckstand_ruecklage(self.ev1, '911', self.wj), Decimal('0'))

@@ -23,6 +23,7 @@ from django.db.models import Q, Sum
 from apps.buchhaltung.models import (
     Buchung,
     Kontoumsatz,
+    SollstellungSplit,
     SollstellungZahlung,
     WirtschaftsplanRuecklage,
 )
@@ -34,12 +35,25 @@ from .verteilerschluessel_service import mea_anteil
 
 ABWEICHUNGS_TOLERANZ = Decimal('0.01')
 
+# Rücklagen-Nummern I…XXI (Unterkonto-Suffix .911–.931, Spec Kap. 3.2)
+_ROEMISCH = (
+    'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI',
+    'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX', 'XXI',
+)
+
+
+def ruecklagen_nummer_roemisch(reihenfolge: int) -> str:
+    """Rücklagen-Index → römische Nummer (1 → 'I'); außerhalb 1–21 die Zahl."""
+    if 1 <= reihenfolge <= len(_ROEMISCH):
+        return _ROEMISCH[reihenfolge - 1]
+    return str(reihenfolge)
+
 
 def ruecklagen_uebersicht(objekt: Objekt, wj: Wirtschaftsjahr) -> list:
     """
     Tabelle gemäß Kap. 4.5, ein Eintrag je Rücklagen-Bankkonto:
 
-    {'bankkonto_id', 'bezeichnung', 'ba_nr',
+    {'bankkonto_id', 'bezeichnung', 'ba_nr', 'suffix', 'nummer_roemisch',
      'anfangsbestand', 'zufuehrungen', 'entnahmen',
      'endbestand_berechnet', 'endbestand_bank',
      'abweichung', 'klaerungsfall'}
@@ -63,6 +77,10 @@ def ruecklagen_uebersicht(objekt: Objekt, wj: Wirtschaftsjahr) -> list:
             'bankkonto_id': str(bk.id),
             'bezeichnung': bk.bezeichnung,
             'ba_nr': ba_nr,
+            # Ausweis-Metadaten für den PDF-Rücklagenspiegel (Spec Kap. 3.2/4):
+            # Auflistung je Rücklage in der Reihenfolge I, II, III …
+            'suffix': ba_nr,
+            'nummer_roemisch': ruecklagen_nummer_roemisch(bk.reihenfolge),
             'anfangsbestand': anfangsbestand,
             'zufuehrungen': zufuehrungen,
             'entnahmen': entnahmen,
@@ -74,6 +92,63 @@ def ruecklagen_uebersicht(objekt: Objekt, wj: Wirtschaftsjahr) -> list:
             'zufuehrung_plan': plan.betrag if plan else None,
         })
     return rows
+
+
+def ruecklagen_sollstellungen_je_einheit(objekt: Objekt, wj: Wirtschaftsjahr,
+                                        ba_nr: str) -> list:
+    """
+    Rücklagen-Sollstellungen aus dem Nebenbuch, je Wohnung für das WJ summiert.
+
+        SAVO   Σ betrag der Saldovortrags-Splits (Sollstellung mit BA 99) auf
+               dieser Abrechnungsart — der Anfangssaldo des Eigentümers.
+               Vorzeichenbehaftet: positiv = Eigentümer schuldet.
+        Soll   Σ betrag der laufenden Hausgeld-Splits der BA 91x
+        Haben  Σ ist_betrag_split über beide Arten — tatsächlich gezahlt,
+               also auch die Tilgung eines Saldovortrags
+        Saldo  SAVO + Soll − Haben — offener Rückstand der Wohnung
+
+    Nur Sollstellungen mit Periode im Wirtschaftsjahr; stornierte bleiben
+    außen vor. Ersetzt die frühere chronologische Buchungsliste: Entnahmen
+    sind Sachkontenbuchungen ohne Wohnungsbezug und lassen sich hier nicht
+    ausweisen — sie stehen weiter in der Entnahmen-Spalte des Spiegels.
+
+    Rückgabe je Zeile: {'einheit_nr', 'savo', 'soll', 'haben', 'saldo'},
+    sortiert nach Einheitennummer.
+    """
+    EINHEIT = 'sollstellung__eigentumsverhaeltnis__einheit__einheit_nr'
+    IST_SAVO = Q(sollstellung__sollstellungs_typ='saldovortrag')
+    IST_HAUSGELD = Q(sollstellung__sollstellungs_typ='hausgeld')
+    rows = (
+        SollstellungSplit.objects
+        .filter(
+            sollstellung__objekt=objekt,
+            sollstellung__sollstellungs_typ__in=('hausgeld', 'saldovortrag'),
+            sollstellung__periode__gte=wj.beginn_datum,
+            sollstellung__periode__lte=wj.ende_datum,
+            sollstellung__storniert_am__isnull=True,
+            ba__nr=ba_nr,
+        )
+        .values(EINHEIT)
+        .annotate(
+            savo=Sum('betrag', filter=IST_SAVO),
+            soll=Sum('betrag', filter=IST_HAUSGELD),
+            haben=Sum('ist_betrag_split'),
+        )
+        .order_by(EINHEIT)
+    )
+    zeilen = []
+    for r in rows:
+        savo = r['savo'] or Decimal('0')
+        soll = r['soll'] or Decimal('0')
+        haben = r['haben'] or Decimal('0')
+        zeilen.append({
+            'einheit_nr': r[EINHEIT],
+            'savo': savo,
+            'soll': soll,
+            'haben': haben,
+            'saldo': savo + soll - haben,
+        })
+    return zeilen
 
 
 def wirtschaftsplan_ruecklage_gesamt(wj: Wirtschaftsjahr):

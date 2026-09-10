@@ -18,6 +18,9 @@ from django.template.loader import render_to_string
 import weasyprint
 
 from apps.buchhaltung.models import EinzelAbrechnung, HausgeldSollstellung, SollstellungZahlung
+from apps.buchhaltung.services.jahresabrechnung.ruecklagen_service import (
+    ruecklagen_sollstellungen_je_einheit,
+)
 from apps.dokumente.models import Dokument
 from apps.objekte.models import Verteilerschluessel
 
@@ -31,6 +34,42 @@ def _d(v) -> Decimal:
     return Decimal(str(v)) if v is not None and v != '' else Decimal('0')
 
 
+def _pk_nummer(ev) -> str:
+    """
+    Personenkonto-Nummer eines Eigentumsverhältnisses, '' wenn keins existiert.
+
+    Reverse-OneToOne: fehlt das Personenkonto, wirft der Zugriff
+    RelatedObjectDoesNotExist — das erbt von AttributeError, getattr fängt es ab.
+    """
+    pk = getattr(ev, 'personenkonto', None)
+    return pk.kontonummer if pk is not None else ''
+
+
+def _zahlungs_bemerkung(z, ba) -> str:
+    """
+    Zeilentext im Kontoauszug der Zahlungen: „Hausgeld 01/2025 - Wohnung 1 - 0007".
+
+    Aus den Stammdaten der Sollstellung gebildet statt aus dem gespeicherten
+    Buchungstext: der trug die Objekt-Kurzbezeichnung an dritter Stelle, die
+    hier nichts beiträgt — auf der Abrechnung eines Objekts ist das Objekt
+    ohnehin bekannt. Die Personenkontonummer identifiziert stattdessen den
+    Zahler. Ableiten statt nachträglich umschreiben, damit auch bereits
+    festgeschriebene Buchungen richtig erscheinen.
+
+    Die Nummer kommt je Zahlung aus dem Eigentumsverhältnis der Sollstellung.
+    Nach einem Eigentümerwechsel stehen in derselben Tabelle deshalb
+    unterschiedliche Personenkontonummern.
+    """
+    ss = z.sollstellung
+    ev = ss.eigentumsverhaeltnis
+    kopf = ' '.join(t for t in (
+        ba.bezeichnung if ba else 'Zahlung',
+        ss.periode.strftime('%m/%Y') if ss.periode else '',
+    ) if t)
+    teile = [kopf, ev.einheit.einheit_nr, _pk_nummer(ev)]
+    return ' - '.join(t for t in teile if t)
+
+
 def _pos_row(p: dict, vs_names: dict) -> dict:
     """Baut eine Kostenzeile für die Einzelabrechnung (Muster Seite 2)."""
     return {
@@ -41,6 +80,111 @@ def _pos_row(p: dict, vs_names: dict) -> dict:
         'umlagebasis': _fmt(p['gesamt']) if p.get('gesamt') else '',
         'umlageanteil': _fmt(p['wert']) if p.get('wert') else '',
         'ihr_anteil': _fmt(p['betrag']),
+    }
+
+
+def _ruecklagenspiegel_kontext(ea: EinzelAbrechnung, objekt, wj) -> dict:
+    """
+    Voller Rücklagen-Ausweis je Rücklage fürs PDF (HGA-Spec Kap. 4.5) —
+    ergänzt die aggregierte Zuführungszeile in der Kostenaufstellung um
+    Anfangsbestand, Entnahmen und Endbestand je einzelner Rücklage, inkl.
+    Klärungsfall-Hinweis bei Abweichung zum Bankauszug.
+
+    Kap. 4.5-Ergänzung: je Rücklage zusätzlich
+    - der Rückstand des Eigentümers auf die Zuführung (rueckstand_zufuehrung —
+      Rückstände auf die Erhaltungsrücklage sind auszuweisen), und
+    - die Sollstellungen je Wohnung (sollstellungen) — Saldovortrag, Soll,
+      Haben und Saldo der Rücklagen-Sollstellungen des WJ aus dem Nebenbuch,
+      mit Summenzeile.
+
+    Quelle: EinzelAbrechnung.ruecklagen (bereits von
+    einzelabrechnung_service._berechne_einheit() befüllt) für die Summen- und
+    Rückstandswerte; ruecklagen_service.ruecklagen_sollstellungen_je_einheit()
+    für die Aufstellung je Wohnung (objektweit, nicht nur die eigene Einheit).
+    """
+    zeilen = []
+    summe_endbestand = Decimal('0')
+    summe_endbestand_ber = Decimal('0')
+    summe_anteil = Decimal('0')
+    summe_anteil_ber = Decimal('0')
+    summe_rueckstand = Decimal('0')
+    klaerungsfall = False
+    mea_bruch = ''
+    for r in ea.ruecklagen:
+        endbestand = _d(r.get('endbestand'))
+        # Zweite Basis (Spec Kap. 3.1): rechnerischer Endbestand aus
+        # Anfangsbestand + Zuführungen - Entnahmen. Deckungsgleich mit dem
+        # Bankauszug, solange kein Klärungsfall vorliegt.
+        endbestand_ber = _d(r.get('endbestand_berechnet'))
+        anteil = _d(r.get('anteil_eigentuemer'))
+        anteil_ber = _d(r.get('anteil_eigentuemer_berechnet'))
+        rueckstand = _d(r.get('rueckstand_zufuehrung'))
+        summe_endbestand += endbestand
+        summe_endbestand_ber += endbestand_ber
+        summe_anteil += anteil
+        summe_anteil_ber += anteil_ber
+        summe_rueckstand += rueckstand
+        if r.get('klaerungsfall'):
+            klaerungsfall = True
+        if not mea_bruch:
+            mea_bruch = r.get('mea_anteil_einheit') or ''
+
+        sollstellungen = []
+        sollstellungen_summe = None
+        if r.get('ba_nr'):
+            ss = ruecklagen_sollstellungen_je_einheit(objekt, wj, r['ba_nr'])
+            sollstellungen = [{
+                'einheit_nr': s['einheit_nr'],
+                'savo': _fmt(s['savo']),
+                'soll': _fmt(s['soll']),
+                'haben': _fmt(s['haben']),
+                'saldo': _fmt(s['saldo']),
+            } for s in ss]
+            if ss:
+                sollstellungen_summe = {
+                    'savo': _fmt(sum(s['savo'] for s in ss)),
+                    'soll': _fmt(sum(s['soll'] for s in ss)),
+                    'haben': _fmt(sum(s['haben'] for s in ss)),
+                    'saldo': _fmt(sum(s['saldo'] for s in ss)),
+                }
+
+        zeilen.append({
+            'bezeichnung': r.get('bezeichnung', ''),
+            'nummer_roemisch': r.get('nummer_roemisch', ''),
+            'suffix': r.get('suffix', r.get('ba_nr', '')),
+            'mea_anteil_einheit': r.get('mea_anteil_einheit', ''),
+            'anfangsbestand': _fmt(r.get('anfangsbestand', '0')),
+            'zufuehrungen': _fmt(r.get('zufuehrungen', '0')),
+            'entnahmen': _fmt(r.get('entnahmen', '0')),
+            'endbestand': _fmt(endbestand),
+            'endbestand_berechnet': _fmt(endbestand_ber),
+            'anteil_eigentuemer': _fmt(anteil),
+            'anteil_eigentuemer_berechnet': _fmt(anteil_ber),
+            'rueckstand_zufuehrung': _fmt(rueckstand),
+            'hat_rueckstand': rueckstand > 0,
+            'klaerungsfall': bool(r.get('klaerungsfall')),
+            'fehler': r.get('fehler'),
+            'sollstellungen': sollstellungen,
+            'sollstellungen_summe': sollstellungen_summe,
+        })
+    return {
+        'ruecklagenspiegel': zeilen,
+        # Summenzeile nur bei mehr als einer Rücklage (Spec Kap. 3.2 — bei
+        # genau einer wäre sie redundant). Abgeleitet statt persistiert: der
+        # Snapshot in EinzelAbrechnung.ruecklagen trägt alle Einzelwerte, die
+        # Summe ist daraus jederzeit reproduzierbar.
+        'ruecklagenspiegel_summe': (
+            {
+                'endbestand': _fmt(summe_endbestand),
+                'endbestand_berechnet': _fmt(summe_endbestand_ber),
+                'anteil_eigentuemer': _fmt(summe_anteil),
+                'anteil_eigentuemer_berechnet': _fmt(summe_anteil_ber),
+                'rueckstand_zufuehrung': _fmt(summe_rueckstand),
+            }
+            if len(zeilen) > 1 else None
+        ),
+        'ruecklagenspiegel_klaerungsfall': klaerungsfall,
+        'ruecklagenspiegel_mea': mea_bruch,
     }
 
 
@@ -131,7 +275,11 @@ def render_einzelabrechnung_pdf(ea: EinzelAbrechnung, entwurf: bool = True) -> b
             buchung__buchungsdatum__lte=wj.ende_datum,
         )
         .exclude(buchung__status='storniert')
-        .select_related('split__ba', 'buchung')
+        .select_related(
+            'split__ba', 'buchung',
+            'sollstellung__eigentumsverhaeltnis__einheit',
+            'sollstellung__eigentumsverhaeltnis__personenkonto',
+        )
         .order_by('split__ba__nr', 'buchung__buchungsdatum')
     )
     ka_gruppen = {}
@@ -145,7 +293,7 @@ def render_einzelabrechnung_pdf(ea: EinzelAbrechnung, entwurf: bool = True) -> b
         })
         g['zeilen'].append({
             'datum': z.buchung.buchungsdatum.strftime('%d.%m.%Y'),
-            'bemerkung': z.buchung.buchungstext or 'Zahlungseingang',
+            'bemerkung': _zahlungs_bemerkung(z, ba),
             'betrag': _fmt(z.betrag),
         })
         g['summe'] += z.betrag
@@ -202,6 +350,7 @@ def render_einzelabrechnung_pdf(ea: EinzelAbrechnung, entwurf: bool = True) -> b
         'fehler_positionen': fehler_positionen,
         'hinweis_eigentuemerwechsel': ea.hinweis_eigentuemerwechsel,
     }
+    context.update(_ruecklagenspiegel_kontext(ea, objekt, wj))
     html = render_to_string('jahresabrechnung/einzelabrechnung.html', context)
     return weasyprint.HTML(string=html).write_pdf()
 
