@@ -26,7 +26,7 @@ Manuelle Korrekturen (Schritt 6 UI) sind Phase E — eine Neuberechnung
 from decimal import Decimal, ROUND_FLOOR, ROUND_HALF_UP
 
 from django.core.exceptions import ValidationError
-from django.db.models import Q, Sum
+from django.db.models import F, Q, Sum
 
 from apps.buchhaltung.models import (
     EinzelAbrechnung,
@@ -84,6 +84,27 @@ def berechne_ruecklagen_zufuehrung(ev: EigentumsVerhaeltnis, wj) -> Decimal:
         sollstellung__storniert_am__isnull=True,
         ba__bankkonto_typ='ruecklage_nach_index',
     ).aggregate(summe=Sum('betrag'))['summe'] or Decimal('0.00')
+
+
+def berechne_rueckstand_ruecklage(ev: EigentumsVerhaeltnis, ba_nr: str, wj) -> Decimal:
+    """
+    Rückstand des Eigentümers auf die Zuführung zu EINER Rücklage (BA 91x) zum
+    WJ-Ende: Soll (Sollstellungs-Split-Betrag) abzüglich tatsächlich gezahltem
+    Betrag (SollstellungSplit.ist_betrag_split), kumuliert über alle Perioden
+    bis WJ-Ende — analog zum objektweiten Hausgeldrückstand (pdf_service),
+    hier aber je Rücklagen-BA aufgeschlüsselt.
+
+    Rückstände auf die Erhaltungsrücklage sind gesondert auszuweisen
+    (Kap. 4.5-Ergänzung) — Zuführungen stecken zwar auch im allgemeinen
+    Hausgeld-Rückstand, aber dort nicht nach Rücklage getrennt.
+    """
+    return SollstellungSplit.objects.filter(
+        sollstellung__eigentumsverhaeltnis=ev,
+        sollstellung__sollstellungs_typ='hausgeld',
+        sollstellung__periode__lte=wj.ende_datum,
+        sollstellung__storniert_am__isnull=True,
+        ba__nr=ba_nr,
+    ).aggregate(s=Sum(F('betrag') - F('ist_betrag_split')))['s'] or Decimal('0')
 
 
 def aktueller_eigentuemer(einheit: Einheit, stichtag) -> EigentumsVerhaeltnis:
@@ -273,6 +294,16 @@ def _berechne_einheit(ja, einheit, wj, verteilung, ruecklagen) -> EinzelAbrechnu
             'zufuehrungen': str(r['zufuehrungen']),
             'entnahmen': str(r['entnahmen']),
             'endbestand': str(r['endbestand_bank']),
+            # Berechneter Endbestand + Klärungsfall-Flag (Kap. 4.5) — zusätzlich
+            # zum tatsächlichen Bankauszug-Endbestand oben, für den PDF-Rücklagenspiegel
+            # (siehe pdf_service._ruecklagenspiegel_kontext).
+            'endbestand_berechnet': str(r['endbestand_berechnet']),
+            'abweichung': str(r['abweichung']),
+            'klaerungsfall': r['klaerungsfall'],
+            # Rückstand des Eigentümers auf die Zuführung zu DIESER Rücklage
+            # (Kap. 4.5-Ergänzung: Rückstände auf die Erhaltungsrücklage sind
+            # auszuweisen) — siehe pdf_service._ruecklagenspiegel_kontext.
+            'rueckstand_zufuehrung': str(berechne_rueckstand_ruecklage(ev, r['ba_nr'], wj)),
         }
         try:
             anteil = mea_anteil(einheit, wj)

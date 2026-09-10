@@ -18,6 +18,7 @@ from django.template.loader import render_to_string
 import weasyprint
 
 from apps.buchhaltung.models import EinzelAbrechnung, HausgeldSollstellung, SollstellungZahlung
+from apps.buchhaltung.services.jahresabrechnung.ruecklagen_service import ruecklagen_buchungsliste
 from apps.dokumente.models import Dokument
 from apps.objekte.models import Verteilerschluessel
 
@@ -41,6 +42,76 @@ def _pos_row(p: dict, vs_names: dict) -> dict:
         'umlagebasis': _fmt(p['gesamt']) if p.get('gesamt') else '',
         'umlageanteil': _fmt(p['wert']) if p.get('wert') else '',
         'ihr_anteil': _fmt(p['betrag']),
+    }
+
+
+def _ruecklagenspiegel_kontext(ea: EinzelAbrechnung, objekt, wj) -> dict:
+    """
+    Voller Rücklagen-Ausweis je Rücklage fürs PDF (HGA-Spec Kap. 4.5) —
+    ergänzt die aggregierte Zuführungszeile in der Kostenaufstellung um
+    Anfangsbestand, Entnahmen und Endbestand je einzelner Rücklage, inkl.
+    Klärungsfall-Hinweis bei Abweichung zum Bankauszug.
+
+    Kap. 4.5-Ergänzung: je Rücklage zusätzlich
+    - der Rückstand des Eigentümers auf die Zuführung (rueckstand_zufuehrung —
+      Rückstände auf die Erhaltungsrücklage sind auszuweisen), und
+    - die objektweite Soll-/Haben-Buchungsliste (buchungen) — die einzelnen
+      Zuführungen/Entnahmen, nicht nur die Summenzeilen.
+
+    Quelle: EinzelAbrechnung.ruecklagen (bereits von
+    einzelabrechnung_service._berechne_einheit() befüllt) für die Summen- und
+    Rückstandswerte; ruecklagen_service.ruecklagen_buchungsliste() für die
+    Einzelbuchungen (objektweit, da Entnahmen keinen Eigentümerbezug haben).
+    """
+    zeilen = []
+    summe_endbestand = Decimal('0')
+    summe_anteil = Decimal('0')
+    summe_rueckstand = Decimal('0')
+    klaerungsfall = False
+    for r in ea.ruecklagen:
+        endbestand = _d(r.get('endbestand'))
+        anteil = _d(r.get('anteil_eigentuemer'))
+        rueckstand = _d(r.get('rueckstand_zufuehrung'))
+        summe_endbestand += endbestand
+        summe_anteil += anteil
+        summe_rueckstand += rueckstand
+        if r.get('klaerungsfall'):
+            klaerungsfall = True
+
+        buchungen = []
+        if r.get('ba_nr'):
+            for b in ruecklagen_buchungsliste(objekt, wj, r['ba_nr']):
+                buchungen.append({
+                    'datum': b['datum'].strftime('%d.%m.%Y'),
+                    'bezeichnung': b['bezeichnung'],
+                    'soll': _fmt(b['soll']) if b['soll'] else '',
+                    'haben': _fmt(b['haben']) if b['haben'] else '',
+                })
+
+        zeilen.append({
+            'bezeichnung': r.get('bezeichnung', ''),
+            'anfangsbestand': _fmt(r.get('anfangsbestand', '0')),
+            'zufuehrungen': _fmt(r.get('zufuehrungen', '0')),
+            'entnahmen': _fmt(r.get('entnahmen', '0')),
+            'endbestand': _fmt(endbestand),
+            'anteil_eigentuemer': _fmt(anteil),
+            'rueckstand_zufuehrung': _fmt(rueckstand),
+            'hat_rueckstand': rueckstand > 0,
+            'klaerungsfall': bool(r.get('klaerungsfall')),
+            'fehler': r.get('fehler'),
+            'buchungen': buchungen,
+        })
+    return {
+        'ruecklagenspiegel': zeilen,
+        'ruecklagenspiegel_summe': (
+            {
+                'endbestand': _fmt(summe_endbestand),
+                'anteil_eigentuemer': _fmt(summe_anteil),
+                'rueckstand_zufuehrung': _fmt(summe_rueckstand),
+            }
+            if len(zeilen) > 1 else None
+        ),
+        'ruecklagenspiegel_klaerungsfall': klaerungsfall,
     }
 
 
@@ -202,6 +273,7 @@ def render_einzelabrechnung_pdf(ea: EinzelAbrechnung, entwurf: bool = True) -> b
         'fehler_positionen': fehler_positionen,
         'hinweis_eigentuemerwechsel': ea.hinweis_eigentuemerwechsel,
     }
+    context.update(_ruecklagenspiegel_kontext(ea, objekt, wj))
     html = render_to_string('jahresabrechnung/einzelabrechnung.html', context)
     return weasyprint.HTML(string=html).write_pdf()
 

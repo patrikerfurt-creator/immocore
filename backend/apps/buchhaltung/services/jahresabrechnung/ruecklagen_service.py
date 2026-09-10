@@ -76,6 +76,69 @@ def ruecklagen_uebersicht(objekt: Objekt, wj: Wirtschaftsjahr) -> list:
     return rows
 
 
+def ruecklagen_buchungsliste(objekt: Objekt, wj: Wirtschaftsjahr, ba_nr: str) -> list:
+    """
+    Chronologische Soll-/Haben-Buchungsliste EINER Rücklage (Kap. 4.5-Ergänzung:
+    Aufschlüsselung der Zuführungen/Entnahmen als Einzelbuchungen, nicht nur
+    als Summenzeile).
+
+    Objektweit, nicht je Einheit: Entnahmen sind Sachkontenbuchungen ohne
+    Eigentümerbezug — ein Einheiten-Filter ist hier fachlich nicht möglich.
+    Der Anteil je Einheit ergibt sich weiterhin nur über den MEA-Anteil am
+    Endbestand (anteil_eigentuemer), nicht über diese Liste.
+
+        Haben (Zuführung)  Σ SollstellungZahlung je Einheit auf Splits mit
+                            der Rücklagen-BA (Nebenbuch, wie _zufuehrungen_nebenbuch)
+        Soll  (Entnahme)   Buchungen mit Rücklagen-Sachkonto im Haben
+                            (Hauptbuch, wie _entnahmen)
+
+    Rückgabe je Zeile: {'datum', 'typ' ('zufuehrung'/'entnahme'),
+    'bezeichnung', 'soll', 'haben'} — chronologisch sortiert.
+    """
+    zeilen = []
+
+    zufuehrungen = (
+        SollstellungZahlung.objects
+        .filter(
+            sollstellung__objekt=objekt,
+            split__ba__nr=ba_nr,
+            buchung__buchungsdatum__gte=wj.beginn_datum,
+            buchung__buchungsdatum__lte=wj.ende_datum,
+        )
+        .exclude(buchung__status='storniert')
+        .exclude(sollstellung__storniert_am__isnull=False)
+        .select_related('buchung', 'sollstellung__eigentumsverhaeltnis__einheit')
+        .order_by('buchung__buchungsdatum')
+    )
+    for z in zufuehrungen:
+        einheit = z.sollstellung.eigentumsverhaeltnis.einheit
+        zeilen.append({
+            'datum': z.buchung.buchungsdatum,
+            'typ': 'zufuehrung',
+            'bezeichnung': f"Zuführung Einheit {einheit.einheit_nr}",
+            'soll': Decimal('0'),
+            'haben': z.betrag,
+        })
+
+    entnahmen = (
+        buchungen_im_wj(objekt, wj)
+        .filter(haben_konto__abrechnungsart=ba_nr)
+        .exclude(haben_konto__kontonummer__startswith='41')
+        .order_by('buchungsdatum')
+    )
+    for b in entnahmen:
+        zeilen.append({
+            'datum': b.buchungsdatum,
+            'typ': 'entnahme',
+            'bezeichnung': b.buchungstext or 'Entnahme',
+            'soll': b.betrag,
+            'haben': Decimal('0'),
+        })
+
+    zeilen.sort(key=lambda z: z['datum'])
+    return zeilen
+
+
 def wirtschaftsplan_ruecklage_gesamt(wj: Wirtschaftsjahr):
     """Summe der geplanten Rücklagen-Zuführung (alle Rücklagen-BAs) für das WJ.
     None, wenn kein Planwert erfasst ist → Aufrufer fällt auf Ist-Werte zurück."""

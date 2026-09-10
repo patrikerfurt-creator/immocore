@@ -23,6 +23,7 @@ from apps.buchhaltung.models import (
 from apps.buchhaltung.services.jahresabrechnung.ruecklagen_service import (
     anteil_eigentuemer,
     pruefe_schritt5_blocker,
+    ruecklagen_buchungsliste,
     ruecklagen_uebersicht,
 )
 from apps.konten.models import Konto
@@ -230,6 +231,45 @@ class RuecklagenUebersichtTest(RuecklagenServiceTestBase):
         )
         rows = ruecklagen_uebersicht(self.objekt, self.wj)
         self.assertEqual(len(rows), 1)
+
+
+class RuecklagenBuchungslisteTest(RuecklagenServiceTestBase):
+    """Kap. 4.5-Ergänzung: Soll-/Haben-Buchungsliste je Rücklage (objektweit)."""
+
+    def test_leer_ohne_buchungen(self):
+        self.assertEqual(ruecklagen_buchungsliste(self.objekt, self.wj, '911'), [])
+
+    def test_zufuehrung_erscheint_als_haben(self):
+        self._create_zufuehrung('500.00', date(2025, 6, 15))
+        zeilen = ruecklagen_buchungsliste(self.objekt, self.wj, '911')
+        self.assertEqual(len(zeilen), 1)
+        self.assertEqual(zeilen[0]['typ'], 'zufuehrung')
+        self.assertEqual(zeilen[0]['haben'], Decimal('500.00'))
+        self.assertEqual(zeilen[0]['soll'], Decimal('0'))
+        self.assertEqual(zeilen[0]['datum'], date(2025, 6, 15))
+
+    def test_entnahme_erscheint_als_soll(self):
+        self._create_entnahme('200.00', date(2025, 7, 1))
+        zeilen = ruecklagen_buchungsliste(self.objekt, self.wj, '911')
+        self.assertEqual(len(zeilen), 1)
+        self.assertEqual(zeilen[0]['typ'], 'entnahme')
+        self.assertEqual(zeilen[0]['soll'], Decimal('200.00'))
+        self.assertEqual(zeilen[0]['haben'], Decimal('0'))
+
+    def test_chronologisch_sortiert_ueber_beide_typen(self):
+        self._create_entnahme('200.00', date(2025, 7, 1))
+        self._create_zufuehrung('500.00', date(2025, 6, 15))
+        zeilen = ruecklagen_buchungsliste(self.objekt, self.wj, '911')
+        self.assertEqual([z['datum'] for z in zeilen], [date(2025, 6, 15), date(2025, 7, 1)])
+        self.assertEqual([z['typ'] for z in zeilen], ['zufuehrung', 'entnahme'])
+
+    def test_zufuehrung_ausserhalb_wj_nicht_enthalten(self):
+        self._create_zufuehrung('500.00', date(2024, 6, 15))
+        self.assertEqual(ruecklagen_buchungsliste(self.objekt, self.wj, '911'), [])
+
+    def test_andere_ba_nr_nicht_vermischt(self):
+        self._create_zufuehrung('500.00', date(2025, 6, 15))
+        self.assertEqual(ruecklagen_buchungsliste(self.objekt, self.wj, '912'), [])
 
 
 class AnteilEigentuemerTest(RuecklagenServiceTestBase):

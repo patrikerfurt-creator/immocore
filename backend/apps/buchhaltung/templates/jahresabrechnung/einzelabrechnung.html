@@ -184,6 +184,76 @@
   </tbody>
 </table>
 
+{% if ruecklagenspiegel %}
+<div class="section-hd">Entwicklung der {% if ruecklagenspiegel|length > 1 %}Rücklagen{% else %}Rücklage{% endif %} — {{ einheit_nr }}</div>
+<table class="abr">
+  <thead>
+    <tr>
+      <th style="width:26%">Rücklage</th>
+      <th class="r" style="width:13%">Anfangsbestand</th>
+      <th class="r" style="width:13%">Zuführungen</th>
+      <th class="r" style="width:11%">Entnahmen</th>
+      <th class="r" style="width:11%">Endbestand</th>
+      <th class="r" style="width:13%">Rückstand Zuführung</th>
+      <th class="r" style="width:13%">Ihr Anteil</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in ruecklagenspiegel %}
+    <tr>
+      <td>{{ r.bezeichnung }}{% if r.klaerungsfall %} *{% endif %}</td>
+      <td class="r">{{ r.anfangsbestand }}</td>
+      <td class="r">{{ r.zufuehrungen }}</td>
+      <td class="r">{{ r.entnahmen }}</td>
+      <td class="r">{{ r.endbestand }}</td>
+      <td class="r">{{ r.rueckstand_zufuehrung }}{% if r.hat_rueckstand %} **{% endif %}</td>
+      <td class="r">{{ r.anteil_eigentuemer }}</td>
+    </tr>
+    {% if r.fehler %}
+    <tr><td colspan="7" style="font-size:7.5pt;color:#999;">{{ r.fehler }}</td></tr>
+    {% endif %}
+    {% endfor %}
+    {% if ruecklagenspiegel_summe %}
+    <tr class="sub">
+      <td colspan="4">Summe aller Rücklagen</td>
+      <td class="r">{{ ruecklagenspiegel_summe.endbestand }}</td>
+      <td class="r">{{ ruecklagenspiegel_summe.rueckstand_zufuehrung }}</td>
+      <td class="r">{{ ruecklagenspiegel_summe.anteil_eigentuemer }}</td>
+    </tr>
+    {% endif %}
+  </tbody>
+</table>
+{% if ruecklagenspiegel_klaerungsfall %}
+<div class="fehler">* Der berechnete Endbestand weicht vom Bankauszug zum {{ zeitraum_bis }} ab — wird durch die Verwaltung geklärt.</div>
+{% endif %}
+{% for r in ruecklagenspiegel %}
+{% if r.hat_rueckstand %}
+<div class="fehler">** Auf die Zuführung zur {{ r.bezeichnung }} besteht zum {{ zeitraum_bis }} ein Rückstand in Höhe von {{ r.rueckstand_zufuehrung }} EUR.</div>
+{% endif %}
+{% endfor %}
+
+{% for r in ruecklagenspiegel %}
+{% if r.buchungen %}
+<div class="ka-title">Buchungen — {{ r.bezeichnung }}</div>
+<table class="abr">
+  <thead>
+    <tr>
+      <th style="width:18%">Datum</th>
+      <th style="width:52%">Bezeichnung</th>
+      <th class="r" style="width:15%">Soll (Entnahme)</th>
+      <th class="r" style="width:15%">Haben (Zuführung)</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for b in r.buchungen %}
+    <tr><td>{{ b.datum }}</td><td>{{ b.bezeichnung }}</td><td class="r">{{ b.soll }}</td><td class="r">{{ b.haben }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endfor %}
+{% endif %}
+
 {% if fehler_positionen %}
 <div class="fehler">
   <b>Hinweis:</b> {{ fehler_positionen|length }} Kostenposition(en) konnten nicht verteilt werden
