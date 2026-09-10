@@ -142,14 +142,28 @@ def verbuche(ku, verbucht_von,
     # lastschrift → 13650).
     _gk_nr = int(gk.kontonummer) if gk.kontonummer.isdigit() else None
     CLEARING_KONTEN = {'13600', '13650'}
+    # Rücklagen-Bestandskonten 09911–09931 (eines je Rücklage, Suffix
+    # .911–.931): Jede Bewegung auf einem Rücklagen-Bankkonto — Habenzinsen,
+    # Kapitalertragsteuer, Solidaritätszuschlag, Bankgebühren — gehört gegen
+    # das Bestandskonto der Rücklage, damit Bankkonto und Bestandskonto
+    # deckungsgleich bleiben und der Rücklagen-Ausweis aufgeht. Das ist wie
+    # bei 13600/13650 eine Buchung über die Bankseite, nicht das direkte
+    # Bebuchen eines Sachkontos — deshalb hier statt über direktes_buchen:
+    # das Flag würde die Konten auch in die Rechnungs-Freigabe spülen.
+    ist_ruecklagen_bestandskonto = (
+        gk.kontonummer.startswith('099')
+        and _gk_nr is not None
+        and 9911 <= _gk_nr <= 9931
+    )
     if not (gk.direktes_buchen
             or gk.kontonummer.startswith('70')
             or (_gk_nr is not None and 50000 <= _gk_nr <= 55999)
-            or gk.kontonummer in CLEARING_KONTEN):
+            or gk.kontonummer in CLEARING_KONTEN
+            or ist_ruecklagen_bestandskonto):
         raise ValidationError(
             f"Konto {gk.kontonummer} ist nicht direkt buchbar "
             f"(direktes_buchen=False, kein Kreditorkonto 70xxx, außerhalb 50000–55999, "
-            f"kein Verrechnungskonto 13600/13650)."
+            f"kein Verrechnungskonto 13600/13650, kein Rücklagen-Bestandskonto 099xx)."
         )
     if ku.objekt:
         from apps.konten.models import Konto
