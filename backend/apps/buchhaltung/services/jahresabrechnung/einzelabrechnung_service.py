@@ -46,6 +46,7 @@ from .verteilerschluessel_service import (
     aktiver_vs_code,
     alle_werte_und_gesamt,
     mea_anteil,
+    mea_wert_und_gesamt,
 )
 
 ZWEI_STELLEN = Decimal('0.01')
@@ -84,6 +85,13 @@ def berechne_ruecklagen_zufuehrung(ev: EigentumsVerhaeltnis, wj) -> Decimal:
         sollstellung__storniert_am__isnull=True,
         ba__bankkonto_typ='ruecklage_nach_index',
     ).aggregate(summe=Sum('betrag'))['summe'] or Decimal('0.00')
+
+
+def _mea_bruch(wert, gesamt) -> str:
+    """MEA als lesbarer Bruch „45/1000" (Spec Kap. 4: mea_anteil_einheit)."""
+    def _z(v) -> str:
+        return format(Decimal(str(v)).normalize(), 'f')
+    return '%s/%s' % (_z(wert), _z(gesamt))
 
 
 def berechne_rueckstand_ruecklage(ev: EigentumsVerhaeltnis, ba_nr: str, wj) -> Decimal:
@@ -304,12 +312,25 @@ def _berechne_einheit(ja, einheit, wj, verteilung, ruecklagen) -> EinzelAbrechnu
             # (Kap. 4.5-Ergänzung: Rückstände auf die Erhaltungsrücklage sind
             # auszuweisen) — siehe pdf_service._ruecklagenspiegel_kontext.
             'rueckstand_zufuehrung': str(berechne_rueckstand_ruecklage(ev, r['ba_nr'], wj)),
+            # Ausweis-Metadaten fürs PDF (Spec Kap. 4)
+            'suffix': r.get('suffix', r['ba_nr']),
+            'nummer_roemisch': r.get('nummer_roemisch', ''),
         }
         try:
             anteil = mea_anteil(einheit, wj)
+            # Anteil auf BEIDEN Basen (Spec Kap. 3.1 vs. Ist-Verhalten):
+            # anteil_eigentuemer  -> Bankauszug-Endbestand, real vorhandenes
+            #                        Geld und damit der maßgebliche Wert;
+            # ..._berechnet       -> Anfangsbestand + Zuführungen - Entnahmen.
+            # Ohne Klärungsfall identisch, im Klärungsfall zeigt das PDF beide.
             eintrag['anteil_eigentuemer'] = str(
                 (r['endbestand_bank'] * anteil).quantize(ZWEI_STELLEN, rounding=ROUND_HALF_UP)
             )
+            eintrag['anteil_eigentuemer_berechnet'] = str(
+                (r['endbestand_berechnet'] * anteil).quantize(ZWEI_STELLEN, rounding=ROUND_HALF_UP)
+            )
+            wert, gesamt = mea_wert_und_gesamt(einheit, wj)
+            eintrag['mea_anteil_einheit'] = _mea_bruch(wert, gesamt)
         except VerteilerschluesselFehler as exc:
             eintrag['fehler'] = exc.messages[0]
         ruecklagen_json.append(eintrag)

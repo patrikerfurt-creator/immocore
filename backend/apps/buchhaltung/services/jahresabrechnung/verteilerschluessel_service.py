@@ -101,6 +101,17 @@ def mea_anteil(einheit: Einheit, wj: Wirtschaftsjahr) -> Decimal:
     return anteil_einheit_fuer_vs_code('010', einheit, wj)
 
 
+def mea_wert_und_gesamt(einheit: Einheit, wj: Wirtschaftsjahr):
+    """
+    MEA der Einheit und Objekt-Gesamt-MEA (VS 010) als (wert, gesamt).
+
+    Für die lesbare Anteilsangabe „45/1000" im Rücklagenspiegel des
+    Einzelabrechnungs-PDFs (Rücklagenausweis-Spec Kap. 4) — der reine
+    Quotient aus mea_anteil() verliert die Bezugsgröße.
+    """
+    return _stammdaten_wert_und_gesamt('010', einheit, wj)
+
+
 def alle_werte_und_gesamt(vs_code: str, objekt, wj: Wirtschaftsjahr):
     """
     Alle beteiligten Einheit-Werte + Gesamtwert eines VS-Codes fürs ganze Objekt

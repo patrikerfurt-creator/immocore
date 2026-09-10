@@ -321,12 +321,13 @@ class RuecklagenJsonTest(EinzelAbrechnungServiceTestBase):
         r = ea.ruecklagen[0]
         self.assertEqual(r['endbestand'], '10000.00')
         self.assertEqual(r['anteil_eigentuemer'], '3000.00')  # × MEA 0,3
-        # Kein Zufluss über die Nebenbuch-Sollstellung in diesem Testaufbau —
-        # berechneter Endbestand bleibt 0, während der Bankauszug 10000 zeigt
-        # → Klärungsfall (Kap. 4.5), muss im JSON sichtbar sein (für PDF-Hinweis).
-        self.assertEqual(r['endbestand_berechnet'], '0')
-        self.assertEqual(r['abweichung'], '-10000.00')
-        self.assertTrue(r['klaerungsfall'])
+        # Der Umsatz liegt VOR WJ-Beginn und ist damit der Anfangsbestand —
+        # ohne Bewegung im WJ deckt sich der berechnete Endbestand mit dem
+        # Bankauszug, ein Klärungsfall entsteht nicht. Den Klärungsfall selbst
+        # deckt test_ruecklagen_ausweis.KlaerungsfallTest ab.
+        self.assertEqual(r['endbestand_berechnet'], '10000.00')
+        self.assertEqual(r['abweichung'], '0.00')
+        self.assertFalse(r['klaerungsfall'])
         # Kap. 4.5-Ergänzung: kein 911-Split in diesem Testaufbau → kein Rückstand
         self.assertEqual(r['rueckstand_zufuehrung'], '0')
 

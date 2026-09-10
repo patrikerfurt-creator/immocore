@@ -65,18 +65,30 @@ def _ruecklagenspiegel_kontext(ea: EinzelAbrechnung, objekt, wj) -> dict:
     """
     zeilen = []
     summe_endbestand = Decimal('0')
+    summe_endbestand_ber = Decimal('0')
     summe_anteil = Decimal('0')
+    summe_anteil_ber = Decimal('0')
     summe_rueckstand = Decimal('0')
     klaerungsfall = False
+    mea_bruch = ''
     for r in ea.ruecklagen:
         endbestand = _d(r.get('endbestand'))
+        # Zweite Basis (Spec Kap. 3.1): rechnerischer Endbestand aus
+        # Anfangsbestand + Zuführungen - Entnahmen. Deckungsgleich mit dem
+        # Bankauszug, solange kein Klärungsfall vorliegt.
+        endbestand_ber = _d(r.get('endbestand_berechnet'))
         anteil = _d(r.get('anteil_eigentuemer'))
+        anteil_ber = _d(r.get('anteil_eigentuemer_berechnet'))
         rueckstand = _d(r.get('rueckstand_zufuehrung'))
         summe_endbestand += endbestand
+        summe_endbestand_ber += endbestand_ber
         summe_anteil += anteil
+        summe_anteil_ber += anteil_ber
         summe_rueckstand += rueckstand
         if r.get('klaerungsfall'):
             klaerungsfall = True
+        if not mea_bruch:
+            mea_bruch = r.get('mea_anteil_einheit') or ''
 
         buchungen = []
         if r.get('ba_nr'):
@@ -90,11 +102,16 @@ def _ruecklagenspiegel_kontext(ea: EinzelAbrechnung, objekt, wj) -> dict:
 
         zeilen.append({
             'bezeichnung': r.get('bezeichnung', ''),
+            'nummer_roemisch': r.get('nummer_roemisch', ''),
+            'suffix': r.get('suffix', r.get('ba_nr', '')),
+            'mea_anteil_einheit': r.get('mea_anteil_einheit', ''),
             'anfangsbestand': _fmt(r.get('anfangsbestand', '0')),
             'zufuehrungen': _fmt(r.get('zufuehrungen', '0')),
             'entnahmen': _fmt(r.get('entnahmen', '0')),
             'endbestand': _fmt(endbestand),
+            'endbestand_berechnet': _fmt(endbestand_ber),
             'anteil_eigentuemer': _fmt(anteil),
+            'anteil_eigentuemer_berechnet': _fmt(anteil_ber),
             'rueckstand_zufuehrung': _fmt(rueckstand),
             'hat_rueckstand': rueckstand > 0,
             'klaerungsfall': bool(r.get('klaerungsfall')),
@@ -103,15 +120,22 @@ def _ruecklagenspiegel_kontext(ea: EinzelAbrechnung, objekt, wj) -> dict:
         })
     return {
         'ruecklagenspiegel': zeilen,
+        # Summenzeile nur bei mehr als einer Rücklage (Spec Kap. 3.2 — bei
+        # genau einer wäre sie redundant). Abgeleitet statt persistiert: der
+        # Snapshot in EinzelAbrechnung.ruecklagen trägt alle Einzelwerte, die
+        # Summe ist daraus jederzeit reproduzierbar.
         'ruecklagenspiegel_summe': (
             {
                 'endbestand': _fmt(summe_endbestand),
+                'endbestand_berechnet': _fmt(summe_endbestand_ber),
                 'anteil_eigentuemer': _fmt(summe_anteil),
+                'anteil_eigentuemer_berechnet': _fmt(summe_anteil_ber),
                 'rueckstand_zufuehrung': _fmt(summe_rueckstand),
             }
             if len(zeilen) > 1 else None
         ),
         'ruecklagenspiegel_klaerungsfall': klaerungsfall,
+        'ruecklagenspiegel_mea': mea_bruch,
     }
 
 

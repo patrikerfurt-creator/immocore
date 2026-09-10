@@ -34,12 +34,25 @@ from .verteilerschluessel_service import mea_anteil
 
 ABWEICHUNGS_TOLERANZ = Decimal('0.01')
 
+# Rücklagen-Nummern I…XXI (Unterkonto-Suffix .911–.931, Spec Kap. 3.2)
+_ROEMISCH = (
+    'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI',
+    'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX', 'XXI',
+)
+
+
+def ruecklagen_nummer_roemisch(reihenfolge: int) -> str:
+    """Rücklagen-Index → römische Nummer (1 → 'I'); außerhalb 1–21 die Zahl."""
+    if 1 <= reihenfolge <= len(_ROEMISCH):
+        return _ROEMISCH[reihenfolge - 1]
+    return str(reihenfolge)
+
 
 def ruecklagen_uebersicht(objekt: Objekt, wj: Wirtschaftsjahr) -> list:
     """
     Tabelle gemäß Kap. 4.5, ein Eintrag je Rücklagen-Bankkonto:
 
-    {'bankkonto_id', 'bezeichnung', 'ba_nr',
+    {'bankkonto_id', 'bezeichnung', 'ba_nr', 'suffix', 'nummer_roemisch',
      'anfangsbestand', 'zufuehrungen', 'entnahmen',
      'endbestand_berechnet', 'endbestand_bank',
      'abweichung', 'klaerungsfall'}
@@ -63,6 +76,10 @@ def ruecklagen_uebersicht(objekt: Objekt, wj: Wirtschaftsjahr) -> list:
             'bankkonto_id': str(bk.id),
             'bezeichnung': bk.bezeichnung,
             'ba_nr': ba_nr,
+            # Ausweis-Metadaten für den PDF-Rücklagenspiegel (Spec Kap. 3.2/4):
+            # Auflistung je Rücklage in der Reihenfolge I, II, III …
+            'suffix': ba_nr,
+            'nummer_roemisch': ruecklagen_nummer_roemisch(bk.reihenfolge),
             'anfangsbestand': anfangsbestand,
             'zufuehrungen': zufuehrungen,
             'entnahmen': entnahmen,
