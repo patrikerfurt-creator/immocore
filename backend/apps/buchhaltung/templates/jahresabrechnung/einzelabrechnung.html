@@ -239,21 +239,34 @@
 {% endfor %}
 
 {% for r in ruecklagenspiegel %}
-{% if r.buchungen %}
-<div class="ka-title">Buchungen — {{ r.bezeichnung }}</div>
-<table class="abr">
+{% if r.sollstellungen %}
+<div class="ka-title">Sollstellungen je Wohnung — {{ r.bezeichnung }}</div>
+<table class="abr rl-tab">
   <thead>
     <tr>
-      <th style="width:18%">Datum</th>
-      <th style="width:52%">Bezeichnung</th>
-      <th class="r" style="width:15%">Soll (Entnahme)</th>
-      <th class="r" style="width:15%">Haben (Zuführung)</th>
+      <th style="width:40%">Wohnung</th>
+      <th class="r" style="width:20%">Soll</th>
+      <th class="r" style="width:20%">Haben</th>
+      <th class="r" style="width:20%">Saldo</th>
     </tr>
   </thead>
   <tbody>
-    {% for b in r.buchungen %}
-    <tr><td>{{ b.datum }}</td><td>{{ b.bezeichnung }}</td><td class="r">{{ b.soll }}</td><td class="r">{{ b.haben }}</td></tr>
+    {% for s in r.sollstellungen %}
+    <tr>
+      <td>{{ s.einheit_nr }}</td>
+      <td class="r">{{ s.soll }}</td>
+      <td class="r">{{ s.haben }}</td>
+      <td class="r">{{ s.saldo }}</td>
+    </tr>
     {% endfor %}
+    {% if r.sollstellungen_summe %}
+    <tr class="sub">
+      <td>Summe</td>
+      <td class="r">{{ r.sollstellungen_summe.soll }}</td>
+      <td class="r">{{ r.sollstellungen_summe.haben }}</td>
+      <td class="r">{{ r.sollstellungen_summe.saldo }}</td>
+    </tr>
+    {% endif %}
   </tbody>
 </table>
 {% endif %}

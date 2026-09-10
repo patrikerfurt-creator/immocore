@@ -23,6 +23,7 @@ from django.db.models import Q, Sum
 from apps.buchhaltung.models import (
     Buchung,
     Kontoumsatz,
+    SollstellungSplit,
     SollstellungZahlung,
     WirtschaftsplanRuecklage,
 )
@@ -93,66 +94,49 @@ def ruecklagen_uebersicht(objekt: Objekt, wj: Wirtschaftsjahr) -> list:
     return rows
 
 
-def ruecklagen_buchungsliste(objekt: Objekt, wj: Wirtschaftsjahr, ba_nr: str) -> list:
+def ruecklagen_sollstellungen_je_einheit(objekt: Objekt, wj: Wirtschaftsjahr,
+                                        ba_nr: str) -> list:
     """
-    Chronologische Soll-/Haben-Buchungsliste EINER Rücklage (Kap. 4.5-Ergänzung:
-    Aufschlüsselung der Zuführungen/Entnahmen als Einzelbuchungen, nicht nur
-    als Summenzeile).
+    Rücklagen-Sollstellungen aus dem Nebenbuch, je Wohnung für das WJ summiert.
 
-    Objektweit, nicht je Einheit: Entnahmen sind Sachkontenbuchungen ohne
-    Eigentümerbezug — ein Einheiten-Filter ist hier fachlich nicht möglich.
-    Der Anteil je Einheit ergibt sich weiterhin nur über den MEA-Anteil am
-    Endbestand (anteil_eigentuemer), nicht über diese Liste.
+        Soll   Σ SollstellungSplit.betrag           — gestelltes Soll der BA 91x
+        Haben  Σ SollstellungSplit.ist_betrag_split — davon gezahlt
+        Saldo  Soll − Haben                         — offener Rückstand
 
-        Haben (Zuführung)  Σ SollstellungZahlung je Einheit auf Splits mit
-                            der Rücklagen-BA (Nebenbuch, wie _zufuehrungen_nebenbuch)
-        Soll  (Entnahme)   Buchungen mit Rücklagen-Sachkonto im Haben
-                            (Hauptbuch, wie _entnahmen)
+    Nur Hausgeld-Sollstellungen mit Periode im Wirtschaftsjahr; stornierte
+    Sollstellungen bleiben außen vor. Ersetzt die frühere chronologische
+    Buchungsliste: Entnahmen sind Sachkontenbuchungen ohne Wohnungsbezug und
+    lassen sich hier nicht ausweisen — sie stehen weiter in der
+    Entnahmen-Spalte des Rücklagenspiegels.
 
-    Rückgabe je Zeile: {'datum', 'typ' ('zufuehrung'/'entnahme'),
-    'bezeichnung', 'soll', 'haben'} — chronologisch sortiert.
+    Rückgabe je Zeile: {'einheit_nr', 'soll', 'haben', 'saldo'}, sortiert
+    nach Einheitennummer.
     """
-    zeilen = []
-
-    zufuehrungen = (
-        SollstellungZahlung.objects
+    EINHEIT = 'sollstellung__eigentumsverhaeltnis__einheit__einheit_nr'
+    rows = (
+        SollstellungSplit.objects
         .filter(
             sollstellung__objekt=objekt,
-            split__ba__nr=ba_nr,
-            buchung__buchungsdatum__gte=wj.beginn_datum,
-            buchung__buchungsdatum__lte=wj.ende_datum,
+            sollstellung__sollstellungs_typ='hausgeld',
+            sollstellung__periode__gte=wj.beginn_datum,
+            sollstellung__periode__lte=wj.ende_datum,
+            sollstellung__storniert_am__isnull=True,
+            ba__nr=ba_nr,
         )
-        .exclude(buchung__status='storniert')
-        .exclude(sollstellung__storniert_am__isnull=False)
-        .select_related('buchung', 'sollstellung__eigentumsverhaeltnis__einheit')
-        .order_by('buchung__buchungsdatum')
+        .values(EINHEIT)
+        .annotate(soll=Sum('betrag'), haben=Sum('ist_betrag_split'))
+        .order_by(EINHEIT)
     )
-    for z in zufuehrungen:
-        einheit = z.sollstellung.eigentumsverhaeltnis.einheit
+    zeilen = []
+    for r in rows:
+        soll = r['soll'] or Decimal('0')
+        haben = r['haben'] or Decimal('0')
         zeilen.append({
-            'datum': z.buchung.buchungsdatum,
-            'typ': 'zufuehrung',
-            'bezeichnung': f"Zuführung Einheit {einheit.einheit_nr}",
-            'soll': Decimal('0'),
-            'haben': z.betrag,
+            'einheit_nr': r[EINHEIT],
+            'soll': soll,
+            'haben': haben,
+            'saldo': soll - haben,
         })
-
-    entnahmen = (
-        buchungen_im_wj(objekt, wj)
-        .filter(haben_konto__abrechnungsart=ba_nr)
-        .exclude(haben_konto__kontonummer__startswith='41')
-        .order_by('buchungsdatum')
-    )
-    for b in entnahmen:
-        zeilen.append({
-            'datum': b.buchungsdatum,
-            'typ': 'entnahme',
-            'bezeichnung': b.buchungstext or 'Entnahme',
-            'soll': b.betrag,
-            'haben': Decimal('0'),
-        })
-
-    zeilen.sort(key=lambda z: z['datum'])
     return zeilen
 
 

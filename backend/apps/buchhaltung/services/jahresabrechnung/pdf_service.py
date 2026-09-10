@@ -18,7 +18,9 @@ from django.template.loader import render_to_string
 import weasyprint
 
 from apps.buchhaltung.models import EinzelAbrechnung, HausgeldSollstellung, SollstellungZahlung
-from apps.buchhaltung.services.jahresabrechnung.ruecklagen_service import ruecklagen_buchungsliste
+from apps.buchhaltung.services.jahresabrechnung.ruecklagen_service import (
+    ruecklagen_sollstellungen_je_einheit,
+)
 from apps.dokumente.models import Dokument
 from apps.objekte.models import Verteilerschluessel
 
@@ -55,13 +57,13 @@ def _ruecklagenspiegel_kontext(ea: EinzelAbrechnung, objekt, wj) -> dict:
     Kap. 4.5-Ergänzung: je Rücklage zusätzlich
     - der Rückstand des Eigentümers auf die Zuführung (rueckstand_zufuehrung —
       Rückstände auf die Erhaltungsrücklage sind auszuweisen), und
-    - die objektweite Soll-/Haben-Buchungsliste (buchungen) — die einzelnen
-      Zuführungen/Entnahmen, nicht nur die Summenzeilen.
+    - die Sollstellungen je Wohnung (sollstellungen) — Soll, Haben und Saldo
+      der Rücklagen-Sollstellungen des WJ aus dem Nebenbuch, mit Summenzeile.
 
     Quelle: EinzelAbrechnung.ruecklagen (bereits von
     einzelabrechnung_service._berechne_einheit() befüllt) für die Summen- und
-    Rückstandswerte; ruecklagen_service.ruecklagen_buchungsliste() für die
-    Einzelbuchungen (objektweit, da Entnahmen keinen Eigentümerbezug haben).
+    Rückstandswerte; ruecklagen_service.ruecklagen_sollstellungen_je_einheit()
+    für die Aufstellung je Wohnung (objektweit, nicht nur die eigene Einheit).
     """
     zeilen = []
     summe_endbestand = Decimal('0')
@@ -90,15 +92,22 @@ def _ruecklagenspiegel_kontext(ea: EinzelAbrechnung, objekt, wj) -> dict:
         if not mea_bruch:
             mea_bruch = r.get('mea_anteil_einheit') or ''
 
-        buchungen = []
+        sollstellungen = []
+        sollstellungen_summe = None
         if r.get('ba_nr'):
-            for b in ruecklagen_buchungsliste(objekt, wj, r['ba_nr']):
-                buchungen.append({
-                    'datum': b['datum'].strftime('%d.%m.%Y'),
-                    'bezeichnung': b['bezeichnung'],
-                    'soll': _fmt(b['soll']) if b['soll'] else '',
-                    'haben': _fmt(b['haben']) if b['haben'] else '',
-                })
+            ss = ruecklagen_sollstellungen_je_einheit(objekt, wj, r['ba_nr'])
+            sollstellungen = [{
+                'einheit_nr': s['einheit_nr'],
+                'soll': _fmt(s['soll']),
+                'haben': _fmt(s['haben']),
+                'saldo': _fmt(s['saldo']),
+            } for s in ss]
+            if ss:
+                sollstellungen_summe = {
+                    'soll': _fmt(sum(s['soll'] for s in ss)),
+                    'haben': _fmt(sum(s['haben'] for s in ss)),
+                    'saldo': _fmt(sum(s['saldo'] for s in ss)),
+                }
 
         zeilen.append({
             'bezeichnung': r.get('bezeichnung', ''),
@@ -116,7 +125,8 @@ def _ruecklagenspiegel_kontext(ea: EinzelAbrechnung, objekt, wj) -> dict:
             'hat_rueckstand': rueckstand > 0,
             'klaerungsfall': bool(r.get('klaerungsfall')),
             'fehler': r.get('fehler'),
-            'buchungen': buchungen,
+            'sollstellungen': sollstellungen,
+            'sollstellungen_summe': sollstellungen_summe,
         })
     return {
         'ruecklagenspiegel': zeilen,

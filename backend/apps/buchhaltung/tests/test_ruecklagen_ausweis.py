@@ -247,3 +247,59 @@ class RuecklagenSnapshotTest(RuecklagenAusweisTestBase):
         self.assertEqual(
             vorher['ruecklagenspiegel'][0]['anteil_eigentuemer'],
             nachher['ruecklagenspiegel'][0]['anteil_eigentuemer'])
+
+
+class SollstellungenJeWohnungTest(RuecklagenAusweisTestBase):
+    """
+    Aufstellung je Wohnung unter dem Spiegel: Wohnung, Soll, Haben, Saldo,
+    alle drei Betragsspalten summiert.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._umsatz(self._ruecklage(1, 'Erhaltungsrücklage'), '10000.00', date(2024, 6, 1))
+        self.ba_911, _ = Buchungsart.objects.get_or_create(
+            nr='911',
+            defaults=dict(bezeichnung='BA 911', ruecklagen_relevant=True,
+                          bankkonto_typ='ruecklage_nach_index'),
+        )
+        # WE01 zahlt voll, WE02 bleibt 450 schuldig
+        for ev, soll, ist in ((self.ev1, '300.00', '300.00'),
+                              (self.ev2, '700.00', '250.00')):
+            SollstellungSplit.objects.create(
+                sollstellung=self._create_soll(ev, soll, date(2025, 1, 1)),
+                ba=self.ba_911, betrag=Decimal(soll), ist_betrag_split=Decimal(ist))
+
+    def test_je_wohnung_eine_zeile_mit_saldo(self):
+        _, ctx = self._kontext()
+        zeilen = ctx['ruecklagenspiegel'][0]['sollstellungen']
+        self.assertEqual([s['einheit_nr'] for s in zeilen], ['WE01', 'WE02'])
+        self.assertEqual(zeilen[0]['soll'], '300,00')
+        self.assertEqual(zeilen[0]['haben'], '300,00')
+        self.assertEqual(zeilen[0]['saldo'], '0,00')
+        self.assertEqual(zeilen[1]['saldo'], '450,00')
+
+    def test_summenzeile_ueber_alle_wohnungen(self):
+        _, ctx = self._kontext()
+        self.assertEqual(
+            ctx['ruecklagenspiegel'][0]['sollstellungen_summe'],
+            {'soll': '1.000,00', 'haben': '550,00', 'saldo': '450,00'})
+
+    def test_ohne_sollstellungen_keine_tabelle(self):
+        SollstellungSplit.objects.all().delete()
+        _, ctx = self._kontext()
+        z = ctx['ruecklagenspiegel'][0]
+        self.assertEqual(z['sollstellungen'], [])
+        self.assertIsNone(z['sollstellungen_summe'])
+
+    def test_tabelle_erscheint_im_pdf(self):
+        import pymupdf
+        ea = berechne_einzelabrechnung(self.ja, self.e1)
+        doc = pymupdf.open(stream=render_einzelabrechnung_pdf(ea), filetype='pdf')
+        try:
+            text = '\n'.join(seite.get_text() for seite in doc)
+        finally:
+            doc.close()
+        self.assertIn('Sollstellungen je Wohnung', text)
+        self.assertIn('1.000,00', text)  # Summe Soll
+        self.assertIn('550,00', text)    # Summe Haben
