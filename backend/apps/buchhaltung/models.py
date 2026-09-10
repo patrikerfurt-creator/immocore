@@ -174,6 +174,48 @@ class Buchung(models.Model):
         verbose_name_plural = 'Buchungen'
         ordering = ['-buchungsdatum', '-erstellt_am']
 
+    def save(self, *args, **kwargs):
+        felder = ('soll_konto', 'haben_konto')
+        update_fields = kwargs.get('update_fields')
+        if update_fields is not None:
+            felder = tuple(f for f in felder if f in update_fields)
+        self._konten_ins_buchungsjahr(felder)
+        super().save(*args, **kwargs)
+
+    def _konten_ins_buchungsjahr(self, felder=('soll_konto', 'haben_konto')):
+        """
+        Konto-FKs in das Jahr des Buchungsdatums auflösen.
+
+        Konten sind jahresgebunden — dieselbe Kontonummer existiert je WJ als
+        eigener Datensatz. Wer einen Konto-Verweis aus einem anderen Jahr
+        durchreicht (Kontenplan-Auswahl im Frontend, gespeicherte Match-Regeln,
+        Vorjahres-Vorlagen), hängt die Buchung an das Kontoblatt des falschen
+        Jahres. Die Buchung ist dann im Journal unauffällig, fehlt aber in
+        jahresbezogenen Auswertungen — z. B. ein Saldovortrag auf 09911, der
+        im Rücklagen-Ausweis nicht ankommt.
+
+        Maßgeblich ist das Buchungsdatum, nicht der wirtschaftsjahr-FK: so
+        halten es konto_im_jahr() selbst und die Aufrufer in eBanking,
+        SEPA-Lastschrift, Zahlungszuordnung und Kreditor-Vortrag. Damit
+        landen beide Beine im selben Kontenrahmen, auch wenn der WJ-FK
+        abweicht (siehe test_kreditorkonto_folgt_dem_jahr_der_gegenseite).
+
+        Einzelne Services taten das schon punktuell; hier gilt es für jeden
+        Schreibpfad. Existiert im Zieljahr kein gleichnamiges Konto, bleibt
+        der bisherige Verweis stehen (besser als keiner).
+        """
+        if self.buchungsdatum is None:
+            return
+        from apps.konten.services import konto_im_jahr
+        jahr = self.buchungsdatum.year
+        for feld in felder:
+            if getattr(self, f'{feld}_id') is None:
+                continue
+            konto = getattr(self, feld)
+            if konto.wirtschaftsjahr_id is None or konto.wirtschaftsjahr.jahr == jahr:
+                continue
+            setattr(self, feld, konto_im_jahr(konto, jahr))
+
     def __str__(self):
         ba = f" [{self.buchungsart.kuerzel}]" if self.buchungsart else ''
         return f"{self.buchungsdatum} | {self.betrag} €{ba} | {self.status}"
