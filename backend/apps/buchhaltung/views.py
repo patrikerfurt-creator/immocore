@@ -1497,7 +1497,6 @@ class LastschriftLaufViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            objekt_kurz = objekt.kurzbezeichnung or objekt.bezeichnung
             periode_str = faelligkeitsdatum.strftime('%m/%Y')
 
             # Gruppierung nach EV: alle OPOS einer Person → ein Einzug
@@ -1517,9 +1516,10 @@ class LastschriftLaufViewSet(viewsets.ModelViewSet):
                 ev_id = str(ss.eigentumsverhaeltnis_id)
                 if ev_id not in ev_map:
                     try:
-                        pk_id = str(ss.eigentumsverhaeltnis.personenkonto.id)
+                        _pk = ss.eigentumsverhaeltnis.personenkonto
+                        pk_id, pk_nummer = str(_pk.id), _pk.kontonummer
                     except Exception:
-                        pk_id = None
+                        pk_id, pk_nummer = None, ''
                     ev_map[ev_id] = {
                         'betrag':           0.0,
                         'sollstellung_ids': [],
@@ -1530,6 +1530,7 @@ class LastschriftLaufViewSet(viewsets.ModelViewSet):
                         'mandatsreferenz':  mandat.mandatsreferenz,
                         'mandat_datum':     str(mandat.unterzeichnet_am),
                         'personenkonto_id': pk_id,
+                        'pk_nummer':        pk_nummer,
                         'einheit_nr':       ss.eigentumsverhaeltnis.einheit.einheit_nr,
                     }
 
@@ -1546,6 +1547,14 @@ class LastschriftLaufViewSet(viewsets.ModelViewSet):
             for ev_id, data in ev_map.items():
                 if data['betrag'] <= 0:
                     continue
+                # Verwendungszweck: „Hausgeld 01/2025 - Wohnung 1 - 0007".
+                # Die Personenkontonummer statt der Objekt-Kurzbezeichnung —
+                # sie identifiziert den Zahler eindeutig und steht so auch im
+                # Kontoauszug der Jahresabrechnung. Fehlt das Personenkonto,
+                # entfällt der dritte Teil, statt leer zu enden.
+                vz_teile = [f"Hausgeld {periode_str}", data['einheit_nr']]
+                if data['pk_nummer']:
+                    vz_teile.append(data['pk_nummer'])
                 positionen.append({
                     'sollstellung_ids':   data['sollstellung_ids'],
                     'sollstellung_id':    data['sollstellung_ids'][0],
@@ -1556,7 +1565,7 @@ class LastschriftLaufViewSet(viewsets.ModelViewSet):
                     'schuldner_bic':      data['schuldner_bic'],
                     'mandatsreferenz':    data['mandatsreferenz'],
                     'mandat_datum':       data['mandat_datum'],
-                    'verwendungszweck':   f"Hausgeld {periode_str} - {data['einheit_nr']} - Objekt {objekt_kurz}",
+                    'verwendungszweck':   ' - '.join(vz_teile),
                     'faelligkeitsdatum':  str(faelligkeitsdatum),
                     'seq_typ':            'RCUR',
                     'kreditorkonto_iban': hauptkonto.iban,

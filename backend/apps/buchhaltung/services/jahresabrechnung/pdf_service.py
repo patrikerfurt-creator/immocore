@@ -34,6 +34,42 @@ def _d(v) -> Decimal:
     return Decimal(str(v)) if v is not None and v != '' else Decimal('0')
 
 
+def _pk_nummer(ev) -> str:
+    """
+    Personenkonto-Nummer eines Eigentumsverhältnisses, '' wenn keins existiert.
+
+    Reverse-OneToOne: fehlt das Personenkonto, wirft der Zugriff
+    RelatedObjectDoesNotExist — das erbt von AttributeError, getattr fängt es ab.
+    """
+    pk = getattr(ev, 'personenkonto', None)
+    return pk.kontonummer if pk is not None else ''
+
+
+def _zahlungs_bemerkung(z, ba) -> str:
+    """
+    Zeilentext im Kontoauszug der Zahlungen: „Hausgeld 01/2025 - Wohnung 1 - 0007".
+
+    Aus den Stammdaten der Sollstellung gebildet statt aus dem gespeicherten
+    Buchungstext: der trug die Objekt-Kurzbezeichnung an dritter Stelle, die
+    hier nichts beiträgt — auf der Abrechnung eines Objekts ist das Objekt
+    ohnehin bekannt. Die Personenkontonummer identifiziert stattdessen den
+    Zahler. Ableiten statt nachträglich umschreiben, damit auch bereits
+    festgeschriebene Buchungen richtig erscheinen.
+
+    Die Nummer kommt je Zahlung aus dem Eigentumsverhältnis der Sollstellung.
+    Nach einem Eigentümerwechsel stehen in derselben Tabelle deshalb
+    unterschiedliche Personenkontonummern.
+    """
+    ss = z.sollstellung
+    ev = ss.eigentumsverhaeltnis
+    kopf = ' '.join(t for t in (
+        ba.bezeichnung if ba else 'Zahlung',
+        ss.periode.strftime('%m/%Y') if ss.periode else '',
+    ) if t)
+    teile = [kopf, ev.einheit.einheit_nr, _pk_nummer(ev)]
+    return ' - '.join(t for t in teile if t)
+
+
 def _pos_row(p: dict, vs_names: dict) -> dict:
     """Baut eine Kostenzeile für die Einzelabrechnung (Muster Seite 2)."""
     return {
@@ -239,7 +275,11 @@ def render_einzelabrechnung_pdf(ea: EinzelAbrechnung, entwurf: bool = True) -> b
             buchung__buchungsdatum__lte=wj.ende_datum,
         )
         .exclude(buchung__status='storniert')
-        .select_related('split__ba', 'buchung')
+        .select_related(
+            'split__ba', 'buchung',
+            'sollstellung__eigentumsverhaeltnis__einheit',
+            'sollstellung__eigentumsverhaeltnis__personenkonto',
+        )
         .order_by('split__ba__nr', 'buchung__buchungsdatum')
     )
     ka_gruppen = {}
@@ -253,7 +293,7 @@ def render_einzelabrechnung_pdf(ea: EinzelAbrechnung, entwurf: bool = True) -> b
         })
         g['zeilen'].append({
             'datum': z.buchung.buchungsdatum.strftime('%d.%m.%Y'),
-            'bemerkung': z.buchung.buchungstext or 'Zahlungseingang',
+            'bemerkung': _zahlungs_bemerkung(z, ba),
             'betrag': _fmt(z.betrag),
         })
         g['summe'] += z.betrag
