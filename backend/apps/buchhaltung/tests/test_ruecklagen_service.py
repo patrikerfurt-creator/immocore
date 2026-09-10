@@ -239,7 +239,9 @@ class RuecklagenSollstellungenJeEinheitTest(RuecklagenServiceTestBase):
     Rücklagen-Sollstellungen des Wirtschaftsjahres aus dem Nebenbuch.
     """
 
-    def _soll_split(self, einheit_nr, soll, ist, periode, ba=None, storniert=False):
+    def _soll_split(self, einheit_nr, soll, ist, periode, ba=None, storniert=False,
+                    typ='hausgeld'):
+        """Sollstellung mit Split auf die Rücklagen-AA. typ='saldovortrag' = SAVO."""
         from django.utils import timezone
         einheit, _ = Einheit.objects.get_or_create(
             objekt=self.objekt, einheit_nr=einheit_nr,
@@ -252,13 +254,19 @@ class RuecklagenSollstellungenJeEinheitTest(RuecklagenServiceTestBase):
                 einheit=einheit, person=person, beginn=date(2020, 1, 1))
         ss = HausgeldSollstellung.objects.create(
             objekt=self.objekt, eigentumsverhaeltnis=ev,
-            sollstellungs_typ='hausgeld', periode=periode, faellig_am=periode,
+            sollstellungs_typ=typ,
+            ba=_get_or_create_ba('99') if typ == 'saldovortrag' else None,
+            periode=periode, faellig_am=periode,
             opos_nr=f'OP-{uuid4().hex[:8]}', soll_betrag=Decimal(soll),
             erstellt_von=self.user,
             storniert_am=timezone.now() if storniert else None)
         return SollstellungSplit.objects.create(
             sollstellung=ss, ba=ba or self.ba_911,
             betrag=Decimal(soll), ist_betrag_split=Decimal(ist))
+
+    def _savo(self, einheit_nr, betrag, ist='0.00', periode=date(2025, 1, 1), ba=None):
+        return self._soll_split(einheit_nr, betrag, ist, periode, ba=ba,
+                                typ='saldovortrag')
 
     def test_leer_ohne_sollstellungen(self):
         self.assertEqual(
@@ -269,9 +277,48 @@ class RuecklagenSollstellungenJeEinheitTest(RuecklagenServiceTestBase):
         zeilen = ruecklagen_sollstellungen_je_einheit(self.objekt, self.wj, '911')
         self.assertEqual(len(zeilen), 1)
         self.assertEqual(zeilen[0]['einheit_nr'], 'WE01')
+        self.assertEqual(zeilen[0]['savo'], Decimal('0'))
         self.assertEqual(zeilen[0]['soll'], Decimal('50.00'))
         self.assertEqual(zeilen[0]['haben'], Decimal('20.00'))
         self.assertEqual(zeilen[0]['saldo'], Decimal('30.00'))
+
+    def test_savo_auf_die_ruecklagen_aa_wird_ausgewiesen(self):
+        """BA-99-Saldovortrag auf AA 911 erhöht SAVO und Saldo, nicht Soll."""
+        self._savo('WE01', '80.00')
+        self._soll_split('WE01', '50.00', '20.00', date(2025, 2, 1))
+        zeilen = ruecklagen_sollstellungen_je_einheit(self.objekt, self.wj, '911')
+        self.assertEqual(len(zeilen), 1)
+        self.assertEqual(zeilen[0]['savo'], Decimal('80.00'))
+        self.assertEqual(zeilen[0]['soll'], Decimal('50.00'))
+        self.assertEqual(zeilen[0]['haben'], Decimal('20.00'))
+        self.assertEqual(zeilen[0]['saldo'], Decimal('110.00'))  # 80 + 50 − 20
+
+    def test_getilgter_savo_erscheint_im_haben(self):
+        """Wird der Saldovortrag gezahlt, gleicht das Haben ihn wieder aus."""
+        self._savo('WE01', '80.00', ist='80.00')
+        zeilen = ruecklagen_sollstellungen_je_einheit(self.objekt, self.wj, '911')
+        self.assertEqual(zeilen[0]['savo'], Decimal('80.00'))
+        self.assertEqual(zeilen[0]['haben'], Decimal('80.00'))
+        self.assertEqual(zeilen[0]['saldo'], Decimal('0.00'))
+
+    def test_savo_als_guthaben_zaehlt_negativ(self):
+        """richtung='haben' legt den Split mit negativem Betrag an."""
+        self._savo('WE01', '-30.00')
+        zeilen = ruecklagen_sollstellungen_je_einheit(self.objekt, self.wj, '911')
+        self.assertEqual(zeilen[0]['savo'], Decimal('-30.00'))
+        self.assertEqual(zeilen[0]['saldo'], Decimal('-30.00'))
+
+    def test_savo_auf_andere_aa_bleibt_draussen(self):
+        """Der übliche Fall: SAVO auf AA 900 (Hausgeld), nicht auf die Rücklage."""
+        self._savo('WE01', '80.00', ba=_get_or_create_ba('900'))
+        self.assertEqual(
+            ruecklagen_sollstellungen_je_einheit(self.objekt, self.wj, '911'), [])
+
+    def test_stornierter_savo_zaehlt_nicht(self):
+        self._soll_split('WE01', '80.00', '0.00', date(2025, 1, 1),
+                         typ='saldovortrag', storniert=True)
+        self.assertEqual(
+            ruecklagen_sollstellungen_je_einheit(self.objekt, self.wj, '911'), [])
 
     def test_perioden_derselben_wohnung_werden_summiert(self):
         self._soll_split('WE01', '50.00', '50.00', date(2025, 1, 1))

@@ -10,7 +10,12 @@ from datetime import date
 from decimal import Decimal
 from uuid import uuid4
 
-from apps.buchhaltung.models import Buchungsart, Kontoumsatz, SollstellungSplit
+from apps.buchhaltung.models import (
+    Buchungsart,
+    HausgeldSollstellung,
+    Kontoumsatz,
+    SollstellungSplit,
+)
 from apps.buchhaltung.services.jahresabrechnung.einzelabrechnung_service import (
     berechne_einzelabrechnung,
 )
@@ -38,6 +43,14 @@ class RuecklagenAusweisTestBase(EinzelAbrechnungServiceTestBase):
             objekt=self.objekt, bankkonto=bk,
             sha256_hash=uuid4().hex + uuid4().hex[:32],
             betrag=Decimal(betrag), buchungsdatum=datum, status='verbucht')
+
+    def _ba(self, nr):
+        ba, _ = Buchungsart.objects.get_or_create(
+            nr=nr,
+            defaults=dict(bezeichnung='BA %s' % nr, ruecklagen_relevant=(nr == '911'),
+                          bankkonto_typ='ruecklage_nach_index' if nr == '911' else ''),
+        )
+        return ba
 
     def _kontext(self, einheit=None):
         ea = berechne_einzelabrechnung(self.ja, einheit or self.e1)
@@ -283,7 +296,30 @@ class SollstellungenJeWohnungTest(RuecklagenAusweisTestBase):
         _, ctx = self._kontext()
         self.assertEqual(
             ctx['ruecklagenspiegel'][0]['sollstellungen_summe'],
-            {'soll': '1.000,00', 'haben': '550,00', 'saldo': '450,00'})
+            {'savo': '0,00', 'soll': '1.000,00', 'haben': '550,00', 'saldo': '450,00'})
+
+    def test_savo_auf_die_ruecklage_erscheint_in_eigener_spalte(self):
+        """BA-99-Saldovortrag auf AA 911 — eigene Spalte, fließt in den Saldo."""
+        savo = HausgeldSollstellung.objects.create(
+            objekt=self.objekt, eigentumsverhaeltnis=self.ev1,
+            sollstellungs_typ='saldovortrag', ba=self._ba('99'),
+            periode=date(2025, 1, 1), faellig_am=date(2025, 1, 1),
+            opos_nr='OP-SAVO-1', soll_betrag=Decimal('120.00'),
+            erstellt_von=self.user)
+        SollstellungSplit.objects.create(
+            sollstellung=savo, ba=self.ba_911,
+            betrag=Decimal('120.00'), ist_betrag_split=Decimal('0.00'))
+
+        _, ctx = self._kontext()
+        zeilen = ctx['ruecklagenspiegel'][0]['sollstellungen']
+        self.assertEqual(zeilen[0]['einheit_nr'], 'WE01')
+        self.assertEqual(zeilen[0]['savo'], '120,00')
+        self.assertEqual(zeilen[0]['soll'], '300,00')
+        self.assertEqual(zeilen[0]['haben'], '300,00')
+        self.assertEqual(zeilen[0]['saldo'], '120,00')  # 120 + 300 − 300
+        self.assertEqual(
+            ctx['ruecklagenspiegel'][0]['sollstellungen_summe'],
+            {'savo': '120,00', 'soll': '1.000,00', 'haben': '550,00', 'saldo': '570,00'})
 
     def test_ohne_sollstellungen_keine_tabelle(self):
         SollstellungSplit.objects.all().delete()

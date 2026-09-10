@@ -57,8 +57,9 @@ def _ruecklagenspiegel_kontext(ea: EinzelAbrechnung, objekt, wj) -> dict:
     Kap. 4.5-Ergänzung: je Rücklage zusätzlich
     - der Rückstand des Eigentümers auf die Zuführung (rueckstand_zufuehrung —
       Rückstände auf die Erhaltungsrücklage sind auszuweisen), und
-    - die Sollstellungen je Wohnung (sollstellungen) — Soll, Haben und Saldo
-      der Rücklagen-Sollstellungen des WJ aus dem Nebenbuch, mit Summenzeile.
+    - die Sollstellungen je Wohnung (sollstellungen) — Saldovortrag, Soll,
+      Haben und Saldo der Rücklagen-Sollstellungen des WJ aus dem Nebenbuch,
+      mit Summenzeile.
 
     Quelle: EinzelAbrechnung.ruecklagen (bereits von
     einzelabrechnung_service._berechne_einheit() befüllt) für die Summen- und
@@ -98,12 +99,14 @@ def _ruecklagenspiegel_kontext(ea: EinzelAbrechnung, objekt, wj) -> dict:
             ss = ruecklagen_sollstellungen_je_einheit(objekt, wj, r['ba_nr'])
             sollstellungen = [{
                 'einheit_nr': s['einheit_nr'],
+                'savo': _fmt(s['savo']),
                 'soll': _fmt(s['soll']),
                 'haben': _fmt(s['haben']),
                 'saldo': _fmt(s['saldo']),
             } for s in ss]
             if ss:
                 sollstellungen_summe = {
+                    'savo': _fmt(sum(s['savo'] for s in ss)),
                     'soll': _fmt(sum(s['soll'] for s in ss)),
                     'haben': _fmt(sum(s['haben'] for s in ss)),
                     'saldo': _fmt(sum(s['saldo'] for s in ss)),
