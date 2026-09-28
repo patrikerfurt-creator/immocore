@@ -20,19 +20,25 @@ function fmtDate(iso: string): string {
   return `${d}.${m}.${y}`
 }
 
+// Reine String-Arithmetik, absichtlich ohne `Date`: `new Date('2025-12-12')`
+// wird als UTC-Mitternacht gelesen, der Monatserste danach aber als lokales
+// Datum gebaut — `toISOString()` schob das Ergebnis in jeder Zeitzone östlich
+// von UTC einen Tag zurück (Berlin: 2025-12-12 → „2025-12-31" statt
+// 2026-01-01). Die falsche Wirkungsperiode zog sich durch den ganzen Wechsel:
+// Storno-Grenze, Nachhol-Perioden und die Hausgeld-Vorbelegung in Schritt 3.
 function monatsersterNach(stichtag: string): string {
-  if (!stichtag) return ''
-  const d = new Date(stichtag)
-  if (d.getDate() === 1) return stichtag
-  const next = new Date(d.getFullYear(), d.getMonth() + 1, 1)
-  return next.toISOString().slice(0, 10)
+  const [y, m, d] = stichtag.split('-').map(Number)
+  if (!y || !m || !d) return ''
+  if (d === 1) return stichtag
+  if (m === 12) return `${y + 1}-01-01`
+  return `${y}-${String(m + 1).padStart(2, '0')}-01`
 }
 
 function isRueckwirkend(wp: string): boolean {
   if (!wp) return false
   const heute = new Date()
-  const erster = new Date(heute.getFullYear(), heute.getMonth(), 1)
-  return new Date(wp) < erster
+  const erster = `${heute.getFullYear()}-${String(heute.getMonth() + 1).padStart(2, '0')}-01`
+  return wp < erster
 }
 
 export function EW_Step01_EinheitStichtag({ stepsData, initialData, onWeiter, isLoading, errors }: StepProps) {

@@ -263,6 +263,18 @@ export function ProzessWizard() {
                 <span className="font-mono text-xs font-medium">{ewAbschlussErgebnis.wechsel_id}</span>
                 <span className="text-gray-500">Käufer-EV:</span>
                 <span className="font-mono text-xs font-medium">{ewAbschlussErgebnis.kaeufer_ev_id}</span>
+                {ewAbschlussErgebnis.verkaeufer_personenkonto_nr && (
+                  <>
+                    <span className="text-gray-500">Personenkonto Verkäufer:</span>
+                    <span className="font-mono font-medium">{ewAbschlussErgebnis.verkaeufer_personenkonto_nr}</span>
+                  </>
+                )}
+                {ewAbschlussErgebnis.kaeufer_personenkonto_nr && (
+                  <>
+                    <span className="text-gray-500">Personenkonto Käufer (neu):</span>
+                    <span className="font-mono font-medium">{ewAbschlussErgebnis.kaeufer_personenkonto_nr}</span>
+                  </>
+                )}
                 {ewAbschlussErgebnis.auszahlungslauf_id && (
                   <>
                     <span className="text-gray-500">Auszahlungslauf:</span>

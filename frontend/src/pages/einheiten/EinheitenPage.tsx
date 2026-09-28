@@ -55,6 +55,7 @@ export function EinheitenPage() {
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS)
   const [editEinheitId, setEditEinheitId] = useState<string | null>(null)
   const [editPersonId, setEditPersonId] = useState<string>('')
+  const [historieEinheit, setHistorieEinheit] = useState<{ id: string; einheit_nr: string } | null>(null)
 
   const { data: einheiten = [], isLoading: loadingE } = useQuery({
     queryKey: ['einheiten', selectedObjektId],
@@ -468,7 +469,16 @@ export function EinheitenPage() {
                       sorted.map(e => (
                         <tr key={e.id} className="border-t border-gray-100 hover:bg-gray-50">
                           <td className="px-3 py-2.5 text-gray-500">{e.flaechennummer || '–'}</td>
-                          <td className="px-3 py-2.5 font-medium text-gray-800">{e.einheit_nr}</td>
+                          <td className="px-3 py-2.5 font-medium">
+                            <button
+                              type="button"
+                              onClick={() => setHistorieEinheit({ id: e.id, einheit_nr: e.einheit_nr })}
+                              className="text-primary-700 hover:text-primary-900 hover:underline"
+                              title="Eigentümerhistorie anzeigen"
+                            >
+                              {e.einheit_nr}
+                            </button>
+                          </td>
                           <td className="px-3 py-2.5 text-gray-600">{e.einheit_typ || '–'}</td>
                           <td className="px-3 py-2.5 text-gray-600">{e.lage}</td>
                           <td className="px-3 py-2.5 text-gray-600">{e.eingang_bezeichnung || '–'}</td>
@@ -547,8 +557,112 @@ export function EinheitenPage() {
               </div>
             </div>
           )}
+
+          {historieEinheit && (
+            <EigentuemerHistorieModal
+              einheitId={historieEinheit.id}
+              einheitNr={historieEinheit.einheit_nr}
+              onClose={() => setHistorieEinheit(null)}
+            />
+          )}
         </>
       )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Eigentümerhistorie einer Einheit
+// ---------------------------------------------------------------------------
+
+function EigentuemerHistorieModal({
+  einheitId,
+  einheitNr,
+  onClose,
+}: {
+  einheitId: string
+  einheitNr: string
+  onClose: () => void
+}) {
+  const { data: historie = [], isLoading } = useQuery({
+    queryKey: ['eigentumsverhaeltnisse', 'historie', einheitId],
+    queryFn: () => personenApi.eigentumsverhaeltnisse({ einheit: einheitId }),
+  })
+
+  // Ohne aktiv-Filter liefert das Backend die vollständige Historie.
+  // Neuester Eigentümer zuerst (Backend-Ordering: -beginn).
+  const sorted = useMemo(
+    () => [...historie].sort((a, b) => b.beginn.localeCompare(a.beginn)),
+    [historie],
+  )
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 overflow-y-auto"
+      onClick={onClose}
+    >
+      <div
+        className="mt-16 w-full max-w-2xl rounded-lg bg-white shadow-xl"
+        onClick={ev => ev.stopPropagation()}
+      >
+        <div className="flex items-start justify-between border-b border-gray-200 px-5 py-4">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">Eigentümerhistorie</h2>
+            <p className="mt-0.5 text-sm text-gray-500">Einheit {einheitNr}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600"
+            aria-label="Schließen"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="px-5 py-4">
+          {isLoading ? (
+            <p className="text-sm text-gray-400">Laden…</p>
+          ) : sorted.length === 0 ? (
+            <p className="text-sm text-gray-400">Keine Eigentumsverhältnisse erfasst.</p>
+          ) : (
+            <table className="w-full text-sm">
+              <thead className="border-b border-gray-200 bg-gray-50">
+                <tr>
+                  <th className="px-3 py-2 text-left font-medium text-gray-600">Eigentümer</th>
+                  <th className="px-3 py-2 text-left font-medium text-gray-600">PK-Nr.</th>
+                  <th className="px-3 py-2 text-left font-medium text-gray-600">Von</th>
+                  <th className="px-3 py-2 text-left font-medium text-gray-600">Bis</th>
+                  <th className="px-3 py-2 text-left font-medium text-gray-600">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map(ev => (
+                  <tr key={ev.id} className="border-b border-gray-100 last:border-0">
+                    <td className="px-3 py-2 text-gray-800">{ev.person_name}</td>
+                    <td className="px-3 py-2 font-mono text-xs text-gray-600">
+                      {ev.personenkonto_nr || '–'}
+                    </td>
+                    <td className="px-3 py-2 text-gray-600">{ev.beginn}</td>
+                    <td className="px-3 py-2 text-gray-600">{ev.ende || '–'}</td>
+                    <td className="px-3 py-2">
+                      {ev.ende ? (
+                        <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500">
+                          beendet
+                        </span>
+                      ) : (
+                        <span className="inline-flex rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
+                          aktiv
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

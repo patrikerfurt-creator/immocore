@@ -21,7 +21,11 @@ from .validators import ObjektAnlageValidator
 
 try:
     from apps.buchhaltung.models import EigentuemerwechselVorgang
-    from apps.buchhaltung.services.eigentuemerwechsel_service import analysiere_wechsel, commite_wechsel
+    from apps.buchhaltung.services.eigentuemerwechsel_service import (
+        analysiere_wechsel,
+        bestimme_wirkungs_periode,
+        commite_wechsel,
+    )
     _EW_AVAILABLE = True
 except ImportError:
     _EW_AVAILABLE = False
@@ -815,15 +819,45 @@ class ProzessViewSet(viewsets.ModelViewSet):
             wirkungs_periode = _date.fromisoformat(wirkungs_periode_str) if wirkungs_periode_str else None
         except ValueError:
             wirkungs_periode = None
-        if not wirkungs_periode:
-            wirkungs_periode = analysiere_wechsel(einheit, stichtag).wirkungs_periode
+        # Die Wirkungsperiode ist immer ein Monatserster. Ein abweichender Wert
+        # aus dem Client wird verworfen und neu aus dem Stichtag bestimmt —
+        # sonst laufen Storno-Grenze, Nachhol-Perioden und die Hausgeld-
+        # Vorbelegung auf einen Monat, den es fachlich nicht gibt.
+        if not wirkungs_periode or wirkungs_periode.day != 1:
+            wirkungs_periode = bestimme_wirkungs_periode(stichtag)
+
+        # Hausgeld-Sollwerte prüfen. Ohne Beträge legt der Commit weder
+        # HausgeldHistorie noch Nachhol-Sollstellungen an — der Käufer bliebe
+        # dauerhaft unbelastet, auch in künftigen Sollstellungsläufen, während
+        # die Sollstellungen des Verkäufers storniert werden. Das darf nicht
+        # stillschweigend durchlaufen.
+        hausgeld_je_ba = {}
+        for kontoart, betrag in (step3.get('hausgeld_je_ba') or {}).items():
+            text = str(betrag).strip() if betrag is not None else ''
+            if not text:
+                continue
+            try:
+                wert = Decimal(text)
+            except (ArithmeticError, ValueError):
+                return Response(
+                    {'errors': [f'Ungültiger Hausgeld-Betrag für {kontoart}: "{betrag}"']},
+                    status=400,
+                )
+            if wert > 0:
+                hausgeld_je_ba[kontoart] = wert
+        if not hausgeld_je_ba:
+            return Response({'errors': [
+                'Kein Hausgeld-Sollbetrag erfasst (Schritt 3). Ohne Beträge erhält '
+                'der Käufer keine Sollstellungen — bitte das monatliche Soll je '
+                'Buchungsart eintragen.'
+            ]}, status=400)
 
         verkaeufer_iban = step4.get('verkaeufer_iban') or ''
 
         entscheidungen = {
             'kaeufer_person_id': step2['kaeufer_person_id'],
             'kaeufer_iban': step2.get('kaeufer_iban', ''),
-            'hausgeld_je_ba': step3.get('hausgeld_je_ba', {}),
+            'hausgeld_je_ba': hausgeld_je_ba,
             'stornieren_ids': step4.get('stornieren_ids', []),
             'erstatten': step4.get('erstatten', []),
             'verkaeufer_iban': verkaeufer_iban,
@@ -850,6 +884,8 @@ class ProzessViewSet(viewsets.ModelViewSet):
         return Response({
             'wechsel_id': result['wechsel_id'],
             'kaeufer_ev_id': result['kaeufer_ev_id'],
+            'kaeufer_personenkonto_nr': result.get('kaeufer_personenkonto_nr'),
+            'verkaeufer_personenkonto_nr': result.get('verkaeufer_personenkonto_nr'),
             'auszahlungslauf_id': result['auszahlungslauf_id'],
             'nachhol_count': len(result['nachhol_sollstellungs_ids']),
             'storniert_count': len(result['stornierte_sollstellungs_ids']),

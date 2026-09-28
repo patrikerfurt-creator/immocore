@@ -368,24 +368,40 @@ function KontoauszugView({
                   key={pos.id}
                   onClick={() => onBuchungClick(pos)}
                   className={`border-t transition-colors ${
-                    pos.hat_detail
-                      ? 'hover:bg-blue-50 cursor-pointer'
-                      : 'hover:bg-gray-50'
+                    pos.storniert
+                      ? 'bg-gray-50/60 text-gray-400'
+                      : pos.hat_detail
+                        ? 'hover:bg-blue-50 cursor-pointer'
+                        : 'hover:bg-gray-50'
                   }`}
                 >
-                  <td className="px-4 py-2.5 font-mono text-xs text-blue-700">
+                  <td className={`px-4 py-2.5 font-mono text-xs ${pos.storniert ? 'text-gray-400 line-through' : 'text-blue-700'}`}>
                     {pos.opos_nr ?? pos.bu_nr ?? '—'}
                   </td>
-                  <td className="px-4 py-2.5 text-gray-700 whitespace-nowrap">{DATUM(pos.buchungsdatum)}</td>
-                  <td className="px-4 py-2.5 text-gray-800 max-w-xs truncate">{pos.buchungstext || '—'}</td>
-                  <td className="px-4 py-2.5 text-right tabular-nums text-gray-800">
+                  <td className={`px-4 py-2.5 whitespace-nowrap ${pos.storniert ? 'text-gray-400' : 'text-gray-700'}`}>
+                    {DATUM(pos.buchungsdatum)}
+                  </td>
+                  <td className={`px-4 py-2.5 max-w-xs truncate ${pos.storniert ? 'text-gray-400' : 'text-gray-800'}`}>
+                    <span className={pos.storniert ? 'line-through' : undefined}>{pos.buchungstext || '—'}</span>
+                    {pos.storniert && (
+                      <span
+                        className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700 no-underline"
+                        title={pos.storniert_grund || 'Storniert'}
+                      >
+                        storniert{pos.storniert_am ? ` ${DATUM(pos.storniert_am)}` : ''}
+                      </span>
+                    )}
+                  </td>
+                  <td className={`px-4 py-2.5 text-right tabular-nums ${pos.storniert ? 'text-gray-400 line-through' : 'text-gray-800'}`}>
                     {pos.soll != null ? EUR(pos.soll) : ''}
                   </td>
-                  <td className="px-4 py-2.5 text-right tabular-nums text-green-700">
+                  <td className={`px-4 py-2.5 text-right tabular-nums ${pos.storniert ? 'text-gray-400 line-through' : 'text-green-700'}`}>
                     {pos.haben != null ? EUR(pos.haben) : ''}
                   </td>
                   <td className={`px-4 py-2.5 text-right tabular-nums font-semibold ${
-                    pos.saldo < 0 ? 'text-red-600' : pos.saldo > 0 ? 'text-green-600' : 'text-gray-500'
+                    pos.storniert
+                      ? 'text-gray-400'
+                      : pos.saldo < 0 ? 'text-red-600' : pos.saldo > 0 ? 'text-green-600' : 'text-gray-500'
                   }`}>
                     {EUR(pos.saldo)}
                   </td>

@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Button } from '../../../components/ui/Button'
 import { personenApi } from '../../../api/personen'
-import type { EigentumsVerhaeltnis, HausgeldHistorie } from '../../../types'
+import { buchhaltungApi } from '../../../api/buchhaltung'
+import type { Abrechnungsart, EigentumsVerhaeltnis, HausgeldHistorie } from '../../../types'
 
 interface StepProps {
   prozessId: string
@@ -13,8 +14,12 @@ interface StepProps {
   errors: string[]
 }
 
-// BA rows that the wizard manages — kontoart key is '.900' etc. (dot + nr)
-const BA_ZEILEN = [
+// Fallback, falls die Abrechnungsarten des Objekts (noch) nicht geladen sind.
+// Sie sind absichtlich NICHT die feste Zeilenliste: hier stand vorher nur
+// .900/.911/.912/.940, wodurch jede weitere Abrechnungsart des Objekts
+// (z.B. 915, 919) stillschweigend aus dem Käufer-Soll fiel — der Käufer wurde
+// dann dauerhaft zu niedrig belastet.
+const BA_FALLBACK = [
   { kontoart: '.900', bezeichnung: 'Hausgeld lfd.' },
   { kontoart: '.911', bezeichnung: '1. Rücklage' },
   { kontoart: '.912', bezeichnung: '2. Rücklage' },
@@ -48,6 +53,7 @@ function getFutureEntries(entries: HausgeldHistorie[], kontoart: string, today: 
 
 export function EW_Step03_HausgeldSollwerte({ stepsData, initialData, onWeiter, isLoading, errors }: StepProps) {
   const step1 = (stepsData['1'] ?? {}) as Record<string, unknown>
+  const objektId      = (stepsData as { objekt_id?: string }).objekt_id
   const einheitId     = step1.einheit_id as string | undefined
   const wirkungsDatum = (step1.wirkungs_periode as string | undefined) ?? ''
   const today         = new Date().toISOString().slice(0, 10)
@@ -59,6 +65,29 @@ export function EW_Step03_HausgeldSollwerte({ stepsData, initialData, onWeiter, 
   })
   const aktivesEv = evListe?.find((ev: EigentumsVerhaeltnis) => ev.ist_aktiv)
   const eintraege: HausgeldHistorie[] = aktivesEv?.hausgeld_eintraege ?? []
+
+  const { data: abrechnungsarten } = useQuery({
+    queryKey: ['abrechnungsarten', objektId],
+    queryFn:  () => buchhaltungApi.abrechnungsarten(objektId!),
+    enabled:  !!objektId,
+  })
+
+  // Zeilen aus den Abrechnungsarten des Objekts, ergänzt um alles, was in der
+  // Verkäufer-Historie vorkommt — damit keine Position unterschlagen wird.
+  const BA_ZEILEN = useMemo(() => {
+    const map = new Map<string, { kontoart: string; bezeichnung: string }>()
+    for (const a of (abrechnungsarten ?? []) as Abrechnungsart[]) {
+      if (a.aktiv) map.set(a.code, { kontoart: `.${a.code}`, bezeichnung: a.bezeichnung })
+    }
+    for (const h of eintraege) {
+      const code = h.abrechnungsart_code
+      if (code && !map.has(code)) {
+        map.set(code, { kontoart: `.${code}`, bezeichnung: h.abrechnungsart_bezeichnung || code })
+      }
+    }
+    if (map.size === 0) return BA_FALLBACK
+    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([, v]) => v)
+  }, [abrechnungsarten, eintraege])
 
   // Saved data from a previous visit to this step (edit mode)
   const savedHje = (initialData.hausgeld_je_ba ?? {}) as Record<string, string>
@@ -77,10 +106,22 @@ export function EW_Step03_HausgeldSollwerte({ stepsData, initialData, onWeiter, 
       if (entry) prefill[row.kontoart] = entry.betrag
     }
     if (Object.keys(prefill).length > 0) setHausgeldJeBa(prefill)
-  }, [aktivesEv])
+    // BA_ZEILEN hängt an den Abrechnungsarten des Objekts — die können nach
+    // dem EV eintreffen, deshalb muss die Vorbelegung darauf erneut laufen.
+  }, [aktivesEv, BA_ZEILEN])
+
+  // Ohne positiven Betrag erhält der Käufer keine Sollstellungen — und zwar
+  // dauerhaft, weil auch die HausgeldHistorie leer bleibt. Der Wechsel darf
+  // hier nicht weiterlaufen, ohne dass das auffällt.
+  const summe = BA_ZEILEN.reduce(
+    (s, row) => s + (parseFloat(hausgeldJeBa[row.kontoart] ?? '') || 0),
+    0,
+  )
+  const keinSoll = summe <= 0
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (keinSoll) return
     await onWeiter({ hausgeld_je_ba: hausgeldJeBa })
   }
 
@@ -167,6 +208,15 @@ export function EW_Step03_HausgeldSollwerte({ stepsData, initialData, onWeiter, 
       {aktivesEv && eintraege.length === 0 && (
         <p className="text-sm text-amber-600">Keine Hausgeld-Historie beim Verkäufer gefunden — bitte Beträge manuell eingeben.</p>
       )}
+      {aktivesEv && eintraege.length > 0 && keinSoll && (
+        <div className="rounded-md bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800">
+          Keine Vorbelegung möglich: der Verkäufer hat für den{' '}
+          {wirkungsDatum ? <>Stand <strong>{fmtDate(wirkungsDatum)}</strong></> : 'gewählten Stand'}{' '}
+          keinen Hausgeld-Eintrag — seine Historie beginnt erst später. Bitte die
+          Beträge manuell eintragen; ohne Soll erhält der Käufer keine
+          Sollstellungen.
+        </div>
+      )}
 
       {errors.length > 0 && (
         <div className="rounded-md bg-red-50 p-3 space-y-1">
@@ -175,7 +225,7 @@ export function EW_Step03_HausgeldSollwerte({ stepsData, initialData, onWeiter, 
       )}
 
       <div className="flex justify-end pt-2">
-        <Button type="submit" disabled={isLoading}>
+        <Button type="submit" disabled={isLoading || keinSoll}>
           {isLoading ? 'Speichern…' : 'Weiter'}
         </Button>
       </div>

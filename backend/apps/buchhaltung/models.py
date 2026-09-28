@@ -369,6 +369,7 @@ class ImportOrdnerEinstellung(models.Model):
     BEREICH_CHOICES = [
         ('rechnungen', 'Rechnungen'),
         ('dokumente', 'Dokumente'),
+        ('mails', 'Mails (Posteingang)'),
     ]
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
     bereich = models.CharField(max_length=50, choices=BEREICH_CHOICES, unique=True)
