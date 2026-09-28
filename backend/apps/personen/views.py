@@ -415,7 +415,7 @@ class EigentumsVerhaeltnisViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = EigentumsVerhaeltnis.objects.select_related(
-            'person', 'einheit', 'einheit__objekt'
+            'person', 'einheit', 'einheit__objekt', 'personenkonto'
         ).prefetch_related('hausgeld_eintraege__abrechnungsart')
         objekt_id = self.request.query_params.get('objekt')
         einheit_id = self.request.query_params.get('einheit')

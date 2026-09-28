@@ -36,9 +36,12 @@ import { DokumenteListe } from './pages/dokumente/DokumenteListe'
 import { VorgaengeListe } from './pages/vorgaenge/VorgaengeListe'
 import { VorgangDetail } from './pages/vorgaenge/VorgangDetail'
 import { VorgangTypenAdmin } from './pages/vorgaenge/VorgangTypenAdmin'
+import MailPosteingang from './pages/vorgaenge/MailPosteingang'
+import Hausakte from './pages/dokumente/Hausakte'
 import { AbrechnungsartenPage } from './pages/stammdaten/AbrechnungsartenPage'
 import { VerteilerschluesselPage } from './pages/stammdaten/VerteilerschluesselPage'
 import { KontenplanPage } from './pages/stammdaten/KontenplanPage'
+import { VersammlungsortePage } from './pages/kataloge/VersammlungsortePage'
 import { Einstellungen } from './pages/Einstellungen'
 import { MassenimportWEG } from './pages/massenimport/MassenimportWEG'
 import { Lastschrift } from './pages/zahlungsverkehr/Lastschrift'
@@ -117,6 +120,7 @@ export default function App() {
             <Route path="stammdaten/abrechnungsarten" element={<AbrechnungsartenPage />} />
             <Route path="stammdaten/verteilerschluessel" element={<VerteilerschluesselPage />} />
             <Route path="stammdaten/kontenplan" element={<KontenplanPage />} />
+            <Route path="kataloge/versammlungsorte" element={<VersammlungsortePage />} />
             <Route path="buchhaltung" element={<Buchungsjournal />} />
             <Route path="buchhaltung/bankimport" element={<BankImport />} />
             <Route path="buchhaltung/debitoren" element={<Debitoren />} />
@@ -139,7 +143,9 @@ export default function App() {
             <Route path="admin/rechnungen/match-regeln" element={<MatchRegeln />} />
             <Route path="prozesse" element={<ProzessWizard />} />
             <Route path="dokumente" element={<DokumenteListe />} />
+            <Route path="dokumente/hausakte" element={<Hausakte />} />
             <Route path="vorgaenge" element={<VorgaengeListe />} />
+            <Route path="vorgaenge/posteingang" element={<MailPosteingang />} />
             <Route path="vorgaenge/:id" element={<VorgangDetail />} />
             <Route path="admin/vorgang-typen" element={<VorgangTypenAdmin />} />
             <Route path="handwerker/auftraege" element={<HandwerkerauftraegeListe />} />

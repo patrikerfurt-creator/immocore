@@ -54,6 +54,7 @@ const variants: Record<string, string> = {
   abgelaufen:     'bg-orange-100 text-orange-700',
   // Eigentümerversammlung (entwurf/in_bearbeitung/archiviert s.o. bereits vorhanden)
   einladungen_versendet:  'bg-blue-100 text-blue-700',
+  ausgecheckt:            'bg-purple-100 text-purple-700',
   durchgefuehrt:          'bg-indigo-100 text-indigo-700',
   beschluesse_verarbeitet:'bg-green-100 text-green-800',
   // Priorität

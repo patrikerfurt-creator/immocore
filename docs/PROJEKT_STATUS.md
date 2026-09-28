@@ -79,6 +79,10 @@
 | Ticket | ⚠️ ersetzt | Entfernt 2026-08-09 (Phase E Cleanup) — ersetzt durch `Vorgang`, siehe `CLAUDE_CODE_ANLEITUNG_VORGANG_DMS_v1_0.md` |
 | Vorgang | ✅ | Generische Fallakte (apps.vorgaenge), löst `Ticket` ab — Ereignisse, Status-Lifecycle, Wiedervorlage, Dokument-Kopplung |
 | VorgangTyp.portal_erstellbar | ✅ | Default `False` — je Typ bewusst freizuschalten, damit interne Typen nicht im Portal auftauchen |
+| Aktenregister | ✅ | Gliederung der Akten — 21 Register Hausakte aus dem Trennblätterverzeichnis (01–17 unverändert, 18–21 für die digitale Ablage ergänzt). `objekt` nullable: leer = gemeinsame Gliederung, gesetzt = nur in der Akte dieses Objekts (digitales Trennblatt `05/A Hebeanlage`); Code dadurch nur je Objekt eindeutig |
+| VorgangTyp Fallakten | ✅ | `anfechtung`, `hausgeldklage`, `versicherungsschaden`, `sanierung` — Fälle mit Laufzeit und Fristen statt bloßer Ablage. Kein automatischer KI-Antwortentwurf (wäre Rechtsauskunft), nicht im Portal erstellbar |
+| Dokument.mail_import | ✅ | Herkunftsfeld (kein Kontext-FK): jede eingegangene Mail wird als Originaldatei im DMS abgelegt, Anhänge zusätzlich einzeln. Zweite Ausnahme von der Owner-Regel neben `Rechnung.beleg_dokument` — Aufbewahrung geschieht sofort und automatisch, die Zuordnung trägt später ein Mensch nach |
+| MailImportProtokoll | ✅ | Ordner-Posteingang (`.eml` + `.msg`, letzteres über `extract-msg`): je verarbeiteter Mail eine Zeile mit dem, was Stufe 1 (regelbasiert) und Stufe 2 (KI) erkannt haben — Grundlage der Trefferquoten-Auswertung. Testaufbau für den in Phase 2 geplanten DOPRE-/Graph-Eingang |
 | Mietvertrag | ✅ | Model (ZH/SEV), Wizard Phase 2 🚫 |
 | PortalZugang | ✅ | Eigentümer-Portal (apps.portal), OneToOne→Person, aktiv, eingeladen_von, erstaktivierung_am, email_pending |
 | PortalToken | ✅ | Einmal-Link für Einladung (72h) / Magic Link (15min) / E-Mail-Bestätigung (24h) |
@@ -167,6 +171,8 @@
 | `/dokumente/` | Upload + Liste (mit Rechnungsdaten angereichert: Kreditor, Betrag, Kurztext, Rechnungs-/Eingangsdatum; sortierbar über `rechnung__*`) + Löschsperre | ✅ |
 | `/vorgaenge/` | CRUD + status + kommentar + zuweisen + dokumente (ersetzt `/tickets/`, entfernt 2026-08-09) | ✅ |
 | `/vorgang-typen/` (+ `/admin`) | ReadOnly + Admin-CRUD der Vorgangstypen | ✅ |
+| `/dokumente/<id>/mail-vorschau/` | Lesbare Textvorschau einer abgelegten `.eml`/`.msg`; Inhalt wird HTML-escaped ausgegeben (XSS-Schutz), dazu CSP + `nosniff` als zweite Linie. Erzeugt bei jedem Abruf neu, keine zweite Datei im DMS | ✅ |
+| `/mail-posteingang/` | Arbeitsliste nicht zuordenbarer Mails + 4 Aktionen (`vorgang-anlegen`, `vorgang-zuordnen`, `nur-ablegen`, `verwerfen`); kein generisches PATCH — der Status ändert sich nur über die Aktionen | ✅ |
 | `/portal/auth/magic-link/` | request (neutrale Antwort) + verify (Einladung & Magic Link) + logout | ✅ |
 | `/portal/meine-einheiten/` | WEG-Karten + Einheiten-Stammdaten des eingeloggten Eigentümers | ✅ |
 | `/portal/meine-daten/` | GET + PATCH (Adresse/Telefon) + `email/` + `email/bestaetigen/` + `bankverbindung/` | ✅ |
@@ -236,6 +242,8 @@
 | | Jahresabrechnungs-Wizard | 🔄 | Schritte definiert; .950-Buchung + PDF fehlt |
 | **Sonstige** | DokumenteListe | ✅ | Upload + Liste; Belegspalten Kreditor (⚠ bei unbestätigtem Kreditor) / Kurztext / Bruttobetrag / Rechnungs- / Eingangsdatum, sortierbar nach Betrag und Rechnungsdatum; Löschen-Button gesperrt bei geprüften Belegen |
 | | VorgaengeListe / VorgangDetail | ✅ | Ersetzt TicketsListe (entfernt 2026-08-09); Status-Workflow, Ereignisse, Dokument-Upload |
+| | MailPosteingang | ✅ | Arbeitsliste offener Mails mit KI-Vorschlag als Entscheidungshilfe; Vorgang anlegen / zuordnen / nur ablegen / verwerfen (Verwerfen nur mit Begründung) |
+| | Hausakte | ✅ | `/dokumente/hausakte?objekt=…` — Registerbaum links (leere Register bleiben sichtbar), Dokumente rechts mit Herkunftsangabe und Mail-Vorschau; Untergliederung anlegen und Dokumente einsortieren direkt aus der Akte |
 | | MassenimportWEG | ✅ | CSV-Massenimport |
 | | Einstellungen | ✅ | Tabs: E-Banking, Rechnungen, Dokumente, **Freigabelimits (neu)** |
 | | KreditorDubletten | ✅ | Prüfliste angehaltener Kreditor-Neuanlagen; je Fall zuordnen / neu anlegen / ablehnen (Sidebar: „Kreditor-Prüfung") |
@@ -282,7 +290,9 @@
 | E-Mail-Benachrichtigungen | Niedrig | Django Email + SMTP |
 | BWA / Summen-Saldenliste | Niedrig | Auswertungs-Reports |
 | `Freigabe.rechnung` auf PROTECT/SET_NULL | Niedrig | Aktuell `CASCADE`: beim Löschen einer ungeprüften Rechnung verschwindet ihr Freigabe-Protokoll still mit. Braucht eine Migration ⚠️ Abw. 013 |
-| Anzeigename für Dokumente ohne Rechnungsbezug | Niedrig | Verträge/Beschlüsse werden in der Dokumente-Liste über den Dateinamen identifiziert; ein echtes Titelfeld (ggf. KI-Vorschlag) ist eigenes Thema |
+| Mail-Posteingang: Bereich `mails` in der Einstellungen-Seite | Niedrig | `OrdnerMaske` in `frontend/src/pages/Einstellungen.tsx` kennt nur `rechnungen` und `dokumente` — der Mail-Ordner ist derzeit nur per API/Kommandozeile konfigurierbar |
+| Mail-Posteingang: Zuordnung von Dienstleister-Mails | Mittel | Im echten Posteingang stammt die Mehrzahl der Mails von Handwerkern, Lieferanten und Behörden — deren Absender stehen nicht als `Person` mit Eigentumsverhältnis in den Stammdaten, die Zuordnung schlägt fehl (60 % im Testlauf vom 14.09.2026). Die Betreffzeilen enthalten dagegen fast immer die Objektadresse; eine Objekterkennung aus dem Betreff (`zuordnung_quelle='name_betreff'` ist dafür bereits vorgesehen) wäre der wirksamste Hebel |
+| ~~Anzeigename für Dokumente ohne Rechnungsbezug~~ | — | ✅ Erledigt 21.09.2026: `Dokument.titel` plus Property `anzeigename` (Titel → Rechnungsableitung → Dateiname). Der Dateiname bleibt unangetastet. Mails erhalten den Titel aus dem KI-Kurzbetreff, Rechnungen deterministisch aus Kreditor/Nummer/Datum — ohne zusätzlichen KI-Aufruf. KI-Titel für Scans ohne sprechenden Namen bleibt offen, bis es solche gibt |
 
 ### Phase 2 (nicht im MVP-Scope)
 | Punkt |

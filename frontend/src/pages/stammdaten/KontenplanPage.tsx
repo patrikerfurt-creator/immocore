@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { buchhaltungApi } from '../../api/buchhaltung'
+import { apiFehler } from '../../api/fehler'
 import { wirtschaftsjahreApi } from '../../api/wirtschaftsjahre'
 import { objekteApi } from '../../api/objekte'
 import type { Konto, Verteilerschluessel, Wirtschaftsjahr } from '../../types'
@@ -98,7 +99,7 @@ function KontoModal({
       qc.invalidateQueries({ queryKey: ['konten', objektId] })
       onClose()
     },
-    onError: (e: Error) => setError(e.message || 'Fehler beim Speichern'),
+    onError: (e: unknown) => setError(apiFehler(e, 'Fehler beim Speichern')),
   })
 
   return (

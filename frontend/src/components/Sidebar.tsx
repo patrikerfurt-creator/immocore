@@ -44,10 +44,16 @@ const abrechnungWpItems: NavItemDef[] = [
   { to: '/abrechnung-wp/jahresabrechnung', label: 'Jahresabrechnung', icon: '🧾', objektAware: true },
 ]
 
+const katalogeItems: NavItemDef[] = [
+  { to: '/kataloge/versammlungsorte', label: 'Versammlungsorte', icon: '📍' },
+]
+
 const otherItems: NavItemDef[] = [
   { to: '/prozesse',        label: 'Prozesse',    icon: '⚙️' },
   { to: '/dokumente',       label: 'Dokumente',   icon: '📁', objektAware: true },
+  { to: '/dokumente/hausakte', label: 'Hausakte', icon: '🗂️', objektAware: true },
   { to: '/vorgaenge',       label: 'Vorgänge',    icon: '🗒️', objektAware: true },
+  { to: '/vorgaenge/posteingang', label: 'Mail-Posteingang', icon: '📬' },
   { to: '/handwerker/auftraege', label: 'Handwerkeraufträge', icon: '🔧' },
   { to: '/versammlungen',   label: 'Versammlungen', icon: '🗳️', objektAware: true },
   { to: '/versammlungen/beschluesse', label: 'Beschluss-Sammlung', icon: '📜', objektAware: true },
@@ -61,6 +67,7 @@ const stammdatenPaths = stammdatenItems.map(i => i.to)
 const buchhaltungPaths = [...buchhaltungItems.map(i => i.to), '/rechnungen', '/buchhaltung/wkz-ops']
 const zahlungsverkehrPaths = zahlungsverkehrItems.map(i => i.to)
 const abrechnungWpPaths = abrechnungWpItems.map(i => i.to)
+const katalogePaths = katalogeItems.map(i => i.to)
 
 function resolvedTo(item: NavItemDef, selectedId: string | null) {
   if (item.objektAware && selectedId) {
@@ -138,11 +145,13 @@ export function Sidebar() {
   const isInBuchhaltung = buchhaltungPaths.some(p => location.pathname.startsWith(p))
   const isInZahlungsverkehr = zahlungsverkehrPaths.some(p => location.pathname.startsWith(p))
   const isInAbrechnungWp = abrechnungWpPaths.some(p => location.pathname.startsWith(p))
+  const isInKataloge = katalogePaths.some(p => location.pathname.startsWith(p))
 
   const [stammdatenOpen, setStammdatenOpen] = useState(isInStammdaten)
   const [buchhaltungOpen, setBuchhaltungOpen] = useState(isInBuchhaltung)
   const [zahlungsverkehrOpen, setZahlungsverkehrOpen] = useState(isInZahlungsverkehr)
   const [abrechnungWpOpen, setAbrechnungWpOpen] = useState(isInAbrechnungWp)
+  const [katalogeOpen, setKatalogeOpen] = useState(isInKataloge)
 
   const { selectedId } = useObjektStore()
 
@@ -266,6 +275,30 @@ export function Sidebar() {
         {otherItems.map(item => (
           <SidebarLink key={item.to} item={item} selectedId={selectedId} />
         ))}
+
+        <div>
+          <button
+            onClick={() => setKatalogeOpen(o => !o)}
+            className={`w-full flex items-center justify-between px-5 py-2.5 text-sm transition-colors ${
+              isInKataloge
+                ? 'text-white font-medium'
+                : 'text-primary-200 hover:bg-primary-800 hover:text-white'
+            }`}
+          >
+            <span className="flex items-center gap-3">
+              <span className="text-base">📚</span>
+              Kataloge
+            </span>
+            <span className="text-xs text-primary-400">{katalogeOpen ? '▲' : '▼'}</span>
+          </button>
+          {katalogeOpen && (
+            <div>
+              {katalogeItems.map(item => (
+                <SidebarLink key={item.to} item={item} selectedId={selectedId} indent />
+              ))}
+            </div>
+          )}
+        </div>
       </nav>
 
       <div className="px-5 py-4 border-t border-primary-700 text-xs text-primary-300 flex-shrink-0">

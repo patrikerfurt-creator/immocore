@@ -180,6 +180,7 @@ export interface HausgeldHistorie {
   betrag: string
   gueltig_ab: string
   abrechnungsart_code: string
+  abrechnungsart_bezeichnung?: string
   wirtschaftsplan_jahr: number | null
   erstellt_von: number
 }
@@ -195,6 +196,8 @@ export interface EigentumsVerhaeltnis {
   hausgeld_soll: string | null
   ist_aktiv: boolean
   hausgeld_eintraege: HausgeldHistorie[]
+  personenkonto_id?: string | null
+  personenkonto_nr?: string | null
 }
 
 export interface VerteilerschluesselWert {
@@ -359,6 +362,10 @@ export interface KontoauszugPosition {
   typ?: string
   status?: string | null
   ist_betrag?: number | null
+  /** Stornierte Sollstellung — wird angezeigt, wirkt aber nicht auf den Saldo. */
+  storniert?: boolean
+  storniert_am?: string | null
+  storniert_grund?: string | null
 }
 
 export interface BuchungDetailPosition {
@@ -1338,6 +1345,9 @@ export interface WechselAnalyse {
 export interface EWAbschlussErgebnis {
   wechsel_id: string
   kaeufer_ev_id: string
+  /** Neu angelegtes Personenkonto des Käufers — hat NICHT die Nummer des Verkäufers. */
+  kaeufer_personenkonto_nr?: string | null
+  verkaeufer_personenkonto_nr?: string | null
   auszahlungslauf_id: string | null
   nachhol_count: number
   storniert_count: number
@@ -1495,6 +1505,7 @@ export type EVStatus =
   | 'entwurf'
   | 'in_bearbeitung'
   | 'einladungen_versendet'
+  | 'ausgecheckt'
   | 'durchgefuehrt'
   | 'beschluesse_verarbeitet'
   | 'archiviert'
@@ -1535,6 +1546,11 @@ export interface EVLadungsfrist {
   warnung: string
 }
 
+export interface EVStimmgrundlageRef {
+  id: string
+  bezeichnung: string
+}
+
 export interface Tagesordnungspunkt {
   id: string
   ev: string
@@ -1545,6 +1561,7 @@ export interface Tagesordnungspunkt {
   abstimmungsmodus: EVAbstimmungsmodus
   abstimmungsmodus_display: string
   mehrheit_schwelle: string | null
+  stimmgrundlage: EVStimmgrundlageRef | null
   abstimmung_ja: string
   abstimmung_nein: string
   abstimmung_enthaltung: string
@@ -1563,8 +1580,38 @@ export interface TagesordnungspunktCreatePayload {
   beschlussvorlage?: string
   abstimmungsmodus?: EVAbstimmungsmodus
   mehrheit_schwelle?: string | null
+  /** Optional — unbelegt wird serverseitig automatisch vorbelegt (Spec v1.1
+   *  Kap. 3). Feldname entspricht TagesordnungspunktCreateSerializer; die
+   *  PATCH-Route erwartet stattdessen "stimmgrundlage_id" (siehe
+   *  TagesordnungspunktSerializer). */
+  stimmgrundlage?: string | null
   triggert_vorgang?: boolean
   triggert_wirtschaftsplan?: boolean
+}
+
+// --- Kataloge (Spec v1.1 Kap. 1) ---
+
+export interface Versammlungsort {
+  id: string
+  bezeichnung: string
+  strasse: string
+  plz: string
+  ort_text: string
+  zusatz: string
+  aktiv: boolean
+}
+
+// --- Stimmgrundlage (Spec v1.1 Kap. 2) ---
+
+export interface EVStimmgrundlage {
+  id: string
+  ev: string
+  verteilerschluessel: string | null
+  verteilerschluessel_text: string | null
+  ist_kopfprinzip: boolean
+  wirtschaftsjahr: number
+  ist_standard: boolean
+  bezeichnung_anzeige: string
 }
 
 export interface EVList {
@@ -1612,7 +1659,9 @@ export interface EVDetail {
   einladungs_pdf: string | null
   einladungs_pdf_dateiname: string | null
   protokoll_pdf: string | null
+  versammlungsort: string | null
   tagesordnung: Tagesordnungspunkt[]
+  stimmgrundlagen: EVStimmgrundlage[]
   versammlungsleiter: string
   protokollfuehrer: string
   einladung_versendet_am: string | null
@@ -1638,12 +1687,18 @@ export interface EVTeilnehmerAnteil {
   mea_wert_snapshot: string | null
 }
 
+export interface EVStimmkraftJeGrundlage {
+  stimmgrundlage_id: string
+  wert: string
+}
+
 export interface EVTeilnehmer {
   id: string
   ev: string
   person: string
   person_name: string
   stimmkraft: string
+  stimmkraft_je_grundlage: EVStimmkraftJeGrundlage[]
   zusage_status: 'offen' | 'zugesagt' | 'abgesagt'
   zusage_am: string | null
   zusage_quelle: string
@@ -1744,6 +1799,35 @@ export interface EVQuorum {
   hinweis: string
 }
 
+// --- Checkout / Abschluss / Protokoll-Upload (Spec v1.1 Kap. 4,
+//     API-Vertrag v1.1 Abschnitt 3.5/3.7/3.8) ---
+
+export interface EVQuorumJeStimmgrundlageEintrag {
+  stimmgrundlage_id: string
+  bezeichnung: string
+  anwesende_stimmkraft: string
+  gesamt_stimmkraft: string
+}
+
+export interface EVQuorumJeStimmgrundlage {
+  je_stimmgrundlage: EVQuorumJeStimmgrundlageEintrag[]
+}
+
+export interface EVAbschlussBeschluss {
+  top_id: string
+  beschluss_nummer: number
+  wortlaut: string
+}
+
+export interface EVAbschlussErgebnis {
+  beschluesse: EVAbschlussBeschluss[]
+}
+
+export interface EVProtokollUploadErgebnis {
+  dokument_id: string
+  dateiname: string
+}
+
 export type EVVotum = 'ja' | 'nein' | 'enthaltung'
 
 export interface EVStimme {
@@ -1787,16 +1871,6 @@ export interface EVBeschluss {
   erstellt_am: string
   erstellt_von: number | null
   erstellt_von_name: string | null
-}
-
-export interface EVUebernahmeErgebnis {
-  beschluesse: number
-  uebersprungen: number
-  vorgaenge: number
-  mit_vorgang_trigger: number
-  mit_wp_trigger: number
-  nummern: number[]
-  protokoll_dokument_id: string
 }
 
 export interface EVAnwesenheitPayload {
