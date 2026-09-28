@@ -29,4 +29,42 @@ export const dokumenteApi = {
     const url = URL.createObjectURL(response.data)
     window.open(url, '_blank')
   },
+
+  /**
+   * Lesbare Textvorschau einer abgelegten Mail (.eml/.msg).
+   *
+   * Der Umweg über den Blob ist nötig, weil der Endpunkt Authentifizierung
+   * verlangt — ein einfaches window.open() würde ohne Token 401 liefern.
+   * Der Schutz vor Schadcode aus der Mail liegt deshalb im Backend, das
+   * jeden Wert HTML-escaped ausgibt: die CSP-Header der Antwort greifen
+   * bei einer blob:-URL nicht mehr.
+   */
+  /**
+   * Liefert die Vorschau als HTML-Text — fuer die Einbettung per
+   * <iframe srcDoc sandbox="">.
+   *
+   * Bewusst NICHT als blob:-URL: ein iframe mit sandbox="" bekommt einen
+   * opaken Origin und kann eine blob:-URL des App-Origins gar nicht laden,
+   * das Fenster bliebe leer. Mit srcDoc entfaellt die URL-Aufloesung, die
+   * vollstaendige Isolation bleibt erhalten — und es gibt nichts
+   * freizugeben.
+   */
+  mailVorschauHtml: async (id: string, kompakt = false): Promise<string> => {
+    const response = await client.get(`/dokumente/${id}/mail-vorschau/`, {
+      responseType: 'text',
+      params: kompakt ? { kompakt: 1 } : undefined,
+      // Ohne das versucht axios, die Antwort als JSON zu parsen.
+      transformResponse: [(daten) => daten],
+    })
+    return response.data as string
+  },
+
+  openMailVorschau: async (id: string) => {
+    const response = await client.get(`/dokumente/${id}/mail-vorschau/`, {
+      responseType: 'blob',
+    })
+    const blob = new Blob([response.data], { type: 'text/html; charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    window.open(url, '_blank')
+  },
 }
