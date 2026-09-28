@@ -34,8 +34,6 @@ from django.core.exceptions import ImproperlyConfigured
 from django.core.mail.backends.base import BaseEmailBackend
 
 GRAPH_SENDMAIL_URL = "https://graph.microsoft.com/v1.0/users/{sender}/sendMail"
-GRAPH_SCOPE = "https://graph.microsoft.com/.default"
-AUTHORITY = "https://login.microsoftonline.com/{tenant}"
 _TIMEOUT = 30
 
 
@@ -64,21 +62,8 @@ class GraphEmailBackend(BaseEmailBackend):
 
     # -- Token ------------------------------------------------------------
     def _hole_token(self) -> str:
-        import msal  # lokaler Import: nur nötig, wenn wirklich versendet wird
-
-        app = msal.ConfidentialClientApplication(
-            client_id=self.client_id,
-            authority=AUTHORITY.format(tenant=self.tenant_id),
-            client_credential=self.client_secret,
-        )
-        result = app.acquire_token_for_client(scopes=[GRAPH_SCOPE])
-        if "access_token" not in result:
-            raise GraphVersandError(
-                result.get("error_description")
-                or result.get("error")
-                or "Token-Abruf bei Microsoft fehlgeschlagen."
-            )
-        return result["access_token"]
+        from config.graph_auth import hole_app_token
+        return hole_app_token(self.tenant_id, self.client_id, self.client_secret)
 
     # -- Versand ----------------------------------------------------------
     def send_messages(self, email_messages) -> int:

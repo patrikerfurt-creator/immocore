@@ -474,3 +474,46 @@ class MailImportProtokoll(models.Model):
 
     def __str__(self):
         return f"{self.dateiname} — {self.get_status_display()}"
+
+
+class GraphMailAbruf(models.Model):
+    """Singleton-Zustand für den Graph-Mailabruf des info@-Postfachs.
+
+    Genau eine Zeile (pk=1); ``load()`` legt sie bei Bedarf an. Der Abruf-Task
+    läuft nur, wenn ``aktiv`` gesetzt ist (Default False). Die Freischaltung
+    erfolgt bewusst ausschließlich im Django-Admin (nicht im Frontend).
+    """
+    aktiv = models.BooleanField(
+        default=False,
+        verbose_name='Graph-Mailabruf aktiv',
+        help_text='Erst aktivieren, wenn die Azure-App (Mail.Read) steht und '
+                  'die MS_GRAPH_-Werte in .env.prod eingetragen sind. Solange '
+                  'aus, ruft IMMOCORE keine info@-Mails per Graph ab.',
+    )
+    letzter_abruf = models.DateTimeField(
+        null=True, blank=True,
+        verbose_name='Empfangszeitpunkt der zuletzt geholten Mail',
+        help_text='Ab diesem Zeitpunkt (receivedDateTime, minus kleinem '
+                  'Sicherheitsfenster) wird beim nächsten Lauf weitergeholt. '
+                  'Leer = ab dem ersten Lauf.',
+    )
+    zuletzt_gelaufen = models.DateTimeField(
+        null=True, blank=True, verbose_name='Task zuletzt gelaufen')
+    letzte_meldung = models.TextField(
+        blank=True, default='', verbose_name='Letzte Meldung')
+
+    class Meta:
+        verbose_name = 'Graph-Mailabruf'
+        verbose_name_plural = 'Graph-Mailabruf'
+
+    def __str__(self):
+        return f"Graph-Mailabruf ({'aktiv' if self.aktiv else 'aus'})"
+
+    @classmethod
+    def load(cls) -> 'GraphMailAbruf':
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+    def save(self, *args, **kwargs):
+        self.pk = 1  # erzwingt Singleton
+        super().save(*args, **kwargs)

@@ -193,7 +193,18 @@ DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'info@demme-immobilien
 MS_GRAPH_TENANT_ID = os.environ.get('MS_GRAPH_TENANT_ID', '')
 MS_GRAPH_CLIENT_ID = os.environ.get('MS_GRAPH_CLIENT_ID', '')
 MS_GRAPH_CLIENT_SECRET = os.environ.get('MS_GRAPH_CLIENT_SECRET', '')
-MS_GRAPH_SENDER = os.environ.get('MS_GRAPH_SENDER', DEFAULT_FROM_EMAIL)
+MS_GRAPH_SENDER = os.environ.get('MS_GRAPH_SENDER', 'info@demme-immobilien.de')
+
+# Portal-Einladungen laufen über einen EIGENEN SMTP-Weg (nicht über das globale
+# Graph-Backend): Absender noreply@immospace.cloud, SMTP-Verbindung aus den
+# EMAIL_*-Variablen. So bleiben info@ (Graph, Handwerker/EV) und noreply@ (SMTP,
+# Portal) sauber getrennt. Siehe apps/portal/services/mail_service.py.
+PORTAL_FROM_EMAIL = os.environ.get('PORTAL_FROM_EMAIL', 'noreply@immospace.cloud')
+
+# Arbeitsordner für per Graph abgerufene info@-Mails (MIME → .eml → Posteingang-
+# Pipeline). Ephemer: die Mails landen anschließend im DMS, die Quelle bleibt
+# das Postfach — deshalb ist kein persistentes Volume nötig.
+MAIL_GRAPH_EINGANG = os.environ.get('MAIL_GRAPH_EINGANG', str(BASE_DIR / 'maileingang_graph'))
 
 # Empfangsadresse für den Rechnungsrücklauf von Handwerkern (Hinweis im Mailtext).
 RECHNUNG_EMPFANG_EMAIL = os.environ.get('RECHNUNG_EMPFANG_EMAIL', 'rechnungen@demme-immobilien.de')
@@ -269,6 +280,12 @@ CELERY_BEAT_SCHEDULE = {
     # bereich='mails' aktiv ist — sonst ist der Task ein No-op.
     'mail-ordner-scan-alle-5min': {
         'task': 'vorgaenge.mail_ordner_scan',
+        'schedule': 300,
+    },
+    # Graph-Mailabruf info@: laeuft nur, wenn GraphMailAbruf.aktiv (Admin) UND
+    # die MS_GRAPH_-Werte gesetzt sind — sonst ein No-op.
+    'graph-mail-abruf-alle-5min': {
+        'task': 'vorgaenge.graph_mail_abruf',
         'schedule': 300,
     },
     'wkz-ops-taeglich-03uhr': {

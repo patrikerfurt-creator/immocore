@@ -134,3 +134,22 @@ def mail_ordner_scan(einstellung_id: str | None = None):
 
     logger.info("Mail-Scan abgeschlossen: %s", gesamt)
     return gesamt
+
+
+@shared_task(name='vorgaenge.graph_mail_abruf')
+def graph_mail_abruf():
+    """Ruft das info@-Postfach per Microsoft Graph ab (read-only).
+
+    Läuft nur, wenn der Schalter ``GraphMailAbruf.aktiv`` im Django-Admin
+    gesetzt UND die MS_GRAPH_-Werte konfiguriert sind — sonst ein No-op.
+    Gefahrlos im Beat-Schedule.
+    """
+    from apps.vorgaenge.services import graph_mail_abruf_service
+
+    try:
+        ergebnis = graph_mail_abruf_service.abrufen()
+    except Exception:
+        logger.exception("Graph-Mailabruf fehlgeschlagen.")
+        return {'status': 'fehler', 'geholt': 0}
+    logger.info("Graph-Mailabruf: %s", ergebnis)
+    return ergebnis

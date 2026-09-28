@@ -1,6 +1,28 @@
 from django.contrib import admin
 
-from apps.vorgaenge.models import MailImportProtokoll
+from apps.vorgaenge.models import GraphMailAbruf, MailImportProtokoll
+
+
+@admin.register(GraphMailAbruf)
+class GraphMailAbrufAdmin(admin.ModelAdmin):
+    """Schalter für den Graph-Mailabruf des info@-Postfachs (Singleton).
+
+    Nur hier im Admin wird der Abruf ein-/ausgeschaltet — bewusst nicht im
+    Frontend. Der Zeitstempel und die Meldung sind Ergebnis der Läufe und
+    deshalb schreibgeschützt.
+    """
+
+    list_display = ('__str__', 'aktiv', 'letzter_abruf', 'zuletzt_gelaufen',
+                    'letzte_meldung')
+    list_editable = ('aktiv',)
+    readonly_fields = ('letzter_abruf', 'zuletzt_gelaufen', 'letzte_meldung')
+
+    def has_delete_permission(self, request, obj=None):
+        return False  # Singleton nie löschen
+
+    def has_add_permission(self, request):
+        # Genau eine Zeile; sie entsteht über GraphMailAbruf.load().
+        return not GraphMailAbruf.objects.exists()
 
 
 @admin.register(MailImportProtokoll)

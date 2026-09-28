@@ -12,7 +12,7 @@ bekäme seinen Zugangslink nie und niemand würde es merken.
 import logging
 
 from django.conf import settings
-from django.core.mail import EmailMultiAlternatives
+from django.core.mail import EmailMultiAlternatives, get_connection
 from django.template.loader import render_to_string
 
 from ..models import (
@@ -31,21 +31,21 @@ _NICHT_VERSANDFAEHIGE_BACKENDS = (
 
 
 class VersandNichtKonfiguriert(Exception):
-    """In Produktion ist kein versandfähiges Mail-Backend eingerichtet."""
+    """In Produktion ist kein versandfähiger SMTP-Weg für das Portal eingerichtet."""
 
 
 def versand_konfiguriert() -> bool:
-    backend = settings.EMAIL_BACKEND
-    if backend in _NICHT_VERSANDFAEHIGE_BACKENDS:
-        return False
-    if backend == 'django.core.mail.backends.smtp.EmailBackend' and not settings.EMAIL_HOST:
-        return False
-    if backend == 'config.email_backends.GraphEmailBackend' and not (
-        settings.MS_GRAPH_TENANT_ID and settings.MS_GRAPH_CLIENT_ID
-        and settings.MS_GRAPH_CLIENT_SECRET
-    ):
-        return False
-    return True
+    """Portal-Einladungen laufen über einen EIGENEN SMTP-Weg (EMAIL_*-Variablen,
+    Absender noreply@immospace.cloud) — NICHT über das globale EMAIL_BACKEND, das
+    für info@/Graph zuständig ist.
+
+    Versandfähig, sobald der SMTP-Host (EMAIL_HOST) konfiguriert ist. Fehlt er
+    (lokal/Test), greift ``_portal_connection`` auf das globale Backend zurück —
+    dann entscheidet dessen Versandfähigkeit (locmem/SMTP: ja, console/dummy: nein).
+    """
+    if settings.EMAIL_HOST:
+        return True
+    return settings.EMAIL_BACKEND not in _NICHT_VERSANDFAEHIGE_BACKENDS
 
 
 def _pruefe_versandfaehig() -> None:
@@ -78,6 +78,26 @@ def email_bestaetigung_url(token: PortalToken) -> str:
     return f'{settings.FRONTEND_BASE_URL.rstrip("/")}/portal/email-bestaetigen/{token.token}'
 
 
+def _portal_connection():
+    """Eigene SMTP-Verbindung für den Portal-Versand (noreply@immospace.cloud).
+
+    Ohne konfigurierten EMAIL_HOST (lokal/Test) → None: dann versendet ``send()``
+    über das globale Backend (Konsole/locmem), so bleibt der Magic Link beim
+    lokalen Testen im Terminal sichtbar. In Produktion baut die Funktion die
+    SMTP-Verbindung aus den EMAIL_*-Variablen — bewusst getrennt vom globalen
+    Graph-Backend (info@)."""
+    if not settings.EMAIL_HOST:
+        return None
+    return get_connection(
+        backend='django.core.mail.backends.smtp.EmailBackend',
+        host=settings.EMAIL_HOST,
+        port=settings.EMAIL_PORT,
+        username=settings.EMAIL_HOST_USER,
+        password=settings.EMAIL_HOST_PASSWORD,
+        use_tls=settings.EMAIL_USE_TLS,
+    )
+
+
 def _sende(betreff: str, vorlage: str, empfaenger: str, kontext: dict) -> None:
     _pruefe_versandfaehig()
     text_body = render_to_string(f'email/{vorlage}.txt', kontext)
@@ -86,8 +106,9 @@ def _sende(betreff: str, vorlage: str, empfaenger: str, kontext: dict) -> None:
     mail = EmailMultiAlternatives(
         subject=betreff,
         body=text_body,
-        from_email=settings.DEFAULT_FROM_EMAIL,
+        from_email=settings.PORTAL_FROM_EMAIL,
         to=[empfaenger],
+        connection=_portal_connection(),
     )
     mail.attach_alternative(html_body, 'text/html')
     mail.send()
