@@ -1,5 +1,6 @@
 import client from './client'
 import type {
+  EVAbschlussErgebnis,
   EVAnfechtungStatus,
   EVAnwesenheitPayload,
   EVBeschluss,
@@ -8,17 +9,20 @@ import type {
   EVEinladungPdfErgebnis,
   EVEreignis,
   EVList,
+  EVProtokollUploadErgebnis,
   EVQuorum,
+  EVQuorumJeStimmgrundlage,
   EVStimme,
+  EVStimmgrundlage,
   EVStimmkraftErgebnis,
   EVTeilnehmer,
-  EVUebernahmeErgebnis,
   EVVotum,
   EVVersandErgebnis,
   EVVersandplan,
   EVVersandprotokoll,
   Tagesordnungspunkt,
   TagesordnungspunktCreatePayload,
+  Versammlungsort,
 } from '../types'
 
 export const versammlungApi = {
@@ -49,7 +53,12 @@ export const versammlungApi = {
     ).then(r => r.data),
   topAnlegen: (data: TagesordnungspunktCreatePayload) =>
     client.post<Tagesordnungspunkt>('/tagesordnungspunkte/', data).then(r => r.data),
-  topAendern: (topId: string, data: Partial<Tagesordnungspunkt>) =>
+  topAendern: (
+    topId: string,
+    // stimmgrundlage_id (statt stimmgrundlage) ist das write-only PATCH-Feld
+    // des Serializers (siehe TagesordnungspunktSerializer.stimmgrundlage_id).
+    data: Partial<Tagesordnungspunkt> & { stimmgrundlage_id?: string | null },
+  ) =>
     client.patch<Tagesordnungspunkt>(`/tagesordnungspunkte/${topId}/`, data)
       .then(r => r.data),
   topLoeschen: (topId: string) => client.delete(`/tagesordnungspunkte/${topId}/`),
@@ -81,6 +90,52 @@ export const versammlungApi = {
   versandprotokoll: (id: string) =>
     client.get<EVVersandprotokoll[]>(`/versammlungen/${id}/versandprotokoll/`)
       .then(r => r.data),
+
+  // Stimmgrundlagen (Spec v1.1 Kap. 2)
+  stimmgrundlagen: (id: string) =>
+    client.get<EVStimmgrundlage[]>(`/versammlungen/${id}/stimmgrundlagen/`)
+      .then(r => r.data),
+  stimmgrundlageHinzufuegen: (id: string, daten: {
+    verteilerschluessel?: string | null
+    ist_kopfprinzip?: boolean
+    wirtschaftsjahr?: number
+    ist_standard?: boolean
+  }) =>
+    client.post<EVStimmgrundlage>(
+      `/versammlungen/${id}/stimmgrundlage-hinzufuegen/`, daten,
+    ).then(r => r.data),
+
+  // Checkout / Checkout-Rücknahme / Abschluss / Protokoll-Upload
+  // (Spec v1.1 Kap. 4, ersetzt Task 4+5)
+  checkout: (id: string) =>
+    client.post<EVDetail>(`/versammlungen/${id}/checkout/`, {}).then(r => r.data),
+  checkoutZuruecknehmen: (id: string, grund: string) =>
+    client.post<EVDetail>(`/versammlungen/${id}/checkout-zuruecknehmen/`, { grund })
+      .then(r => r.data),
+  abschluss: (id: string) =>
+    client.post<EVAbschlussErgebnis>(`/versammlungen/${id}/abschluss/`, {})
+      .then(r => r.data),
+  protokollUpload: (id: string, datei: File) => {
+    const formData = new FormData()
+    formData.append('datei', datei)
+    return client.post<EVProtokollUploadErgebnis>(
+      `/versammlungen/${id}/protokoll-upload/`, formData,
+      { headers: { 'Content-Type': 'multipart/form-data' } },
+    ).then(r => r.data)
+  },
+  quorumJeStimmgrundlage: (id: string) =>
+    client.get<EVQuorumJeStimmgrundlage>(`/versammlungen/${id}/quorum/`)
+      .then(r => r.data),
+}
+
+export const versammlungsortApi = {
+  list: () => client.get<Versammlungsort[]>('/versammlungsorte/').then(r => r.data),
+  get: (id: string) =>
+    client.get<Versammlungsort>(`/versammlungsorte/${id}/`).then(r => r.data),
+  create: (data: Partial<Versammlungsort>) =>
+    client.post<Versammlungsort>('/versammlungsorte/', data).then(r => r.data),
+  update: (id: string, data: Partial<Versammlungsort>) =>
+    client.patch<Versammlungsort>(`/versammlungsorte/${id}/`, data).then(r => r.data),
 }
 
 // --- Phase D: Durchführung und Beschlussfassung ---
@@ -111,18 +166,6 @@ export const versammlungDurchfuehrungApi = {
     client.post<Tagesordnungspunkt>(
       `/tagesordnungspunkte/${topId}/ergebnis-status/`, { ergebnis, bemerkung },
     ).then(r => r.data),
-
-  durchfuehrungAbschliessen: (id: string) =>
-    client.post<EVDetail>(`/versammlungen/${id}/durchfuehrung-abschliessen/`, {})
-      .then(r => r.data),
-
-  beschluesseUebernehmen: (id: string) =>
-    client.post<EVUebernahmeErgebnis>(`/versammlungen/${id}/beschluesse-uebernehmen/`, {})
-      .then(r => r.data),
-
-  protokollErzeugen: (id: string) =>
-    client.post<EVEinladungPdfErgebnis>(`/versammlungen/${id}/protokoll-pdf/`, {})
-      .then(r => r.data),
 
   beschluesseDerEv: (id: string) =>
     client.get<EVBeschluss[]>(`/versammlungen/${id}/beschluesse/`).then(r => r.data),

@@ -5,9 +5,21 @@ Deckt ab:
   - /versammlungen/{id}/quorum/ (informativ)
   - PATCH /ev-teilnehmer/{id}/ (Anwesenheit, Vertretung, Zusage; Stimmkraft nicht setzbar)
   - /tagesordnungspunkte/{id}/abstimmung/, /einzelstimmen/, /stimmen/, /ergebnis-status/
-  - /versammlungen/{id}/durchfuehrung-abschliessen/
-  - /versammlungen/{id}/beschluesse-uebernehmen/, /protokoll-pdf/, /beschluesse/
-  - /beschluesse/ mit Filtern, /beschluesse/{id}/anfechtung/, keine Schreibrouten
+  - /beschluesse/ (Liste, Filter, /anfechtung/, keine Schreibrouten) — die
+    Beschlüsse dafür entstehen über ``checkout_service.abschluss`` (dessen
+    eigene Tests liegen in test_checkout_service.py)
+
+Nacharbeits-Auftrag (2026-09-26), Aufgabe 1: /versammlungen/{id}/
+durchfuehrung-abschliessen/ wurde ersatzlos entfernt (alter Task4/5-Ablauf,
+Status 'durchgefuehrt') — der zugehörige Testblock ist entfallen.
+
+Nacharbeits-Auftrag (2026-09-27): die seither toten Endpunkte
+/versammlungen/{id}/beschluesse-uebernehmen/ und /protokoll-pdf/ (nur über ein
+händisch auf 'durchgefuehrt' gesetztes Objekt erreichbar) sowie der
+'durchgefuehrt'-Zweig in beschluss_service.uebernimm_in_sammlung wurden
+ebenfalls entfernt. BeschlussApiTest erreicht die Beschluss-Sammlung jetzt
+über den echten Checkout-Weg (checkout → Abstimmung → abschluss) statt über
+den entfernten Endpunkt.
 """
 import shutil
 import tempfile
@@ -21,7 +33,8 @@ from rest_framework.test import APITestCase
 
 from apps.versammlung.models import Beschluss
 from apps.versammlung.services import (
-    durchfuehrung_service, ev_service, stimmkraft_service, tagesordnung_service,
+    checkout_service, durchfuehrung_service, ev_service, stimmkraft_service,
+    tagesordnung_service,
 )
 from apps.versammlung.tests import factories as f
 
@@ -74,19 +87,42 @@ class _Basis(APITestCase):
                 teilnehmer, self.user, ist_anwesend=True,
             )
 
+    def _checkout(self):
+        """Checkout über den Service — Voraussetzung für die API-Endpunkte,
+        die seit Spec v1.1 nur im Status "ausgecheckt" schreibbar sind."""
+        checkout_service.checkout(self.ev, self.user)
+        self.ev.refresh_from_db()
+
 
 class QuorumApiTest(_Basis):
     def test_quorum_ist_informativ(self):
+        self._top()
+        self._checkout()
         self._alle_anwesend()
         response = self.client.get(f'{VERSAMMLUNGEN}{self.ev.id}/quorum/')
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data['anwesend_prozent'], Decimal('100.00'))
-        self.assertNotIn('quorum_erreicht', response.data)
-        self.assertIn('beschlussfähig', response.data['hinweis'])
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        je_grundlage = response.data['je_stimmgrundlage']
+        self.assertEqual(len(je_grundlage), 1)
+        eintrag = je_grundlage[0]
+        self.assertEqual(Decimal(eintrag['anwesende_stimmkraft']), Decimal('3'))
+        self.assertEqual(Decimal(eintrag['gesamt_stimmkraft']), Decimal('3'))
+        self.assertIn('stimmgrundlage_id', eintrag)
 
 
 class AnwesenheitApiTest(_Basis):
+    def test_anwesenheit_vor_checkout_400(self):
+        # Verschärfung Spec v1.1 Kap. 4: vor dem Checkout ist der Endpunkt
+        # gesperrt — nicht nur nach der Verarbeitung wie bisher.
+        teilnehmer = self.teilnehmer[0]
+        response = self.client.patch(
+            f'{TEILNEHMER}{teilnehmer.id}/', {'ist_anwesend': True}, format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('ausgecheckt', response.data['detail'])
+
     def test_anwesenheit_setzen(self):
+        self._top()
+        self._checkout()
         teilnehmer = self.teilnehmer[0]
         response = self.client.patch(
             f'{TEILNEHMER}{teilnehmer.id}/', {'ist_anwesend': True}, format='json',
@@ -97,6 +133,8 @@ class AnwesenheitApiTest(_Basis):
         self.assertTrue(teilnehmer.ist_anwesend)
 
     def test_vertretung_setzen(self):
+        self._top()
+        self._checkout()
         teilnehmer, vertreter = self.teilnehmer[0], self.teilnehmer[1]
         response = self.client.patch(f'{TEILNEHMER}{teilnehmer.id}/', {
             'ist_anwesend': True,
@@ -106,12 +144,24 @@ class AnwesenheitApiTest(_Basis):
         self.assertEqual(response.data['vertreten_durch_name'], vertreter.person.name)
 
     def test_selbstvertretung_400(self):
+        self._top()
+        self._checkout()
         teilnehmer = self.teilnehmer[0]
         response = self.client.patch(f'{TEILNEHMER}{teilnehmer.id}/', {
             'ist_anwesend': True,
             'vertreten_durch': str(teilnehmer.person_id),
         }, format='json')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_zusage_auch_vor_checkout_erlaubt(self):
+        # Zusage/Absage ist RSVP, keine Anwesenheitserfassung — bewusst NICHT
+        # an den Checkout-Status gekoppelt (siehe views.EVTeilnehmerViewSet).
+        teilnehmer = self.teilnehmer[0]
+        response = self.client.patch(
+            f'{TEILNEHMER}{teilnehmer.id}/', {'zusage_status': 'zugesagt'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
 
     def test_zusage_erfassen(self):
         teilnehmer = self.teilnehmer[0]
@@ -153,17 +203,30 @@ class AbstimmungApiTest(_Basis):
     def test_summenerfassung(self):
         self._alle_anwesend()
         top = self._top()
+        self._checkout()
         response = self.client.post(f'{TOPS}{top.id}/abstimmung/', {
             'ja': '2', 'nein': '1', 'enthaltung': '0',
         }, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
         self.assertEqual(response.data['abstimmungsergebnis'], 'angenommen')
 
+    def test_abstimmung_vor_checkout_400(self):
+        # Verschärfung Spec v1.1 Kap. 4 (Nacharbeits-Auftrag 2026-09-26):
+        # vor dem Checkout ist der Endpunkt gesperrt — analog einzelstimmen/.
+        self._alle_anwesend()
+        top = self._top()
+        response = self.client.post(
+            f'{TOPS}{top.id}/abstimmung/', {'ja': '2', 'nein': '1'}, format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('ausgecheckt', response.data['detail'])
+
     def test_summe_ueber_anwesenheit_400(self):
         durchfuehrung_service.erfasse_anwesenheit(
             self.teilnehmer[0], self.user, ist_anwesend=True,
         )
         top = self._top()
+        self._checkout()
         response = self.client.post(
             f'{TOPS}{top.id}/abstimmung/', {'ja': '3', 'nein': '0'}, format='json',
         )
@@ -176,6 +239,7 @@ class AbstimmungApiTest(_Basis):
             ev=self.ev, titel='Bericht', erstellt_von=self.user,
             beschlussvorlage='', abstimmungsmodus='kein_beschluss',
         )
+        self._checkout()
         response = self.client.post(
             f'{TOPS}{top.id}/abstimmung/', {'ja': '3', 'nein': '0'}, format='json',
         )
@@ -184,6 +248,7 @@ class AbstimmungApiTest(_Basis):
     def test_einzelstimmen_und_abruf(self):
         self._alle_anwesend()
         top = self._top()
+        self._checkout()
         voten = {
             str(self.teilnehmer[0].id): 'ja',
             str(self.teilnehmer[1].id): 'ja',
@@ -200,11 +265,22 @@ class AbstimmungApiTest(_Basis):
         self.assertEqual(len(stimmen.data), 3)
         self.assertIn('person_name', stimmen.data[0])
 
+    def test_einzelstimmen_vor_checkout_400(self):
+        # Verschärfung Spec v1.1 Kap. 4: vor dem Checkout gesperrt.
+        self._alle_anwesend()
+        top = self._top()
+        response = self.client.post(f'{TOPS}{top.id}/einzelstimmen/', {
+            'voten': {str(self.teilnehmer[0].id): 'ja'},
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('ausgecheckt', response.data['detail'])
+
     def test_einzelstimmen_fuer_abwesende_400(self):
         durchfuehrung_service.erfasse_anwesenheit(
             self.teilnehmer[0], self.user, ist_anwesend=True,
         )
         top = self._top()
+        self._checkout()
         response = self.client.post(f'{TOPS}{top.id}/einzelstimmen/', {
             'voten': {str(self.teilnehmer[1].id): 'ja'},
         }, format='json')
@@ -213,6 +289,7 @@ class AbstimmungApiTest(_Basis):
     def test_ungueltiges_votum_400(self):
         self._alle_anwesend()
         top = self._top()
+        self._checkout()
         response = self.client.post(f'{TOPS}{top.id}/einzelstimmen/', {
             'voten': {str(self.teilnehmer[0].id): 'enthalten'},
         }, format='json')
@@ -243,82 +320,28 @@ class AbstimmungApiTest(_Basis):
         self.assertEqual(top.abstimmungsergebnis, 'offen')
 
 
-class DurchfuehrungApiTest(_Basis):
-    def test_abschluss_mit_offenem_top_400(self):
-        self._top()
-        response = self.client.post(
-            f'{VERSAMMLUNGEN}{self.ev.id}/durchfuehrung-abschliessen/', {},
-            format='json',
-        )
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('TOP 1', response.data['detail'])
-
-    def test_abschluss(self):
-        self._alle_anwesend()
-        top = self._top()
-        self.client.post(
-            f'{TOPS}{top.id}/abstimmung/', {'ja': '3', 'nein': '0'}, format='json',
-        )
-        response = self.client.post(
-            f'{VERSAMMLUNGEN}{self.ev.id}/durchfuehrung-abschliessen/', {},
-            format='json',
-        )
-        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
-        self.assertEqual(response.data['status'], 'durchgefuehrt')
-        self.assertTrue(response.data['task_status']['task4']['erledigt'])
-
-
 class BeschlussApiTest(_Basis):
     def setUp(self):
         super().setUp()
         self._alle_anwesend()
         self.top = self._top('Wirtschaftsplan 2026', triggert_wirtschaftsplan=True)
+        self._checkout()
         durchfuehrung_service.erfasse_abstimmung(self.top, self.user, ja=3, nein=0)
-        durchfuehrung_service.schliesse_durchfuehrung_ab(self.ev, self.user)
+        # Beschlüsse entstehen ausschließlich über den echten Checkout-Weg
+        # (Nacharbeits-Auftrag 2026-09-27 hat den früheren Endpunkt
+        # beschluesse-uebernehmen/ entfernt — der einzige Weg ist jetzt
+        # checkout_service.abschluss, das intern uebernimm_in_sammlung ruft).
+        checkout_service.abschluss(self.ev, self.user)
         self.ev.refresh_from_db()
 
-    def test_uebernahme(self):
-        response = self.client.post(
-            f'{VERSAMMLUNGEN}{self.ev.id}/beschluesse-uebernehmen/', {}, format='json',
-        )
-        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
-        self.assertEqual(response.data['beschluesse'], 1)
-        self.assertEqual(response.data['mit_wp_trigger'], 1)
-        self.assertEqual(response.data['nummern'], [1])
-        self.assertIn('protokoll_dokument_id', response.data)
-
-    def test_uebernahme_vor_durchfuehrung_400(self):
-        andere_ev = ev_service.erstelle_ev(
-            objekt=self.objekt, erstellt_von=self.user, arbeitsname='Zweite EV',
-        )
-        response = self.client.post(
-            f'{VERSAMMLUNGEN}{andere_ev.id}/beschluesse-uebernehmen/', {},
-            format='json',
-        )
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-
     def test_beschluesse_der_ev(self):
-        self.client.post(
-            f'{VERSAMMLUNGEN}{self.ev.id}/beschluesse-uebernehmen/', {}, format='json',
-        )
         response = self.client.get(f'{VERSAMMLUNGEN}{self.ev.id}/beschluesse/')
         self.assertEqual(len(response.data), 1)
         self.assertEqual(response.data[0]['nummer'], 1)
         self.assertEqual(response.data[0]['top_nummer'], self.top.nummer)
         self.assertIsNotNone(response.data[0]['dokument_dateiname'])
 
-    def test_protokoll_neu_erzeugen(self):
-        response = self.client.post(
-            f'{VERSAMMLUNGEN}{self.ev.id}/protokoll-pdf/', {}, format='json',
-        )
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
-        self.assertTrue(response.data['dateiname'].startswith('Protokoll_EV_'))
-        self.assertIn('/api/v1/dokumente/', response.data['download_url'])
-
     def test_sammlung_filtert_nach_objekt(self):
-        self.client.post(
-            f'{VERSAMMLUNGEN}{self.ev.id}/beschluesse-uebernehmen/', {}, format='json',
-        )
         response = self.client.get(BESCHLUESSE, {'objekt': str(self.objekt.id)})
         self.assertEqual(len(response.data), 1)
 
@@ -326,9 +349,6 @@ class BeschlussApiTest(_Basis):
         self.assertEqual(len(leer.data), 0)
 
     def test_sammlung_filtert_nach_jahr_und_anfechtung(self):
-        self.client.post(
-            f'{VERSAMMLUNGEN}{self.ev.id}/beschluesse-uebernehmen/', {}, format='json',
-        )
         jahr = self.ev.termin.year
         self.assertEqual(len(self.client.get(BESCHLUESSE, {'jahr': str(jahr)}).data), 1)
         self.assertEqual(len(self.client.get(BESCHLUESSE, {'jahr': '1999'}).data), 0)
@@ -337,9 +357,6 @@ class BeschlussApiTest(_Basis):
         )
 
     def test_anfechtung_vermerken(self):
-        self.client.post(
-            f'{VERSAMMLUNGEN}{self.ev.id}/beschluesse-uebernehmen/', {}, format='json',
-        )
         beschluss = Beschluss.objects.get(ev=self.ev)
         response = self.client.post(f'{BESCHLUESSE}{beschluss.id}/anfechtung/', {
             'anfechtung_status': 'anhaengig', 'notiz': 'AG Frankfurt 2 C 123/26',
@@ -348,9 +365,6 @@ class BeschlussApiTest(_Basis):
         self.assertEqual(response.data['anfechtung_status'], 'anhaengig')
 
     def test_aufhebung_ohne_datum_400(self):
-        self.client.post(
-            f'{VERSAMMLUNGEN}{self.ev.id}/beschluesse-uebernehmen/', {}, format='json',
-        )
         beschluss = Beschluss.objects.get(ev=self.ev)
         response = self.client.post(
             f'{BESCHLUESSE}{beschluss.id}/anfechtung/',
@@ -359,9 +373,6 @@ class BeschlussApiTest(_Basis):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_keine_schreibrouten_auf_beschluessen(self):
-        self.client.post(
-            f'{VERSAMMLUNGEN}{self.ev.id}/beschluesse-uebernehmen/', {}, format='json',
-        )
         beschluss = Beschluss.objects.get(ev=self.ev)
         self.assertEqual(
             self.client.post(BESCHLUESSE, {}, format='json').status_code,

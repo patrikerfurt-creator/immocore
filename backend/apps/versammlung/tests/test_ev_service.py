@@ -185,7 +185,9 @@ class TaskFortschrittTest(TestCase):
         status = ev_service.task_status(self.ev)
         self.assertEqual(status['anzahl_erledigt'], 2)
         self.assertTrue(status['task5']['erledigt'])
-        self.assertEqual(status['task4']['bezeichnung'], 'Durchführung')
+        # Spec v1.1 Kap. 4: Task 4 heißt seit dem Checkout-Ablauf "Checkout"
+        # statt "Durchführung" (das Feld selbst bleibt unverändert benannt).
+        self.assertEqual(status['task4']['bezeichnung'], 'Checkout')
 
 
 class StatuswechselTest(TestCase):
@@ -194,7 +196,10 @@ class StatuswechselTest(TestCase):
         self.ev = ev_service.erstelle_ev(objekt=f.objekt(), erstellt_von=self.user)
 
     def test_vollstaendiger_ablauf(self):
-        for ziel in ('in_bearbeitung', 'einladungen_versendet', 'durchgefuehrt',
+        # Nacharbeits-Auftrag (2026-09-26): der einzige Weg zu einer
+        # abgeschlossenen Abstimmung führt seither über 'ausgecheckt' statt
+        # über das entfernte 'durchgefuehrt'.
+        for ziel in ('in_bearbeitung', 'einladungen_versendet', 'ausgecheckt',
                      'beschluesse_verarbeitet', 'archiviert'):
             ev_service.wechsle_status(self.ev, ziel, self.user)
             self.ev.refresh_from_db()
@@ -205,7 +210,7 @@ class StatuswechselTest(TestCase):
 
     def test_sprung_ueber_stationen_wird_abgelehnt(self):
         with self.assertRaises(ValidationError):
-            ev_service.wechsle_status(self.ev, 'durchgefuehrt', self.user)
+            ev_service.wechsle_status(self.ev, 'beschluesse_verarbeitet', self.user)
         self.ev.refresh_from_db()
         self.assertEqual(self.ev.status, 'entwurf')
 
@@ -225,10 +230,12 @@ class StatuswechselTest(TestCase):
     def test_zeitstempel_werden_gesetzt(self):
         ev_service.wechsle_status(self.ev, 'in_bearbeitung', self.user)
         ev_service.wechsle_status(self.ev, 'einladungen_versendet', self.user)
-        ev_service.wechsle_status(self.ev, 'durchgefuehrt', self.user)
+        ev_service.wechsle_status(self.ev, 'ausgecheckt', self.user)
         self.ev.refresh_from_db()
         self.assertIsNotNone(self.ev.einladung_versendet_am)
-        self.assertIsNotNone(self.ev.durchgefuehrt_am)
+        # 'durchgefuehrt' ist über keinen Übergang mehr erreichbar (Nacharbeits-
+        # Auftrag 2026-09-26) — der zugehörige Zeitstempel bleibt entsprechend leer.
+        self.assertIsNone(self.ev.durchgefuehrt_am)
 
     def test_systemereignis_ohne_user(self):
         ev_service.vermerke_ereignis(self.ev, 'kommentar', None, text='Systemhinweis')

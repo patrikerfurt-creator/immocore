@@ -197,6 +197,7 @@
       </div>
       <div class="modus">
         Erforderliche Mehrheit: {{ top.get_abstimmungsmodus_display }}{% if top.mehrheit_schwelle %} — {{ top.mehrheit_schwelle|floatformat:"-2" }} % der abgegebenen Stimmen{% endif %}
+        {% if top.stimmgrundlage %} — Stimmgrundlage: {{ top.stimmgrundlage.bezeichnung_anzeige }}{% endif %}
       </div>
     {% endif %}
   </div>

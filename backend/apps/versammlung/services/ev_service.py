@@ -15,15 +15,35 @@ from django.utils import timezone
 from apps.versammlung.models import EVEreignis, Eigentuemerversammlung
 
 # Erlaubte Statusübergänge (Spec v1.1 Kap. 4.1). 'archiviert' ist terminal.
+#
+# 'ausgecheckt' ist Spec v1.1 Kap. 4: ein NEUER, zusätzlicher Status zwischen
+# 'einladungen_versendet' und 'beschluesse_verarbeitet' für die Übergabe an
+# das externe Abstimmtool (checkout_service).
+#
+# Nacharbeits-Auftrag (2026-09-26), Aufgabe 1: der alte Task4/5-Ablauf über
+# den Status 'durchgefuehrt' ist als Übergangsziel entfernt — es existieren
+# keine produktiven EVs, die je über diesen Pfad gelaufen sind, daher kein
+# Kompatibilitätsbedarf. Der einzige Weg zu einer abgeschlossenen Abstimmung
+# ist ab jetzt 'einladungen_versendet' → 'ausgecheckt' →
+# 'beschluesse_verarbeitet'. 'durchgefuehrt' bleibt als WERT in
+# STATUS_CHOICES bestehen (schadet nicht), ist aber von keinem Übergang mehr
+# erreichbar — der Eintrag selbst bleibt unten stehen (rein als mögliches
+# Übergangsziel FALLS je direkt per Admin/Fixture auf 'durchgefuehrt' gesetzt
+# würde; über den Service kommt dort nie eine EV mehr an).
 _ERLAUBTE_UEBERGAENGE = {
     'entwurf':                 {'in_bearbeitung', 'archiviert'},
-    # 'in_bearbeitung' → 'durchgefuehrt' ist bewusst erlaubt: eine Versammlung
-    # kann stattfinden, ohne dass der Versand über IMMOCORE dokumentiert wurde
-    # (Ladung außerhalb des Systems, Vollversammlung mit allen Eigentümern).
-    # Der Umweg über 'einladungen_versendet' würde die EV sonst fälschlich als
-    # versendet ausweisen.
-    'in_bearbeitung':          {'einladungen_versendet', 'durchgefuehrt', 'archiviert'},
-    'einladungen_versendet':   {'durchgefuehrt', 'archiviert'},
+    # 'in_bearbeitung' → 'ausgecheckt' ist bewusst erlaubt (direkter Sprung
+    # ohne 'einladungen_versendet'): eine Versammlung kann stattfinden, ohne
+    # dass der Versand über IMMOCORE dokumentiert wurde (Ladung außerhalb des
+    # Systems, Vollversammlung mit allen Eigentümern). Der Umweg über
+    # 'einladungen_versendet' würde die EV sonst fälschlich als versendet
+    # ausweisen.
+    'in_bearbeitung':          {'einladungen_versendet', 'ausgecheckt', 'archiviert'},
+    'einladungen_versendet':   {'ausgecheckt', 'archiviert'},
+    # Rücknahme des Checkout (checkout_service.checkout_zuruecknehmen) geht
+    # zurück auf 'einladungen_versendet'.
+    'ausgecheckt':             {'einladungen_versendet', 'beschluesse_verarbeitet',
+                                'archiviert'},
     'durchgefuehrt':           {'beschluesse_verarbeitet', 'archiviert'},
     'beschluesse_verarbeitet': {'archiviert'},
     'archiviert':              set(),
@@ -32,14 +52,23 @@ _ERLAUBTE_UEBERGAENGE = {
 # Ab diesem Status ist die Einladung heraus — inhaltliche Änderungen an der
 # Tagesordnung sind dann nicht mehr zulässig (§ 23 Abs. 2 WEG, siehe
 # tagesordnung_service).
-STATI_NACH_VERSAND = {'einladungen_versendet', 'durchgefuehrt',
+STATI_NACH_VERSAND = {'einladungen_versendet', 'ausgecheckt', 'durchgefuehrt',
                       'beschluesse_verarbeitet', 'archiviert'}
 
+# Task 4 heißt seit Spec v1.1 "Checkout" (Übergabe ans externe Abstimmtool,
+# siehe checkout_service.checkout) statt "Durchführung" — das Feld selbst
+# bleibt task4_durchfuehrung_erledigt (keine Migration eines Feldnamens ohne
+# Freigabe). Task 5 entfällt als MANUELLER Task (kein Button mehr im
+# Frontend) — der Übergang zu 'beschluesse_verarbeitet' passiert seit Spec
+# v1.1 automatisch durch protokoll_upload. Das Flag
+# task5_beschlussfassung_erledigt bleibt als Feld bestehen, wird über den
+# neuen Checkout-Weg aber nicht mehr gesetzt (der alte manuelle Weg dorthin,
+# durchfuehrung_service.schliesse_durchfuehrung_ab, wurde entfernt).
 _TASK_FELDER = {
     1: ('task1_terminierung_erledigt',     'Terminierung'),
     2: ('task2_tagesordnung_erledigt',     'Tagesordnung'),
     3: ('task3_einladung_erledigt',        'Einladung'),
-    4: ('task4_durchfuehrung_erledigt',    'Durchführung'),
+    4: ('task4_durchfuehrung_erledigt',    'Checkout'),
     5: ('task5_beschlussfassung_erledigt', 'Beschlussfassung'),
 }
 
@@ -93,6 +122,17 @@ def erstelle_ev(*, objekt, erstellt_von, arbeitsname='', art='ordentlich',
     )
     ev.full_clean()
     ev.save()
+
+    # Spec v1.1 Kap. 2: bei EV-Anlage entsteht mindestens eine
+    # EVStimmgrundlage (Vorbelegung für den ersten TOP, ist_standard=True),
+    # abgeleitet aus stimmprinzip/stimm_verteilerschluessel — damit bleibt
+    # die bestehende Aufrufsignatur von erstelle_ev unverändert nutzbar.
+    # Weitere Stimmgrundlagen lassen sich danach über
+    # stimmgrundlage_service.hinzufuegen() ergänzen.
+    from apps.versammlung.services import stimmgrundlage_service
+
+    stimmgrundlage_service.erzeuge_aus_legacy_feldern(ev)
+
     vermerke_ereignis(
         ev, 'erstellt', erstellt_von,
         text=f'EV angelegt (Stimmprinzip: {ev.get_stimmprinzip_display()}).',
@@ -102,6 +142,7 @@ def erstelle_ev(*, objekt, erstellt_von, arbeitsname='', art='ordentlich',
 
 @transaction.atomic
 def aktualisiere_terminierung(ev, erstellt_von, *, termin=None, ort=None,
+                              versammlungsort=None,
                               raum_buchung_notizen=None,
                               terminvorschlaege=None) -> Eigentuemerversammlung:
     """Aktualisiert die Terminierungsdaten (Task 1).
@@ -109,6 +150,11 @@ def aktualisiere_terminierung(ev, erstellt_von, *, termin=None, ort=None,
     Nur übergebene Felder werden geändert (``None`` = unverändert). Jede
     Änderung an Termin oder Ort wird protokolliert — das ist bei einer
     Ladungsfrist-Diskussion der entscheidende Nachweis.
+
+    ``versammlungsort`` (Spec v1.1 Kap. 1) ist rein die Katalog-FK zur
+    Vorbelegung — sie befüllt ``ort`` NICHT automatisch. ``ort`` bleibt das
+    maßgebliche, GoBD-relevante Textfeld und muss weiterhin separat gesetzt
+    werden (das Frontend übernimmt die Vorbelegung als Formularwert).
     """
     alter_termin, alter_ort = ev.termin, ev.ort
     felder = []
@@ -119,6 +165,9 @@ def aktualisiere_terminierung(ev, erstellt_von, *, termin=None, ort=None,
     if ort is not None:
         ev.ort = ort
         felder.append('ort')
+    if versammlungsort is not None:
+        ev.versammlungsort = versammlungsort
+        felder.append('versammlungsort')
     if raum_buchung_notizen is not None:
         ev.raum_buchung_notizen = raum_buchung_notizen
         felder.append('raum_buchung_notizen')

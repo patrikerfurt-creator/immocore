@@ -4,12 +4,21 @@ Tests für ``apps.versammlung.services.beschluss_service``
 
 Deckt ab:
   - uebernimm_in_sammlung: nur angenommene TOPs, fortlaufende Nummer je Objekt,
-    revisionssicheres PDF, Status- und Taskwechsel, Idempotenz
-  - Vorbedingungen: Status und Termin
+    revisionssicheres PDF, Idempotenz
+  - Vorbedingungen: Status (Checkout) und Termin
   - Trigger: Folge-Vorgang und WP-Aufgabe (Typ, Zuweisung, Beschlussbezug)
-  - Protokoll-PDF: Anlage, Verknüpfung, Neuerzeugung behält die alte Fassung
   - vermerke_anfechtung: Status, Pflichtdatum bei Aufhebung, Wortlaut bleibt
-  - anwesenheitsliste als Protokollgrundlage
+
+Nacharbeits-Auftrag (2026-09-27): der frühere Testaufbau über
+``self.ev.status = 'durchgefuehrt'`` (alter Task4/5-Ablauf) ist entfallen —
+``uebernimm_in_sammlung`` akzeptiert seither nur noch den Status
+``ausgecheckt`` (siehe dessen Docstring). Die Tests erreichen diesen Status
+jetzt über ``checkout_service.checkout``, wie der echte Ablauf es tut. Die
+Tests für Protokoll-PDF und ``anwesenheitsliste`` sind entfallen — beide
+Funktionen gehörten zum entfernten ``durchgefuehrt``-Zweig und wurden mit
+diesem aus ``beschluss_service`` entfernt (das Protokoll liefert seither
+ausschließlich das externe Abstimmtool über
+``checkout_service.protokoll_upload``, siehe test_checkout_service.py).
 """
 import shutil
 import tempfile
@@ -20,11 +29,10 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
-from apps.dokumente.models import Dokument
 from apps.versammlung.models import Beschluss
 from apps.versammlung.services import (
-    beschluss_service, durchfuehrung_service, ev_service, stimmkraft_service,
-    tagesordnung_service,
+    beschluss_service, checkout_service, durchfuehrung_service, ev_service,
+    stimmkraft_service, tagesordnung_service,
 )
 from apps.versammlung.tests import factories as f
 
@@ -37,7 +45,7 @@ def tearDownModule():
 
 @override_settings(MEDIA_ROOT=_MEDIA_TMP)
 class _Basis(TestCase):
-    """Durchgeführte EV mit drei Eigentümern und zwei abgestimmten TOPs."""
+    """EV mit drei Eigentümern, ausgecheckt mit abgestimmten TOPs."""
 
     def setUp(self):
         self.user = f.user()
@@ -76,8 +84,11 @@ class _Basis(TestCase):
             top, self.user, ja=ja, nein=nein, enthaltung=enthaltung,
         )
 
-    def _durchfuehren(self):
-        durchfuehrung_service.schliesse_durchfuehrung_ab(self.ev, self.user)
+    def _checkout(self):
+        # Der einzige Weg zu einer abgeschlossenen Abstimmung ist der echte
+        # Checkout — TOPs müssen also VOR diesem Aufruf angelegt sein
+        # (Tagesordnung ist danach gesperrt, siehe tagesordnung_service).
+        checkout_service.checkout(self.ev, self.user)
         self.ev.refresh_from_db()
 
 
@@ -85,9 +96,9 @@ class UebernahmeTest(_Basis):
     def test_nur_angenommene_tops_werden_beschluss(self):
         angenommen = self._top('Jahresabrechnung')
         abgelehnt = self._top('Sonderumlage')
+        self._checkout()
         self._abstimmen(angenommen, ja=3, nein=0)
         self._abstimmen(abgelehnt, ja=1, nein=2)
-        self._durchfuehren()
 
         ergebnis = beschluss_service.uebernimm_in_sammlung(self.ev, self.user)
 
@@ -100,16 +111,18 @@ class UebernahmeTest(_Basis):
         self.assertEqual(beschluss.ort, self.ev.ort)
 
     def test_nummern_laufen_je_objekt_fortlaufend(self):
-        for titel in ('TOP A', 'TOP B'):
-            self._abstimmen(self._top(titel))
-        self._durchfuehren()
+        tops = [self._top(titel) for titel in ('TOP A', 'TOP B')]
+        self._checkout()
+        for top in tops:
+            self._abstimmen(top)
 
         ergebnis = beschluss_service.uebernimm_in_sammlung(self.ev, self.user)
         self.assertEqual(ergebnis['nummern'], [1, 2])
 
     def test_beschluss_pdf_ist_revisionssicher(self):
-        self._abstimmen(self._top('Jahresabrechnung'))
-        self._durchfuehren()
+        top = self._top('Jahresabrechnung')
+        self._checkout()
+        self._abstimmen(top)
         beschluss_service.uebernimm_in_sammlung(self.ev, self.user)
 
         beschluss = Beschluss.objects.get(ev=self.ev)
@@ -122,19 +135,23 @@ class UebernahmeTest(_Basis):
         with self.assertRaises(ValidationError):
             dokument.delete()
 
-    def test_status_und_task_nach_uebernahme(self):
-        self._abstimmen(self._top('Jahresabrechnung'))
-        self._durchfuehren()
+    def test_kein_protokoll_und_kein_statuswechsel(self):
+        # Kein eigenes Protokoll, kein Statuswechsel — das übernimmt erst
+        # checkout_service.protokoll_upload (Schritt 2 von 2, Spec v1.1 Kap. 4D).
+        top = self._top('Jahresabrechnung')
+        self._checkout()
+        self._abstimmen(top)
         beschluss_service.uebernimm_in_sammlung(self.ev, self.user)
 
         self.ev.refresh_from_db()
-        self.assertEqual(self.ev.status, 'beschluesse_verarbeitet')
-        self.assertTrue(self.ev.task5_beschlussfassung_erledigt)
-        self.assertIsNotNone(self.ev.protokoll_pdf_id)
+        self.assertEqual(self.ev.status, 'ausgecheckt')
+        self.assertIsNotNone(self.ev.abschluss_erledigt_am)
+        self.assertIsNone(self.ev.protokoll_pdf_id)
 
     def test_zweiter_aufruf_verdoppelt_nicht(self):
-        self._abstimmen(self._top('Jahresabrechnung'))
-        self._durchfuehren()
+        top = self._top('Jahresabrechnung')
+        self._checkout()
+        self._abstimmen(top)
         beschluss_service.uebernimm_in_sammlung(self.ev, self.user)
         zweites = beschluss_service.uebernimm_in_sammlung(self.ev, self.user)
 
@@ -142,15 +159,17 @@ class UebernahmeTest(_Basis):
         self.assertEqual(zweites['uebersprungen'], 1)
         self.assertEqual(Beschluss.objects.filter(ev=self.ev).count(), 1)
 
-    def test_vor_durchfuehrung_nicht_moeglich(self):
-        self._abstimmen(self._top('Jahresabrechnung'))
+    def test_ohne_checkout_nicht_moeglich(self):
+        top = self._top('Jahresabrechnung')
+        self._abstimmen(top)
         with self.assertRaises(ValidationError) as ctx:
             beschluss_service.uebernimm_in_sammlung(self.ev, self.user)
-        self.assertIn('nach der Durchführung', str(ctx.exception))
+        self.assertIn('Checkout', str(ctx.exception))
 
     def test_ohne_termin_nicht_moeglich(self):
-        self._abstimmen(self._top('Jahresabrechnung'))
-        self._durchfuehren()
+        top = self._top('Jahresabrechnung')
+        self._checkout()
+        self._abstimmen(top)
         self.ev.termin = None
         self.ev.save(update_fields=['termin'])
         with self.assertRaises(ValidationError) as ctx:
@@ -158,8 +177,9 @@ class UebernahmeTest(_Basis):
         self.assertIn('§ 24 Abs. 7 WEG', str(ctx.exception))
 
     def test_ereignis_je_beschluss(self):
-        self._abstimmen(self._top('Jahresabrechnung'))
-        self._durchfuehren()
+        top = self._top('Jahresabrechnung')
+        self._checkout()
+        self._abstimmen(top)
         beschluss_service.uebernimm_in_sammlung(self.ev, self.user)
         self.assertEqual(
             self.ev.ereignisse.filter(typ='beschluss_erzeugt').count(), 1,
@@ -169,8 +189,8 @@ class UebernahmeTest(_Basis):
 class TriggerTest(_Basis):
     def test_folge_vorgang(self):
         top = self._top('Erneuerung Hauseingangstür', triggert_vorgang=True)
+        self._checkout()
         self._abstimmen(top)
-        self._durchfuehren()
 
         ergebnis = beschluss_service.uebernimm_in_sammlung(self.ev, self.user)
 
@@ -189,8 +209,8 @@ class TriggerTest(_Basis):
 
     def test_wirtschaftsplan_aufgabe(self):
         top = self._top('Wirtschaftsplan 2026', triggert_wirtschaftsplan=True)
+        self._checkout()
         self._abstimmen(top)
-        self._durchfuehren()
 
         ergebnis = beschluss_service.uebernimm_in_sammlung(self.ev, self.user)
 
@@ -203,8 +223,8 @@ class TriggerTest(_Basis):
             'Sanierung mit Umlage',
             triggert_vorgang=True, triggert_wirtschaftsplan=True,
         )
+        self._checkout()
         self._abstimmen(top)
-        self._durchfuehren()
 
         ergebnis = beschluss_service.uebernimm_in_sammlung(self.ev, self.user)
 
@@ -217,75 +237,28 @@ class TriggerTest(_Basis):
         self.assertIn('umsetzen', beschluss.vorgang.betreff)
 
     def test_ohne_trigger_kein_vorgang(self):
-        self._abstimmen(self._top('Jahresabrechnung'))
-        self._durchfuehren()
+        top = self._top('Jahresabrechnung')
+        self._checkout()
+        self._abstimmen(top)
         ergebnis = beschluss_service.uebernimm_in_sammlung(self.ev, self.user)
         self.assertEqual(ergebnis['vorgaenge'], 0)
         self.assertIsNone(Beschluss.objects.get(ev=self.ev).vorgang_id)
 
     def test_abgelehnter_top_loest_nichts_aus(self):
         top = self._top('Sanierung', triggert_vorgang=True)
+        self._checkout()
         self._abstimmen(top, ja=0, nein=3)
-        self._durchfuehren()
         ergebnis = beschluss_service.uebernimm_in_sammlung(self.ev, self.user)
         self.assertEqual(ergebnis['beschluesse'], 0)
         self.assertEqual(ergebnis['vorgaenge'], 0)
 
 
-class ProtokollTest(_Basis):
-    def test_protokoll_wird_am_objekt_abgelegt(self):
-        self._abstimmen(self._top('Jahresabrechnung'))
-        self._durchfuehren()
-        dokument = beschluss_service.erzeuge_protokoll_pdf(self.ev, self.user)
-
-        self.assertEqual(dokument.kategorie, 'EV-Protokoll')
-        self.assertEqual(dokument.objekt_id, self.objekt.id)
-        self.assertIsNone(dokument.person_id)
-        dokument.datei.open('rb')
-        try:
-            self.assertTrue(dokument.datei.read(5).startswith(b'%PDF'))
-        finally:
-            dokument.datei.close()
-        self.ev.refresh_from_db()
-        self.assertEqual(self.ev.protokoll_pdf_id, dokument.id)
-
-    def test_neuerzeugung_behaelt_alte_fassung(self):
-        self._abstimmen(self._top('Jahresabrechnung'))
-        self._durchfuehren()
-        erstes = beschluss_service.erzeuge_protokoll_pdf(self.ev, self.user)
-        zweites = beschluss_service.erzeuge_protokoll_pdf(self.ev, self.user)
-
-        self.assertNotEqual(erstes.id, zweites.id)
-        self.assertTrue(Dokument.objects.filter(pk=erstes.pk).exists())
-        self.ev.refresh_from_db()
-        self.assertEqual(self.ev.protokoll_pdf_id, zweites.id)
-
-    def test_protokoll_erzeugt_ereignis(self):
-        self._abstimmen(self._top('Jahresabrechnung'))
-        self._durchfuehren()
-        beschluss_service.erzeuge_protokoll_pdf(self.ev, self.user)
-        self.assertTrue(self.ev.ereignisse.filter(typ='protokoll_erzeugt').exists())
-
-    def test_anwesenheitsliste_enthaelt_vertretung(self):
-        teilnehmer = self.ev.teilnehmer.first()
-        vertreter = f.person(nachname='Bevollmaechtigt')
-        durchfuehrung_service.erfasse_anwesenheit(
-            teilnehmer, self.user, ist_anwesend=True, vertreten_durch=vertreter,
-        )
-        liste = beschluss_service.anwesenheitsliste(self.ev)
-
-        self.assertEqual(len(liste), 3)
-        zeile = next(z for z in liste if z['name'] == teilnehmer.person.name)
-        self.assertEqual(zeile['vertretung'], vertreter.name)
-        self.assertTrue(zeile['anwesend'])
-        self.assertEqual(zeile['stimmkraft'], Decimal('1'))
-
-
 class AnfechtungTest(_Basis):
     def setUp(self):
         super().setUp()
-        self._abstimmen(self._top('Jahresabrechnung'))
-        self._durchfuehren()
+        top = self._top('Jahresabrechnung')
+        self._checkout()
+        self._abstimmen(top)
         beschluss_service.uebernimm_in_sammlung(self.ev, self.user)
         self.beschluss = Beschluss.objects.get(ev=self.ev)
 

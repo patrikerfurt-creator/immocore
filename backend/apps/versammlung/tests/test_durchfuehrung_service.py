@@ -11,8 +11,16 @@ Deckt ab:
   - Plausibilität: Stimmen > anwesende Stimmkraft, negative Stimmen
   - kein Quorum-Gate: Abstimmung auch unter 50 % Anwesenheit möglich
   - erfasse_einzelstimmen: Summen abgeleitet, Abwesende abgewiesen, Ersetzen
-  - schliesse_durchfuehrung_ab: offene TOPs blockieren, kein_beschluss nicht
-  - Sperre nach Beschlussverarbeitung
+  - pruefe_ergebnisse_vollstaendig: offene TOPs, kein_beschluss/vertagt zählen
+    nicht als offen
+  - Sperre nach Beschlussverarbeitung (über den neuen Checkout-Weg erreicht)
+
+Nacharbeits-Auftrag (2026-09-26): der frühere Task4/5-Ablauf
+(``schliesse_durchfuehrung_ab``, Status ``durchgefuehrt``) wurde ersatzlos
+entfernt — es gab nie eine produktive EV auf diesem Pfad. Der einzige Weg zu
+einer abgeschlossenen Abstimmung führt seither über
+``checkout_service`` (``einladungen_versendet`` → ``ausgecheckt`` →
+``beschluesse_verarbeitet``, siehe ``test_checkout_service.py``).
 """
 from datetime import timedelta
 from decimal import Decimal
@@ -393,47 +401,58 @@ class EinzelstimmenTest(_Basis):
         self.assertEqual(top.abstimmung_ja, Decimal('2'))
 
 
-class DurchfuehrungAbschliessenTest(_Basis):
-    def test_offene_tops_blockieren(self):
-        self._top(titel='Mit Beschluss')
-        with self.assertRaises(ValidationError) as ctx:
-            durchfuehrung_service.schliesse_durchfuehrung_ab(self.ev, self.user)
-        self.assertIn('TOP 1', str(ctx.exception))
+class PruefeErgebnisseVollstaendigTest(_Basis):
+    """Ersetzt die frühere ``DurchfuehrungAbschliessenTest`` (testete den
+    entfernten ``schliesse_durchfuehrung_ab``) — die gleiche Prüf-Logik läuft
+    seit dem Nacharbeits-Auftrag ausschließlich über
+    ``checkout_service.abschluss`` (siehe ``test_checkout_service.py``), die
+    wiederverwendete Kernfunktion ``pruefe_ergebnisse_vollstaendig`` wird hier
+    direkt getestet.
+    """
 
-    def test_kein_beschluss_blockiert_nicht(self):
+    def test_offene_tops_werden_gemeldet(self):
+        top = self._top(titel='Mit Beschluss')
+        self.assertEqual(
+            durchfuehrung_service.pruefe_ergebnisse_vollstaendig(self.ev),
+            [top.nummer],
+        )
+
+    def test_kein_beschluss_zaehlt_nicht_als_offen(self):
         tagesordnung_service.top_anlegen(
             ev=self.ev, titel='Bericht', erstellt_von=self.user,
             beschlussvorlage='', abstimmungsmodus='kein_beschluss',
         )
-        durchfuehrung_service.schliesse_durchfuehrung_ab(self.ev, self.user)
-        self.ev.refresh_from_db()
-        self.assertEqual(self.ev.status, 'durchgefuehrt')
-        self.assertTrue(self.ev.task4_durchfuehrung_erledigt)
+        self.assertEqual(
+            durchfuehrung_service.pruefe_ergebnisse_vollstaendig(self.ev), [],
+        )
 
-    def test_vertagter_top_blockiert_nicht(self):
+    def test_vertagter_top_zaehlt_nicht_als_offen(self):
         top = self._top()
         durchfuehrung_service.setze_ergebnis_status(top, self.user, 'vertagt')
-        durchfuehrung_service.schliesse_durchfuehrung_ab(self.ev, self.user)
-        self.ev.refresh_from_db()
-        self.assertEqual(self.ev.status, 'durchgefuehrt')
+        self.assertEqual(
+            durchfuehrung_service.pruefe_ergebnisse_vollstaendig(self.ev), [],
+        )
 
-    def test_abschluss_ohne_versand_moeglich(self):
-        # Status ist 'in_bearbeitung' (nie versendet) — der Statusgraph darf
-        # die Durchführung nicht blockieren.
+    def test_abgestimmter_top_zaehlt_nicht_als_offen(self):
         self._anwesend('Alpha', 'Beta', 'Gamma')
         top = self._top()
         durchfuehrung_service.erfasse_abstimmung(top, self.user, ja=3, nein=0)
-        durchfuehrung_service.schliesse_durchfuehrung_ab(self.ev, self.user)
-        self.ev.refresh_from_db()
-        self.assertEqual(self.ev.status, 'durchgefuehrt')
-        self.assertIsNotNone(self.ev.durchgefuehrt_am)
+        self.assertEqual(
+            durchfuehrung_service.pruefe_ergebnisse_vollstaendig(self.ev), [],
+        )
 
+
+class SperreNachBeschlussverarbeitungTest(_Basis):
     def test_sperre_nach_beschlussverarbeitung(self):
+        # Neuer Weg (Nacharbeits-Auftrag 2026-09-26): 'beschluesse_verarbeitet'
+        # ist ausschließlich über 'ausgecheckt' erreichbar, nicht mehr über
+        # das entfernte 'durchgefuehrt'.
         self._anwesend('Alpha', 'Beta', 'Gamma')
         top = self._top()
         durchfuehrung_service.erfasse_abstimmung(top, self.user, ja=3, nein=0)
-        durchfuehrung_service.schliesse_durchfuehrung_ab(self.ev, self.user)
-        ev_service.wechsle_status(self.ev, 'beschluesse_verarbeitet', self.user)
+        for ziel in ('in_bearbeitung', 'einladungen_versendet', 'ausgecheckt',
+                     'beschluesse_verarbeitet'):
+            ev_service.wechsle_status(self.ev, ziel, self.user)
 
         with self.assertRaises(ValidationError) as ctx:
             durchfuehrung_service.erfasse_abstimmung(top, self.user, ja=0, nein=3)

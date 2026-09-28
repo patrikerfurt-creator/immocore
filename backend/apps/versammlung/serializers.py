@@ -5,6 +5,8 @@ Reine Ein-/Ausgabe-Übersetzung — jede Mutation läuft über die Services in
 ``apps.versammlung.services``. Serializer enthalten bewusst KEINE
 Business-Logik (Architekturprinzip des Projekts).
 """
+from decimal import Decimal
+
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
@@ -12,8 +14,9 @@ from apps.dokumente.models import Dokument
 from apps.objekte.models import Objekt, Verteilerschluessel
 from apps.personen.models import Person
 from apps.versammlung.models import (
-    Beschluss, EVEreignis, EVStimme, EVTeilnehmer, EVTeilnehmerAnteil,
-    EVVersandprotokoll, Eigentuemerversammlung, Tagesordnungspunkt,
+    Beschluss, EVEreignis, EVStimme, EVStimmgrundlage, EVTeilnehmer,
+    EVTeilnehmerAnteil, EVVersandprotokoll, Eigentuemerversammlung,
+    Tagesordnungspunkt, Versammlungsort,
 )
 from apps.versammlung.services import ev_service
 
@@ -49,12 +52,20 @@ class TagesordnungspunktSerializer(serializers.ModelSerializer):
     abstimmungsergebnis_display = serializers.CharField(
         source='get_abstimmungsergebnis_display', read_only=True,
     )
+    # Nested-Objekt statt roher FK-ID (API-Vertrag v1.1 Abschnitt 3.1): das
+    # externe Abstimmtool zeigt die Bezeichnung direkt am TOP an.
+    stimmgrundlage = serializers.SerializerMethodField()
+    stimmgrundlage_id = serializers.PrimaryKeyRelatedField(
+        source='stimmgrundlage', queryset=EVStimmgrundlage.objects.all(),
+        required=False, allow_null=True, write_only=True,
+    )
 
     class Meta:
         model = Tagesordnungspunkt
         fields = [
             'id', 'ev', 'nummer', 'titel', 'erlaeuterung', 'beschlussvorlage',
             'abstimmungsmodus', 'abstimmungsmodus_display', 'mehrheit_schwelle',
+            'stimmgrundlage', 'stimmgrundlage_id',
             'abstimmung_ja', 'abstimmung_nein', 'abstimmung_enthaltung',
             'abstimmungsergebnis', 'abstimmungsergebnis_display',
             'ergebnis_bemerkung', 'triggert_vorgang', 'triggert_wirtschaftsplan',
@@ -65,6 +76,14 @@ class TagesordnungspunktSerializer(serializers.ModelSerializer):
             'id', 'ev', 'abstimmung_ja', 'abstimmung_nein',
             'abstimmung_enthaltung', 'abstimmungsergebnis',
         ]
+
+    def get_stimmgrundlage(self, obj):
+        if not obj.stimmgrundlage_id:
+            return None
+        return {
+            'id': str(obj.stimmgrundlage_id),
+            'bezeichnung': obj.stimmgrundlage.bezeichnung_anzeige,
+        }
 
 
 class TagesordnungspunktCreateSerializer(serializers.Serializer):
@@ -83,8 +102,31 @@ class TagesordnungspunktCreateSerializer(serializers.Serializer):
     mehrheit_schwelle = serializers.DecimalField(
         max_digits=5, decimal_places=2, required=False, allow_null=True,
     )
+    stimmgrundlage = serializers.PrimaryKeyRelatedField(
+        queryset=EVStimmgrundlage.objects.all(), required=False, allow_null=True,
+        help_text='Optional — unbelegt wird automatisch vorbelegt (Spec v1.1 '
+                  'Kap. 3): erster TOP → Standard-Stimmgrundlage der EV, '
+                  'weitere TOP → Stimmgrundlage des vorherigen TOP.',
+    )
     triggert_vorgang = serializers.BooleanField(default=False)
     triggert_wirtschaftsplan = serializers.BooleanField(default=False)
+
+
+class EVStimmgrundlageSerializer(serializers.ModelSerializer):
+    verteilerschluessel_text = serializers.SerializerMethodField()
+
+    class Meta:
+        model = EVStimmgrundlage
+        fields = [
+            'id', 'ev', 'verteilerschluessel', 'verteilerschluessel_text',
+            'ist_kopfprinzip', 'wirtschaftsjahr', 'ist_standard',
+            'bezeichnung_anzeige',
+        ]
+        read_only_fields = fields
+
+    def get_verteilerschluessel_text(self, obj):
+        vs = obj.verteilerschluessel
+        return f'{vs.schluessel} {vs.bezeichnung}' if vs else None
 
 
 class EVTeilnehmerAnteilSerializer(serializers.ModelSerializer):
@@ -100,11 +142,13 @@ class EVTeilnehmerSerializer(serializers.ModelSerializer):
     person_name = serializers.CharField(source='person.name', read_only=True)
     vertreten_durch_name = serializers.SerializerMethodField()
     anteile = EVTeilnehmerAnteilSerializer(many=True, read_only=True)
+    stimmkraft_je_grundlage = serializers.SerializerMethodField()
 
     class Meta:
         model = EVTeilnehmer
         fields = [
             'id', 'ev', 'person', 'person_name', 'stimmkraft',
+            'stimmkraft_je_grundlage',
             'zusage_status', 'zusage_am', 'zusage_quelle',
             'ist_anwesend', 'anwesenheit_erfasst_am',
             'vertreten_durch', 'vertreten_durch_name', 'vertreter_name',
@@ -117,6 +161,16 @@ class EVTeilnehmerSerializer(serializers.ModelSerializer):
 
     def get_vertreten_durch_name(self, obj):
         return obj.vertreten_durch.name if obj.vertreten_durch_id else None
+
+    def get_stimmkraft_je_grundlage(self, obj):
+        """Mehrdimensionaler Snapshot (API-Vertrag v1.1 Abschnitt 3.2)."""
+        return [
+            {
+                'stimmgrundlage_id': str(snapshot.stimmgrundlage_id),
+                'wert': str(snapshot.stimmkraft.quantize(Decimal('0.0001'))),
+            }
+            for snapshot in obj.stimmkraft_snapshots.all()
+        ]
 
 
 class EVVersandprotokollSerializer(serializers.ModelSerializer):
@@ -173,6 +227,7 @@ class EigentuemerversammlungDetailSerializer(serializers.ModelSerializer):
     )
     stimm_verteilerschluessel_text = serializers.SerializerMethodField()
     tagesordnung = TagesordnungspunktSerializer(many=True, read_only=True)
+    stimmgrundlagen = EVStimmgrundlageSerializer(many=True, read_only=True)
     task_status = serializers.SerializerMethodField()
     ladungsfrist = serializers.SerializerMethodField()
     erstellt_von_name = serializers.SerializerMethodField()
@@ -190,8 +245,9 @@ class EigentuemerversammlungDetailSerializer(serializers.ModelSerializer):
             'stimm_verteilerschluessel', 'stimm_verteilerschluessel_text',
             'stimm_wirtschaftsjahr',
             'status', 'status_display', 'task_status', 'ladungsfrist',
+            'versammlungsort',
             'einladungstext', 'einladungs_pdf', 'einladungs_pdf_dateiname',
-            'protokoll_pdf', 'tagesordnung',
+            'protokoll_pdf', 'tagesordnung', 'stimmgrundlagen',
             'versammlungsleiter', 'protokollfuehrer',
             'einladung_versendet_am', 'durchgefuehrt_am',
             'erstellt_am', 'erstellt_von', 'erstellt_von_name',
@@ -246,6 +302,12 @@ class EigentuemerversammlungUpdateSerializer(serializers.Serializer):
 
     termin = serializers.DateTimeField(required=False, allow_null=True)
     ort = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    versammlungsort = serializers.PrimaryKeyRelatedField(
+        queryset=Versammlungsort.objects.all(), required=False, allow_null=True,
+        help_text='Katalogeintrag zur Vorbelegung — "ort" bleibt das '
+                  'maßgebliche Textfeld und wird dadurch NICHT automatisch '
+                  'überschrieben.',
+    )
     raum_buchung_notizen = serializers.CharField(required=False, allow_blank=True)
     terminvorschlaege = serializers.ListField(required=False)
 
@@ -270,7 +332,10 @@ class EigentuemerversammlungUpdateSerializer(serializers.Serializer):
         max_length=200, required=False, allow_blank=True,
     )
 
-    TERMIN_FELDER = ('termin', 'ort', 'raum_buchung_notizen', 'terminvorschlaege')
+    TERMIN_FELDER = (
+        'termin', 'ort', 'versammlungsort', 'raum_buchung_notizen',
+        'terminvorschlaege',
+    )
     DIREKT_FELDER = (
         'arbeitsname', 'art', 'stimmprinzip', 'stimm_verteilerschluessel',
         'stimm_wirtschaftsjahr',
@@ -378,6 +443,34 @@ class BeschlussSerializer(serializers.ModelSerializer):
 
     def get_erstellt_von_name(self, obj):
         return _user_name(obj.erstellt_von)
+
+
+class VersammlungsortSerializer(serializers.ModelSerializer):
+    """CRUD-Serializer für den Katalog Versammlungsorte (Spec v1.1 Kap. 1)."""
+
+    class Meta:
+        model = Versammlungsort
+        fields = [
+            'id', 'bezeichnung', 'strasse', 'plz', 'ort_text', 'zusatz', 'aktiv',
+        ]
+        read_only_fields = ['id']
+
+
+class StimmgrundlageHinzufuegenSerializer(serializers.Serializer):
+    """Eingabe für ``POST /versammlungen/{id}/stimmgrundlage-hinzufuegen/``."""
+
+    verteilerschluessel = serializers.PrimaryKeyRelatedField(
+        queryset=Verteilerschluessel.objects.all(), required=False, allow_null=True,
+    )
+    ist_kopfprinzip = serializers.BooleanField(default=False)
+    wirtschaftsjahr = serializers.IntegerField(default=0)
+    ist_standard = serializers.BooleanField(default=False)
+
+
+class CheckoutZuruecknehmenSerializer(serializers.Serializer):
+    """Eingabe für ``POST /versammlungen/{id}/checkout-zuruecknehmen/``."""
+
+    grund = serializers.CharField()
 
 
 class AnfechtungSerializer(serializers.Serializer):

@@ -19,12 +19,31 @@ from apps.versammlung.services import ev_service
 # Felder, die nach dem Einladungsversand noch geändert werden dürfen.
 _FELDER_NACH_VERSAND_ERLAUBT = {'erlaeuterung', 'ergebnis_bemerkung'}
 
-# Alle über diesen Service pflegbaren Felder.
+# Alle über diesen Service pflegbaren Felder. 'stimmgrundlage' gehört dazu
+# (Spec v1.1 Kap. 3) und ist NACH Einladungsversand gesperrt — die Einladung
+# muss die Stimmgrundlage je TOP nennen, sie darf sich danach nicht mehr
+# ändern (analog zur Sperre der übrigen inhaltlichen Felder).
 _PFLEGBARE_FELDER = {
     'titel', 'erlaeuterung', 'beschlussvorlage', 'abstimmungsmodus',
     'mehrheit_schwelle', 'triggert_vorgang', 'triggert_wirtschaftsplan',
-    'ergebnis_bemerkung',
+    'ergebnis_bemerkung', 'stimmgrundlage',
 }
+
+
+def _vorbelegte_stimmgrundlage(ev, nummer: int):
+    """Vorbelegung für einen neuen TOP (Spec v1.1 Kap. 3).
+
+    Erster TOP der EV → die als ``ist_standard=True`` markierte
+    Stimmgrundlage. Jeder weitere TOP → Stimmgrundlage des TOP, der direkt
+    vor der neuen Position (nach ``nummer``) liegt. Liefert ``None``, wenn
+    die EV (noch) keine Stimmgrundlage hat — kommt nur bei Alt-/Testdaten vor.
+    """
+    vorheriger = (
+        ev.tagesordnung.filter(nummer__lt=nummer).order_by('-nummer').first()
+    )
+    if vorheriger is not None and vorheriger.stimmgrundlage_id:
+        return vorheriger.stimmgrundlage
+    return ev.stimmgrundlagen.filter(ist_standard=True).first()
 
 
 def _pruefe_aenderbar(ev, aktion: str) -> None:
@@ -41,13 +60,20 @@ def _pruefe_aenderbar(ev, aktion: str) -> None:
 def top_anlegen(*, ev, titel, erstellt_von, erlaeuterung='', beschlussvorlage='',
                 abstimmungsmodus='einfache_mehrheit', mehrheit_schwelle=None,
                 nummer=None, triggert_vorgang=False,
-                triggert_wirtschaftsplan=False) -> Tagesordnungspunkt:
+                triggert_wirtschaftsplan=False,
+                stimmgrundlage=None) -> Tagesordnungspunkt:
     """Legt einen TOP an.
 
     ``nummer=None`` hängt den Punkt hinten an. Wird eine Nummer übergeben, wird
     an dieser Position eingefügt und die Folgepunkte rücken auf — das Verschieben
     läuft absteigend, damit die Unique-Constraint (ev, nummer) nicht kurzzeitig
     verletzt wird.
+
+    ``stimmgrundlage=None`` (Spec v1.1 Kap. 3): wird automatisch vorbelegt —
+    erster TOP der EV → die ``ist_standard=True``-Stimmgrundlage, jeder
+    weitere TOP → die Stimmgrundlage des unmittelbar vorherigen TOP (nach
+    ``nummer``). Explizit übergeben überschreibt die Vorbelegung, muss aber
+    zur eigenen EV gehören.
     """
     _pruefe_aenderbar(ev, 'Das Anlegen eines TOP')
 
@@ -61,12 +87,20 @@ def top_anlegen(*, ev, titel, erstellt_von, erlaeuterung='', beschlussvorlage=''
             bestehend.nummer += 1
             bestehend.save(update_fields=['nummer'])
 
+    if stimmgrundlage is None:
+        stimmgrundlage = _vorbelegte_stimmgrundlage(ev, nummer)
+    elif stimmgrundlage.ev_id != ev.id:
+        raise ValidationError({
+            'stimmgrundlage': 'Die Stimmgrundlage gehört zu einer anderen Versammlung.',
+        })
+
     top = Tagesordnungspunkt(
         ev=ev, nummer=nummer, titel=titel, erlaeuterung=erlaeuterung,
         beschlussvorlage=beschlussvorlage, abstimmungsmodus=abstimmungsmodus,
         mehrheit_schwelle=mehrheit_schwelle,
         triggert_vorgang=triggert_vorgang,
         triggert_wirtschaftsplan=triggert_wirtschaftsplan,
+        stimmgrundlage=stimmgrundlage,
     )
     top.full_clean()
     top.save()

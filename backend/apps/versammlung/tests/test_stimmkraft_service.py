@@ -18,7 +18,9 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase
 
 from apps.personen.models import EigentumsVerhaeltnis
-from apps.versammlung.services import ev_service, stimmkraft_service
+from apps.versammlung.services import (
+    ev_service, stimmgrundlage_service, stimmkraft_service,
+)
 from apps.versammlung.tests import factories as f
 
 
@@ -365,3 +367,83 @@ class QuorumTest(TestCase):
         quorum = stimmkraft_service.berechne_quorum(leere_ev)
         self.assertEqual(quorum['gesamt_stimmkraft'], Decimal('0'))
         self.assertEqual(quorum['anwesend_prozent'], Decimal('0.00'))
+
+
+class MehrdimensionalerSnapshotTest(TestCase):
+    """EVTeilnehmerStimmkraft/EVTeilnehmerAnteilWert je EVStimmgrundlage
+    (Spec v1.1 Kap. 2) — ergänzt den Legacy-Einzelwert, ersetzt ihn nicht."""
+
+    def setUp(self):
+        self.user = f.user()
+        self.objekt = f.objekt()
+        self.vielhaber = f.person(nachname='Vielhaber')
+        self.eh1, _ = f.eigentuemer(self.objekt, self.vielhaber, nr='001')
+        self.eh2, _ = f.eigentuemer(self.objekt, self.vielhaber, nr='002')
+        self.einzel = f.person(nachname='Einzel')
+        self.eh3, _ = f.eigentuemer(self.objekt, self.einzel, nr='003')
+        self.vs = f.einheiten_schluessel(
+            self.objekt, [self.eh1, self.eh2, self.eh3],
+        )
+
+    def test_legacy_und_snapshot_stimmen_fuer_standardgrundlage_ueberein(self):
+        ev = ev_service.erstelle_ev(
+            objekt=self.objekt, erstellt_von=self.user,
+            stimmprinzip='verteilerschluessel', stimm_verteilerschluessel=self.vs,
+        )
+        stimmkraft_service.ermittle_teilnehmer(ev, self.user)
+
+        standard = ev.stimmgrundlagen.get(ist_standard=True)
+        teilnehmer = ev.teilnehmer.get(person=self.vielhaber)
+        snapshot = teilnehmer.stimmkraft_snapshots.get(stimmgrundlage=standard)
+
+        self.assertEqual(snapshot.stimmkraft, teilnehmer.stimmkraft)
+        self.assertEqual(snapshot.stimmkraft, Decimal('2'))
+
+    def test_zweite_stimmgrundlage_bekommt_eigenen_snapshot(self):
+        ev = ev_service.erstelle_ev(
+            objekt=self.objekt, erstellt_von=self.user,
+            stimmprinzip='kopf',
+        )
+        kopf_grundlage = stimmgrundlage_service.hinzufuegen(
+            ev, verteilerschluessel=self.vs,
+        )
+        stimmkraft_service.ermittle_teilnehmer(ev, self.user)
+
+        teilnehmer = ev.teilnehmer.get(person=self.vielhaber)
+        standard_snapshot = teilnehmer.stimmkraft_snapshots.get(
+            stimmgrundlage__ist_standard=True,
+        )
+        vs_snapshot = teilnehmer.stimmkraft_snapshots.get(stimmgrundlage=kopf_grundlage)
+
+        # Kopfprinzip (Standard): 1 Stimme trotz zweier Einheiten.
+        self.assertEqual(standard_snapshot.stimmkraft, Decimal('1'))
+        # Verteilerschlüssel VS 030: 2 Stimmen (eine je Einheit).
+        self.assertEqual(vs_snapshot.stimmkraft, Decimal('2'))
+
+    def test_anteilwert_wird_je_grundlage_gespeichert(self):
+        ev = ev_service.erstelle_ev(
+            objekt=self.objekt, erstellt_von=self.user,
+            stimmprinzip='verteilerschluessel', stimm_verteilerschluessel=self.vs,
+        )
+        stimmkraft_service.ermittle_teilnehmer(ev, self.user)
+
+        standard = ev.stimmgrundlagen.get(ist_standard=True)
+        anteil = ev.teilnehmer.get(person=self.vielhaber).anteile.get(
+            eigentumsverhaeltnis__einheit=self.eh1,
+        )
+        wert = anteil.wert_snapshots.get(stimmgrundlage=standard)
+        self.assertEqual(wert.wert_snapshot, Decimal('1'))
+
+    def test_zweiter_lauf_aktualisiert_bestehenden_snapshot(self):
+        ev = ev_service.erstelle_ev(
+            objekt=self.objekt, erstellt_von=self.user,
+            stimmprinzip='verteilerschluessel', stimm_verteilerschluessel=self.vs,
+        )
+        stimmkraft_service.ermittle_teilnehmer(ev, self.user)
+        stimmkraft_service.ermittle_teilnehmer(ev, self.user)
+
+        standard = ev.stimmgrundlagen.get(ist_standard=True)
+        teilnehmer = ev.teilnehmer.get(person=self.vielhaber)
+        self.assertEqual(
+            teilnehmer.stimmkraft_snapshots.filter(stimmgrundlage=standard).count(), 1,
+        )

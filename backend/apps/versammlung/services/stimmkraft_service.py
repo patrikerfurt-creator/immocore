@@ -27,7 +27,10 @@ from django.db import transaction
 
 from apps.objekte.models import VerteilerschluesselWert
 from apps.personen.models import EigentumsVerhaeltnis
-from apps.versammlung.models import EVTeilnehmer, EVTeilnehmerAnteil
+from apps.versammlung.models import (
+    EVTeilnehmer, EVTeilnehmerAnteil, EVTeilnehmerAnteilWert,
+    EVTeilnehmerStimmkraft,
+)
 from apps.versammlung.services import ev_service
 
 _ZWEI = Decimal('0.01')
@@ -52,14 +55,13 @@ def _einheiten_nummern(objekt, einheit_ids) -> list:
     )
 
 
-def vs_werte(ev) -> dict:
-    """Liefert ``{einheit_id: Decimal}`` aus dem Stimm-Verteilerschlüssel.
+def _werte_fuer_vs(vs, wirtschaftsjahr: int, objekt) -> dict:
+    """Kern von ``vs_werte``/``_werte_fuer_stimmgrundlage``: liefert
+    ``{einheit_id: Decimal}`` für EINEN Verteilerschlüssel + Wirtschaftsjahr.
 
     Prüft dabei die Vollständigkeit des Schlüssels selbst: jede beteiligte
-    Einheit braucht einen positiven Wert. Wird nur bei
-    ``stimmprinzip='verteilerschluessel'`` aufgerufen.
+    Einheit braucht einen positiven Wert.
     """
-    vs = ev.stimm_verteilerschluessel
     if vs is None:
         raise ValidationError(
             'Für dieses Stimmprinzip ist kein Verteilerschlüssel gesetzt.'
@@ -72,29 +74,53 @@ def vs_werte(ev) -> dict:
 
     zeilen = list(
         VerteilerschluesselWert.objects
-        .filter(schluessel=vs, wirtschaftsjahr=ev.stimm_wirtschaftsjahr,
-                beteiligt=True)
+        .filter(schluessel=vs, wirtschaftsjahr=wirtschaftsjahr, beteiligt=True)
         .values_list('einheit_id', 'wert')
     )
     if not zeilen:
         raise ValidationError(
             f'Der Verteilerschlüssel "{vs.schluessel} {vs.bezeichnung}" hat für '
-            f'das Wirtschaftsjahr {ev.stimm_wirtschaftsjahr} keine beteiligten '
+            f'das Wirtschaftsjahr {wirtschaftsjahr} keine beteiligten '
             'Einheiten — als Stimmgrundlage nicht verwendbar.'
         )
 
     ohne_wert = [eid for eid, wert in zeilen if wert is None or wert <= 0]
     if ohne_wert:
-        nummern = _einheiten_nummern(ev.objekt, ohne_wert)
+        nummern = _einheiten_nummern(objekt, ohne_wert)
         raise ValidationError(
             f'Im Verteilerschlüssel "{vs.schluessel} {vs.bezeichnung}" '
-            f'(Wirtschaftsjahr {ev.stimm_wirtschaftsjahr}) fehlen Werte für '
+            f'(Wirtschaftsjahr {wirtschaftsjahr}) fehlen Werte für '
             f'{len(nummern)} beteiligte Einheiten: {_kuerze(nummern)}. Ohne '
             'gepflegte Werte ist dieser Schlüssel keine Stimmgrundlage — bitte '
             'Werte nachtragen oder das Kopfprinzip verwenden.'
         )
 
     return {eid: Decimal(wert) for eid, wert in zeilen}
+
+
+def vs_werte(ev) -> dict:
+    """Liefert ``{einheit_id: Decimal}`` aus dem Stimm-Verteilerschlüssel
+    (Legacy-Feldpaar ``stimmprinzip``/``stimm_verteilerschluessel`` der EV).
+
+    Wird nur bei ``stimmprinzip='verteilerschluessel'`` aufgerufen.
+    """
+    return _werte_fuer_vs(ev.stimm_verteilerschluessel, ev.stimm_wirtschaftsjahr, ev.objekt)
+
+
+def _werte_fuer_stimmgrundlage(stimmgrundlage) -> dict:
+    """Rohwerte je Einheit für EINE ``EVStimmgrundlage`` (Spec v1.1 Kap. 2).
+
+    Echtes Kopfprinzip trägt keine Einheitenwerte (die Stimmkraft ist
+    personenbezogen, nicht einheitenbezogen) — informativ wird trotzdem ein
+    evtl. vorhandener MEA-Schlüssel gelesen, für die Anteil-Snapshots
+    (analog zum bisherigen Verhalten bei ``stimmprinzip='kopf'``).
+    """
+    if stimmgrundlage.ist_kopfprinzip:
+        return _mea_snapshot(stimmgrundlage.ev)
+    return _werte_fuer_vs(
+        stimmgrundlage.verteilerschluessel, stimmgrundlage.wirtschaftsjahr,
+        stimmgrundlage.ev.objekt,
+    )
 
 
 def _pruefe_zuordenbar(ev, werte: dict, verhaeltnisse: list) -> None:
@@ -183,11 +209,13 @@ def ermittle_teilnehmer(ev, erstellt_von) -> dict:
     neu = 0
     gesamt = Decimal('0')
     ohne_stimmrecht = []
+    teilnehmer_je_person = {}
 
     for person_id, liste in gruppen.items():
         teilnehmer, erzeugt = EVTeilnehmer.objects.get_or_create(
             ev=ev, person_id=person_id,
         )
+        teilnehmer_je_person[person_id] = teilnehmer
         neu += 1 if erzeugt else 0
 
         bestehende = {a.eigentumsverhaeltnis_id: a for a in teilnehmer.anteile.all()}
@@ -236,6 +264,35 @@ def ermittle_teilnehmer(ev, erstellt_von) -> dict:
             teilnehmer.stimmkraft = Decimal('0')
             teilnehmer.save(update_fields=['stimmkraft'])
         entfallen += 1
+
+    # Mehrdimensionale Stimmkraft-Snapshots (Spec v1.1 Kap. 2): zusätzlich zum
+    # Legacy-Einzelwert oben entsteht je EVStimmgrundlage der EV ein Snapshot
+    # je Teilnehmer/Anteil. Ergänzt EVTeilnehmer.stimmkraft, ersetzt es nicht.
+    for stimmgrundlage in ev.stimmgrundlagen.select_related('verteilerschluessel').all():
+        sg_werte = _werte_fuer_stimmgrundlage(stimmgrundlage)
+        for person_id, liste in gruppen.items():
+            teilnehmer = teilnehmer_je_person[person_id]
+            if stimmgrundlage.ist_kopfprinzip:
+                sg_stimmkraft = _stimmkraft_kopf(liste)
+            else:
+                sg_stimmkraft = _stimmkraft_vs(liste, sg_werte)
+            EVTeilnehmerStimmkraft.objects.update_or_create(
+                teilnehmer=teilnehmer, stimmgrundlage=stimmgrundlage,
+                defaults={'stimmkraft': sg_stimmkraft},
+            )
+            for verhaeltnis in liste:
+                EVTeilnehmerAnteilWert.objects.update_or_create(
+                    anteil=teilnehmer.anteile.get(eigentumsverhaeltnis=verhaeltnis),
+                    stimmgrundlage=stimmgrundlage,
+                    defaults={'wert_snapshot': sg_werte.get(verhaeltnis.einheit_id)},
+                )
+        # Teilnehmer, die nicht mehr aktiv sind, bekommen auch hier 0 statt
+        # eines veralteten Werts.
+        for teilnehmer in ev.teilnehmer.exclude(person_id__in=gruppen.keys()):
+            EVTeilnehmerStimmkraft.objects.update_or_create(
+                teilnehmer=teilnehmer, stimmgrundlage=stimmgrundlage,
+                defaults={'stimmkraft': Decimal('0')},
+            )
 
     ev_service.vermerke_ereignis(
         ev, 'stimmkraft_ermittelt', erstellt_von,
@@ -294,24 +351,41 @@ def stimmkraft_neu_ermitteln(ev, erstellt_von) -> dict:
     return ermittle_teilnehmer(ev, erstellt_von)
 
 
-def berechne_quorum(ev) -> dict:
+def berechne_quorum(ev, stimmgrundlage=None) -> dict:
     """Anwesende Stimmkraft im Verhältnis zur Gesamtstimmkraft — rein informativ.
 
     Seit der WEG-Reform (01.12.2020) ist die Versammlung immer beschlussfähig
     (§ 25 Abs. 3 WEG a.F. wurde aufgehoben). Es gibt deshalb bewusst KEIN Feld
     ``quorum_erreicht`` und kein Gate auf die Abstimmungserfassung.
+
+    ``stimmgrundlage=None`` (Standard): EV-weite Summe über den
+    Legacy-Einzelwert ``EVTeilnehmer.stimmkraft`` — unverändertes Verhalten,
+    weiterhin genutzt von der internen Summenprüfung
+    (``durchfuehrung_service._pruefe_summen``) und Immocores eigenem
+    Protokoll. ``stimmgrundlage=<EVStimmgrundlage>``: Summe über die
+    ``EVTeilnehmerStimmkraft``-Snapshots dieser Grundlage (Spec v1.1 Kap. 2,
+    API-Vertrag v1.1 Abschnitt 3.5).
     """
     gesamt = Decimal('0')
     anwesend = Decimal('0')
     anzahl_anwesend = 0
     anzahl_offen = 0
 
-    for teilnehmer in ev.teilnehmer.all():
-        gesamt += teilnehmer.stimmkraft
-        if teilnehmer.ist_anwesend is True:
-            anwesend += teilnehmer.stimmkraft
+    if stimmgrundlage is None:
+        eintraege = [(t.stimmkraft, t.ist_anwesend) for t in ev.teilnehmer.all()]
+    else:
+        eintraege = [
+            (s.stimmkraft, s.teilnehmer.ist_anwesend)
+            for s in EVTeilnehmerStimmkraft.objects
+            .filter(stimmgrundlage=stimmgrundlage).select_related('teilnehmer')
+        ]
+
+    for stimmkraft, ist_anwesend in eintraege:
+        gesamt += stimmkraft
+        if ist_anwesend is True:
+            anwesend += stimmkraft
             anzahl_anwesend += 1
-        elif teilnehmer.ist_anwesend is None:
+        elif ist_anwesend is None:
             anzahl_offen += 1
 
     if gesamt > 0:
@@ -332,3 +406,26 @@ def berechne_quorum(ev) -> dict:
             'dient der Protokollierung.'
         ),
     }
+
+
+def berechne_quorum_je_stimmgrundlage(ev) -> list:
+    """Quorum je ``EVStimmgrundlage`` der EV (API-Vertrag v1.1 Abschnitt 3.5).
+
+    Rückgabeform passend zum externen Abstimmtool:
+    ``[{'stimmgrundlage_id', 'bezeichnung', 'anwesende_stimmkraft',
+    'gesamt_stimmkraft'}]``.
+    """
+    ergebnis = []
+    for stimmgrundlage in ev.stimmgrundlagen.all():
+        quorum = berechne_quorum(ev, stimmgrundlage)
+        ergebnis.append({
+            'stimmgrundlage_id': str(stimmgrundlage.id),
+            'bezeichnung': stimmgrundlage.bezeichnung_anzeige,
+            'anwesende_stimmkraft': str(
+                quorum['anwesende_stimmkraft'].quantize(Decimal('0.0001'))
+            ),
+            'gesamt_stimmkraft': str(
+                quorum['gesamt_stimmkraft'].quantize(Decimal('0.0001'))
+            ),
+        })
+    return ergebnis

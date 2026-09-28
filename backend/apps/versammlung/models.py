@@ -19,6 +19,44 @@ from uuid import uuid4
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models, transaction
+from django.db.models import Q
+
+
+class Versammlungsort(models.Model):
+    """Katalog wiederkehrender Versammlungsorte (Spec v1.1 Kap. 1).
+
+    Global, kein Objekt-Bezug. ``Eigentuemerversammlung.ort`` bleibt das
+    maßgebliche, denormalisierte GoBD-Snapshot-Textfeld — dieser Katalog dient
+    nur der Vorbelegung/Autocomplete beim Anlegen/Ändern einer EV. Eine
+    spätere Adresskorrektur hier darf eine bereits versendete
+    Einladung/erzeugtes Protokoll nicht rückwirkend verändern.
+
+    Deaktivieren statt Löschen: ``PROTECT``-Referenzen aus alten EVs bleiben
+    bestehen, auch wenn ein Ort nicht mehr genutzt wird.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    bezeichnung = models.CharField(max_length=200)
+    strasse = models.CharField(max_length=255, blank=True, default='')
+    plz = models.CharField(max_length=10, blank=True, default='')
+    ort_text = models.CharField(max_length=120, blank=True, default='')
+    zusatz = models.CharField(
+        max_length=255, blank=True, default='',
+        help_text='Raum, Etage, Zugangshinweis o.ä.',
+    )
+    aktiv = models.BooleanField(
+        default=True,
+        help_text='Deaktivieren statt Löschen — PROTECT-Referenzen aus '
+                  'bestehenden Eigentümerversammlungen bleiben erhalten.',
+    )
+
+    class Meta:
+        verbose_name        = 'Versammlungsort'
+        verbose_name_plural = 'Versammlungsorte'
+        ordering            = ['bezeichnung']
+
+    def __str__(self):
+        return self.bezeichnung
 
 
 class Eigentuemerversammlung(models.Model):
@@ -34,7 +72,8 @@ class Eigentuemerversammlung(models.Model):
         ('entwurf',                 'Entwurf'),
         ('in_bearbeitung',          'In Bearbeitung'),
         ('einladungen_versendet',   'Einladungen versendet'),
-        ('durchgefuehrt',           'Durchgeführt'),
+        ('ausgecheckt',             'Ausgecheckt (Abstimmtool)'),
+        ('durchgefuehrt',           'Durchgeführt (Altdaten)'),
         ('beschluesse_verarbeitet', 'Beschlüsse verarbeitet'),
         ('archiviert',              'Archiviert'),
     ]
@@ -63,6 +102,13 @@ class Eigentuemerversammlung(models.Model):
     # ---- Task 1: Terminierung ----
     termin = models.DateTimeField(null=True, blank=True)
     ort = models.CharField(max_length=255, blank=True, default='')
+    versammlungsort = models.ForeignKey(
+        Versammlungsort, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='eigentuemerversammlungen',
+        help_text='Katalogeintrag zur Vorbelegung von "ort" (Autocomplete). '
+                  'Rein informativ — maßgeblich für Einladung/Protokoll bleibt '
+                  'das Textfeld "ort" (GoBD-Snapshot zum Versammlungszeitpunkt).',
+    )
     raum_buchung_notizen = models.TextField(blank=True, default='')
     terminvorschlaege = models.JSONField(
         default=list, blank=True,
@@ -126,6 +172,14 @@ class Eigentuemerversammlung(models.Model):
     )
     einladung_versendet_am = models.DateTimeField(null=True, blank=True)
     durchgefuehrt_am = models.DateTimeField(null=True, blank=True)
+    abschluss_erledigt_am = models.DateTimeField(
+        null=True, blank=True,
+        help_text='Zeitpunkt des Checkout-Abschlusses (Spec v1.1 Kap. 4C, '
+                  'API-Vertrag 3.7) — Beschlussnummern wurden vergeben, aber '
+                  'der Status wechselt erst mit dem Protokoll-Upload (3.8) auf '
+                  '"beschluesse_verarbeitet". Markiert außerdem, dass '
+                  'protokoll-upload aufgerufen werden darf.',
+    )
     versammlungsleiter = models.CharField(max_length=200, blank=True, default='')
     protokollfuehrer = models.CharField(max_length=200, blank=True, default='')
 
@@ -178,6 +232,119 @@ class Eigentuemerversammlung(models.Model):
         return f"{bezeichnung} — {self.objekt.bezeichnung} ({termin})"
 
 
+class EVStimmgrundlage(models.Model):
+    """Eine wählbare Gewichtung der Stimmkraft innerhalb einer EV (Spec v1.1 Kap. 2).
+
+    Entweder ein Verteilerschlüssel des Objekts ODER echtes Kopfprinzip
+    (personenbezogen, § 25 Abs. 2 WEG), nie beides — siehe CheckConstraint.
+
+    Wichtige Abgrenzung (Grund für dieses eigene Modell, siehe Spec-Abschnitt
+    2): ``Verteilerschluessel.vs_typ='kopf'`` (z.B. Schlüssel 030/031/032,
+    ``apps.konten.services.MUSTER_VS``) bedeutet im Bestand "Anzahl je
+    Einheit" — das ist das OBJEKTPRINZIP, nicht das echte Kopfprinzip. Ein
+    Eigentümer mit drei Einheiten hätte darüber fälschlich drei Stimmen. Das
+    echte, personenbezogene Kopfprinzip wird hier über ``ist_kopfprinzip``
+    abgebildet und in ``stimmkraft_service`` wie bisher personenbezogen
+    (eine Stimme je Person) berechnet.
+
+    Bei EV-Anlage werden mehrere Stimmgrundlagen ausgewählt/angelegt; eine
+    davon ist ``ist_standard`` — Vorbelegung für den ersten Tagesordnungspunkt.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    ev = models.ForeignKey(
+        Eigentuemerversammlung, on_delete=models.CASCADE, related_name='stimmgrundlagen',
+    )
+    verteilerschluessel = models.ForeignKey(
+        'objekte.Verteilerschluessel', on_delete=models.PROTECT,
+        null=True, blank=True, related_name='ev_stimmgrundlagen',
+        help_text='Gesetzt, wenn NICHT das echte Kopfprinzip gilt — Grundlage '
+                  'ist dann dieser Verteilerschlüssel des Objekts. '
+                  'Verbrauchsschlüssel (vs_typ="verbrauch") sind keine '
+                  'zulässige Stimmgrundlage (siehe clean()).',
+    )
+    ist_kopfprinzip = models.BooleanField(
+        default=False,
+        verbose_name='Echtes Kopfprinzip',
+        help_text='§ 25 Abs. 2 WEG: eine Stimme je Person, unabhängig von der '
+                  'Anzahl ihrer Einheiten. NICHT zu verwechseln mit '
+                  'Verteilerschluessel.vs_typ="kopf" (Objektprinzip, Anzahl je '
+                  'Einheit) — siehe Klassendokumentation.',
+    )
+    wirtschaftsjahr = models.IntegerField(
+        default=0,
+        help_text='Wirtschaftsjahr, aus dem die Werte des Verteilerschlüssels '
+                  'gelesen werden; 0 = zeitlos. Ohne Bedeutung bei '
+                  'ist_kopfprinzip=True.',
+    )
+    ist_standard = models.BooleanField(
+        default=False,
+        help_text='Vorbelegung für den ersten Tagesordnungspunkt der EV. '
+                  'Höchstens eine Stimmgrundlage je EV darf das sein.',
+    )
+    bezeichnung_anzeige = models.CharField(
+        max_length=120,
+        help_text='Anzeigetext, z.B. "Kopfprinzip" oder die Bezeichnung des '
+                  'Verteilerschlüssels — wird dem externen Abstimmtool je TOP '
+                  'angezeigt (API-Vertrag v1.1 Abschnitt 3.1).',
+    )
+
+    class Meta:
+        verbose_name        = 'EV-Stimmgrundlage'
+        verbose_name_plural = 'EV-Stimmgrundlagen'
+        ordering            = ['ev', 'bezeichnung_anzeige']
+        constraints = [
+            models.CheckConstraint(
+                name='evstimmgrundlage_entweder_vs_oder_kopf',
+                check=(
+                    Q(verteilerschluessel__isnull=False, ist_kopfprinzip=False)
+                    | Q(verteilerschluessel__isnull=True, ist_kopfprinzip=True)
+                ),
+            ),
+            models.UniqueConstraint(
+                fields=['ev'], condition=Q(ist_standard=True),
+                name='uniq_standard_stimmgrundlage_je_ev',
+            ),
+            models.UniqueConstraint(
+                fields=['ev'], condition=Q(ist_kopfprinzip=True),
+                name='uniq_kopfprinzip_je_ev',
+            ),
+            models.UniqueConstraint(
+                fields=['ev', 'verteilerschluessel'],
+                name='uniq_verteilerschluessel_je_ev',
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.verteilerschluessel_id and self.ist_kopfprinzip:
+            raise ValidationError(
+                'Eine Stimmgrundlage ist entweder ein Verteilerschlüssel ODER '
+                'das echte Kopfprinzip — nie beides.'
+            )
+        if not self.verteilerschluessel_id and not self.ist_kopfprinzip:
+            raise ValidationError(
+                'Eine Stimmgrundlage braucht entweder einen Verteilerschlüssel '
+                'oder das echte Kopfprinzip.'
+            )
+        if self.verteilerschluessel_id:
+            if self.ev_id and self.verteilerschluessel.objekt_id != self.ev.objekt_id:
+                raise ValidationError({
+                    'verteilerschluessel': 'Der Verteilerschlüssel gehört zu '
+                                          'einem anderen Objekt.',
+                })
+            if self.verteilerschluessel.vs_typ == 'verbrauch':
+                raise ValidationError({
+                    'verteilerschluessel': 'Ein Verbrauchsschlüssel ist keine '
+                                          'zulässige Stimmgrundlage — Verbrauch '
+                                          'ist kein Stimmrecht nach irgendeiner '
+                                          'Teilungserklärung.',
+                })
+
+    def __str__(self):
+        return f'{self.bezeichnung_anzeige} ({self.ev_id})'
+
+
 class Tagesordnungspunkt(models.Model):
     """Ein TOP mit Beschlussvorlage, Mehrheitsmodus und Ergebnis (Kap. 4.2)."""
 
@@ -215,6 +382,18 @@ class Tagesordnungspunkt(models.Model):
 
     abstimmungsmodus = models.CharField(
         max_length=25, choices=MODUS_CHOICES, default='einfache_mehrheit',
+    )
+    stimmgrundlage = models.ForeignKey(
+        EVStimmgrundlage, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='tagesordnungspunkte',
+        help_text='Grundlage, mit der bei diesem TOP abgestimmt wird (Spec '
+                  'v1.1 Kap. 3). Muss zur eigenen EV gehören. NULL nur bei '
+                  'Alt-TOPs vor der Datenmigration bzw. bei über die Admin-'
+                  'Oberfläche angelegten Testdaten — der Checkout '
+                  '(checkout_service) verlangt sie für jeden '
+                  'abstimmungspflichtigen TOP und lehnt sonst ab. PROTECT: '
+                  'eine einmal verwendete Stimmgrundlage darf nicht '
+                  'verschwinden, solange ein TOP sie referenziert.',
     )
     mehrheit_schwelle = models.DecimalField(
         max_digits=5, decimal_places=2, null=True, blank=True,
@@ -273,6 +452,12 @@ class Tagesordnungspunkt(models.Model):
         if self.abstimmungsmodus != 'qualifizierte_mehrheit' and self.mehrheit_schwelle:
             raise ValidationError({
                 'mehrheit_schwelle': 'Schwelle ist nur bei qualifizierter Mehrheit zulässig.',
+            })
+        if (self.stimmgrundlage_id and self.ev_id
+                and self.stimmgrundlage.ev_id != self.ev_id):
+            raise ValidationError({
+                'stimmgrundlage': 'Die Stimmgrundlage gehört zu einer anderen '
+                                  'Versammlung.',
             })
 
     def __str__(self):
@@ -399,6 +584,83 @@ class EVTeilnehmerAnteil(models.Model):
 
     def __str__(self):
         return f"{self.einheit_nr_snapshot} (MEA {self.mea_wert_snapshot})"
+
+
+class EVTeilnehmerStimmkraft(models.Model):
+    """Mehrdimensionaler Stimmkraft-Snapshot: ein Wert je Teilnehmer UND
+    Stimmgrundlage (Spec v1.1 Kap. 2).
+
+    Ersetzt NICHT ``EVTeilnehmer.stimmkraft`` (bleibt aus Kompatibilitäts-
+    gründen als "Legacy"-Einzelwert bestehen, siehe Feld-Hilfetext dort),
+    sondern ergänzt ihn: für jede ``EVStimmgrundlage`` der EV entsteht hier
+    genau eine Zeile je Teilnehmer, befüllt von
+    ``stimmkraft_service.ermittle_teilnehmer``.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    teilnehmer = models.ForeignKey(
+        EVTeilnehmer, on_delete=models.CASCADE, related_name='stimmkraft_snapshots',
+    )
+    stimmgrundlage = models.ForeignKey(
+        EVStimmgrundlage, on_delete=models.CASCADE, related_name='teilnehmer_stimmkraft',
+    )
+    stimmkraft = models.DecimalField(max_digits=12, decimal_places=4, default=0)
+
+    class Meta:
+        verbose_name        = 'EV-Teilnehmer-Stimmkraft'
+        verbose_name_plural = 'EV-Teilnehmer-Stimmkraft (je Grundlage)'
+        ordering            = ['teilnehmer', 'stimmgrundlage']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['teilnehmer', 'stimmgrundlage'],
+                name='uniq_stimmkraft_je_teilnehmer_und_grundlage',
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        if (self.teilnehmer_id and self.stimmgrundlage_id
+                and self.teilnehmer.ev_id != self.stimmgrundlage.ev_id):
+            raise ValidationError(
+                'Teilnehmer und Stimmgrundlage gehören zu verschiedenen Versammlungen.'
+            )
+
+    def __str__(self):
+        return f'{self.teilnehmer} — {self.stimmgrundlage.bezeichnung_anzeige}: {self.stimmkraft}'
+
+
+class EVTeilnehmerAnteilWert(models.Model):
+    """Rohwert eines Anteils bezogen auf eine bestimmte Stimmgrundlage.
+
+    Ergänzt (löscht NICHT) ``EVTeilnehmerAnteil.mea_wert_snapshot`` — dieser
+    bleibt als Einzelwert-Snapshot bestehen, hier kommt der mehrdimensionale
+    Snapshot je ``EVStimmgrundlage`` hinzu (Spec v1.1 Kap. 2).
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    anteil = models.ForeignKey(
+        EVTeilnehmerAnteil, on_delete=models.CASCADE, related_name='wert_snapshots',
+    )
+    stimmgrundlage = models.ForeignKey(
+        EVStimmgrundlage, on_delete=models.CASCADE, related_name='anteil_werte',
+    )
+    wert_snapshot = models.DecimalField(
+        max_digits=12, decimal_places=4, null=True, blank=True,
+    )
+
+    class Meta:
+        verbose_name        = 'EV-Teilnehmer-Anteil-Wert'
+        verbose_name_plural = 'EV-Teilnehmer-Anteil-Werte (je Grundlage)'
+        ordering            = ['anteil', 'stimmgrundlage']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['anteil', 'stimmgrundlage'],
+                name='uniq_anteilwert_je_anteil_und_grundlage',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.anteil} — {self.stimmgrundlage.bezeichnung_anzeige}: {self.wert_snapshot}'
 
 
 class EVStimme(models.Model):
@@ -532,6 +794,10 @@ class EVEreignis(models.Model):
         ('vorgang_erzeugt',       'Folge-Vorgang erzeugt'),
         ('wp_aufgabe_erzeugt',    'Wirtschaftsplan-Aufgabe erzeugt'),
         ('protokoll_erzeugt',     'Protokoll-PDF erzeugt'),
+        ('checkout',              'Checkout (Übergabe ans Abstimmtool)'),
+        ('checkout_zurueckgenommen', 'Checkout zurückgenommen'),
+        ('abschluss_erzeugt',     'Abschluss — Beschlussnummern vergeben'),
+        ('protokoll_hochgeladen', 'Protokoll vom Abstimmtool hochgeladen'),
         ('kommentar',             'Kommentar'),
     ]
 

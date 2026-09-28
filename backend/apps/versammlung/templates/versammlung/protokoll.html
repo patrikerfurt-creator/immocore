@@ -233,6 +233,13 @@
       <div class="top-label">Beschlusstext</div>
       <div class="beschlusstext">{{ top.beschlussvorlage }}</div>
 
+      {% if top.stimmgrundlage %}
+        <div class="top-label">Stimmgrundlage dieses TOP</div>
+        <div>
+          {{ top.stimmgrundlage.bezeichnung_anzeige }}
+          (Gesamtstimmkraft {{ top.stimmgrundlage_gesamtstimmkraft|floatformat:"-4" }})
+        </div>
+      {% endif %}
       <div class="ergebnis">
         Abstimmung ({{ top.get_abstimmungsmodus_display }}{% if top.mehrheit_schwelle %}, Schwelle {{ top.mehrheit_schwelle|floatformat:"-2" }} %{% endif %}):
         Ja {{ top.abstimmung_ja|floatformat:"-4" }},

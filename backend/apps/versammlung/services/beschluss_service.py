@@ -1,6 +1,9 @@
 """
-Beschluss-Service (Spec v1.1 Kap. 6 und 9) — Task 5: angenommene TOPs in die
-Beschluss-Sammlung übernehmen, Folgeaufgaben anlegen, Protokoll erzeugen.
+Beschluss-Service (Spec v1.1 Kap. 6 und 9) — angenommene TOPs in die
+Beschluss-Sammlung übernehmen und Folgeaufgaben anlegen. Das ist Schritt 1/2
+der Checkout-Rückgabe (siehe ``checkout_service.abschluss``); das Protokoll
+selbst liefert seit Spec v1.1 das externe Abstimmtool nach
+(``checkout_service.protokoll_upload``, Schritt 2/2).
 
 Grundsätze:
 
@@ -28,7 +31,7 @@ from django.utils import timezone
 
 from apps.dokumente.models import Dokument
 from apps.versammlung.models import Beschluss
-from apps.versammlung.services import ev_service, stimmkraft_service
+from apps.versammlung.services import ev_service
 
 logger = logging.getLogger(__name__)
 
@@ -58,31 +61,6 @@ def _vorgangtyp():
             VORGANGTYP_CODE,
         )
     return typ
-
-
-def anwesenheitsliste(ev) -> list:
-    """Teilnehmer mit Stimmkraft, Anwesenheit und Vertretung — für das Protokoll."""
-    zeilen = []
-    for teilnehmer in (
-        ev.teilnehmer.select_related('person', 'vertreten_durch')
-        .prefetch_related('anteile').all()
-    ):
-        vertretung = ''
-        if teilnehmer.vertreten_durch_id:
-            vertretung = teilnehmer.vertreten_durch.name
-        elif teilnehmer.vertreter_name:
-            vertretung = teilnehmer.vertreter_name
-        zeilen.append({
-            'name': teilnehmer.person.name,
-            'einheiten': ', '.join(
-                a.einheit_nr_snapshot for a in teilnehmer.anteile.all()
-            ),
-            'stimmkraft': teilnehmer.stimmkraft,
-            'anwesend': teilnehmer.ist_anwesend,
-            'vertretung': vertretung,
-            'hat_vollmacht_dokument': bool(teilnehmer.vollmacht_dokument_id),
-        })
-    return zeilen
 
 
 def _beschluss_pdf(beschluss, erstellt_von) -> Dokument:
@@ -192,19 +170,25 @@ def erzeuge_folgevorgaenge(beschluss, erstellt_von) -> list:
 
 @transaction.atomic
 def uebernimm_in_sammlung(ev, erstellt_von) -> dict:
-    """Task 5: angenommene TOPs in die Beschluss-Sammlung übernehmen.
+    """Angenommene TOPs in die Beschluss-Sammlung übernehmen.
 
     Je angenommenem TOP entsteht genau ein ``Beschluss`` mit fortlaufender
     Nummer je Objekt, dazu ein revisionssicheres PDF im DMS und die
-    konfigurierten Folgeaufgaben. Zum Schluss wird das Protokoll erzeugt und
-    der Status auf ``beschluesse_verarbeitet`` gesetzt.
+    konfigurierten Folgeaufgaben.
+
+    Aufrufkontext (Spec v1.1 Kap. 4C): ausschließlich
+    ``checkout_service.abschluss`` (Status ``ausgecheckt``, "Schritt 1 von
+    2"). Erzeugt NUR die Beschlüsse mit ihren Nummern, OHNE eigenes Protokoll
+    und OHNE Statuswechsel — das externe Abstimmtool liefert das fertige
+    Protokoll separat nach (``checkout_service.protokoll_upload``, "Schritt 2
+    von 2"), erst dann wechselt der Status auf ``beschluesse_verarbeitet``.
 
     Idempotent: TOPs, die schon einen Beschluss haben, werden übersprungen —
     ein zweiter Aufruf verdoppelt die Sammlung nicht.
     """
-    if ev.status not in ('durchgefuehrt', 'beschluesse_verarbeitet'):
+    if ev.status != 'ausgecheckt':
         raise ValidationError(
-            'Beschlüsse können erst nach der Durchführung übernommen werden '
+            'Beschlüsse können erst nach dem Checkout übernommen werden '
             f'(Status ist "{ev.get_status_display()}").'
         )
     if not ev.termin:
@@ -257,64 +241,19 @@ def uebernimm_in_sammlung(ev, erstellt_von) -> dict:
         if top.triggert_wirtschaftsplan:
             ergebnis['mit_wp_trigger'] += 1
 
-    protokoll = erzeuge_protokoll_pdf(ev, erstellt_von)
-    ergebnis['protokoll_dokument_id'] = str(protokoll.id)
-
-    if ev.status == 'durchgefuehrt':
-        ev_service.wechsle_status(
-            ev, 'beschluesse_verarbeitet', erstellt_von,
-            text=f'{ergebnis["beschluesse"]} Beschluss/Beschlüsse übernommen.',
-        )
-    ev_service.markiere_task_erledigt(ev, 5, erstellt_von)
-    return ergebnis
-
-
-@transaction.atomic
-def erzeuge_protokoll_pdf(ev, erstellt_von) -> Dokument:
-    """Erzeugt das Versammlungsprotokoll und legt es am Objekt ab.
-
-    Enthält Anwesenheitsliste mit Stimmkraft und Vertretungen, die
-    Quorum-Angabe (informativ, § 25 Abs. 3 WEG a.F. ist aufgehoben) sowie je
-    TOP das Ergebnis und den Beschlusswortlaut.
-
-    Eine erneute Erzeugung ersetzt die Verknüpfung ``ev.protokoll_pdf``; die
-    alte Fassung bleibt als Dokument im DMS (GoBD).
-    """
-    kontext = {
-        'ev': ev,
-        'objekt': ev.objekt,
-        'tagesordnung': list(ev.tagesordnung.order_by('nummer')),
-        'anwesenheit': anwesenheitsliste(ev),
-        'quorum': stimmkraft_service.berechne_quorum(ev),
-        'beschluesse': list(ev.beschluesse.order_by('nummer')),
-        'erstellt_am': timezone.now(),
-    }
-    html = render_to_string('versammlung/protokoll.html', kontext)
-    pdf_bytes = weasyprint.HTML(string=html).write_pdf()
-
-    datum = timezone.localtime(ev.termin).date() if ev.termin else timezone.localdate()
-    dateiname = f'Protokoll_EV_{datum:%Y-%m-%d}.pdf'
-    dokument = Dokument.objects.create(
-        datei=ContentFile(pdf_bytes, name=dateiname),
-        dateiname=dateiname,
-        kategorie='EV-Protokoll',
-        dokument_typ='korrespondenz',
-        beschreibung=(
-            f'Protokoll der Eigentümerversammlung vom {datum:%d.%m.%Y} — '
-            f'{ev.objekt.bezeichnung}'
-        ),
-        objekt=ev.objekt,
-        hochgeladen_von=erstellt_von,
-    )
-
-    ev.protokoll_pdf = dokument
-    ev.save(update_fields=['protokoll_pdf'])
+    # Kein eigenes Protokoll, kein Statuswechsel — das übernimmt
+    # protokoll_upload (Schritt 2 von 2, Spec v1.1 Kap. 4D).
+    ev.abschluss_erledigt_am = timezone.now()
+    ev.save(update_fields=['abschluss_erledigt_am'])
     ev_service.vermerke_ereignis(
-        ev, 'protokoll_erzeugt', erstellt_von,
-        text=f'Protokoll erzeugt ({len(kontext["beschluesse"])} Beschluss/Beschlüsse).',
-        neuer_wert=dateiname,
+        ev, 'abschluss_erzeugt', erstellt_von,
+        text=(
+            f'Abschluss: {ergebnis["beschluesse"]} Beschluss/Beschlüsse mit '
+            f'Nummern {ergebnis["nummern"]} vergeben — Protokoll-Upload '
+            'steht noch aus.'
+        ),
     )
-    return dokument
+    return ergebnis
 
 
 @transaction.atomic

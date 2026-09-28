@@ -161,11 +161,19 @@ def bewerte_ergebnis(top, ja: Decimal, nein: Decimal, enthaltung: Decimal,
     raise ValidationError(f'Unbekannter Abstimmungsmodus: {modus}')
 
 
-def _pruefe_summen(ev, ja: Decimal, nein: Decimal, enthaltung: Decimal) -> dict:
+def _pruefe_summen(top, ja: Decimal, nein: Decimal, enthaltung: Decimal) -> dict:
     if min(ja, nein, enthaltung) < 0:
         raise ValidationError('Stimmen können nicht negativ sein.')
 
-    quorum = stimmkraft_service.berechne_quorum(ev)
+    # Spec v1.1 Kap. 2: die Quorum-/Summenprüfung läuft je Stimmgrundlage des
+    # TOP, nicht mehr EV-weit — sonst würde eine zweite Stimmgrundlage mit
+    # abweichender Gesamtstimmkraft (z.B. Kopfprinzip neben MEA) falsche
+    # Ergebnisse liefern. Fehlt die Stimmgrundlage (Alt-/Testdaten ohne
+    # Datenmigration), bleibt der bisherige EV-weite Weg als Fallback.
+    if top.stimmgrundlage_id:
+        quorum = stimmkraft_service.berechne_quorum(top.ev, top.stimmgrundlage)
+    else:
+        quorum = stimmkraft_service.berechne_quorum(top.ev)
     summe = ja + nein + enthaltung
     anwesend = quorum['anwesende_stimmkraft']
     if summe > anwesend:
@@ -187,7 +195,7 @@ def erfasse_abstimmung(top, erfasst_von, *, ja, nein, enthaltung=0, bemerkung=No
     _pruefe_offen(ev)
 
     ja, nein, enthaltung = Decimal(str(ja)), Decimal(str(nein)), Decimal(str(enthaltung))
-    quorum = _pruefe_summen(ev, ja, nein, enthaltung)
+    quorum = _pruefe_summen(top, ja, nein, enthaltung)
 
     war_erfasst = top.abstimmungsergebnis != 'offen'
     alt = (
@@ -276,42 +284,24 @@ def erfasse_einzelstimmen(top, erfasst_von, voten: dict):
     )
 
 
-@transaction.atomic
-def schliesse_durchfuehrung_ab(ev, erfasst_von):
-    """Schließt Task 4 ab: Status → ``durchgefuehrt``.
+def pruefe_ergebnisse_vollstaendig(ev) -> list:
+    """Liefert die Nummern abstimmungspflichtiger TOP ohne Ergebnis.
 
-    Offene TOPs (Ergebnis ``offen``) werden benannt statt übergangen — ein
-    vergessener TOP fällt sonst erst bei der Beschlussfassung auf, und dann
-    fehlt er im Protokoll. ``kein_beschluss``-Punkte brauchen kein Ergebnis.
+    Wiederverwendet von ``checkout_service.abschluss`` (Spec v1.1 Kap. 4C) —
+    ein vergessener TOP darf dort nicht unbemerkt bleiben. ``kein_beschluss``-
+    Punkte brauchen kein Ergebnis.
+
+    Nacharbeits-Auftrag (2026-09-26): der frühere zweite Aufrufer
+    ``schliesse_durchfuehrung_ab`` (alter Task4/5-Ablauf über den Status
+    ``durchgefuehrt``) wurde entfernt — der einzige Weg zu einer
+    abgeschlossenen Abstimmung ist seither ``checkout_service.abschluss``.
     """
-    _pruefe_offen(ev)
-
-    offen = list(
+    return list(
         ev.tagesordnung
         .exclude(abstimmungsmodus='kein_beschluss')
         .filter(abstimmungsergebnis='offen')
         .values_list('nummer', flat=True)
     )
-    if offen:
-        raise ValidationError(
-            'Für folgende TOP fehlt noch ein Ergebnis: '
-            + ', '.join(f'TOP {n}' for n in offen)
-            + '. Alternativ als vertagt oder entfallen kennzeichnen.'
-        )
-
-    if ev.status == 'entwurf':
-        ev_service.wechsle_status(
-            ev, 'in_bearbeitung', erfasst_von,
-            text='Automatisch beim Abschluss der Durchführung.',
-        )
-    if ev.status in ('in_bearbeitung', 'einladungen_versendet'):
-        # Aus 'in_bearbeitung' geht es direkt weiter — eine Versammlung ohne
-        # über IMMOCORE dokumentierten Versand wird NICHT nachträglich als
-        # "Einladungen versendet" ausgewiesen (siehe ev_service).
-        ev_service.wechsle_status(ev, 'durchgefuehrt', erfasst_von)
-
-    ev_service.markiere_task_erledigt(ev, 4, erfasst_von)
-    return ev
 
 
 @transaction.atomic

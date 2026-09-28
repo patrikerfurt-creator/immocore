@@ -13,27 +13,48 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.versammlung.models import (
     Beschluss, EVTeilnehmer, Eigentuemerversammlung, Tagesordnungspunkt,
+    Versammlungsort,
 )
 from apps.versammlung.serializers import (
     AbstimmungSerializer, AnfechtungSerializer, AnwesenheitSerializer,
-    BeschlussSerializer, EVEreignisSerializer, EVStimmeSerializer,
-    EVTeilnehmerSerializer, EVVersandprotokollSerializer,
+    BeschlussSerializer, CheckoutZuruecknehmenSerializer, EVEreignisSerializer,
+    EVStimmeSerializer, EVTeilnehmerSerializer, EVVersandprotokollSerializer,
     EigentuemerversammlungCreateSerializer,
     EigentuemerversammlungDetailSerializer,
     EigentuemerversammlungListSerializer,
+    EVStimmgrundlageSerializer,
     EigentuemerversammlungUpdateSerializer, EinzelstimmenSerializer,
-    ErgebnisStatusSerializer,
+    ErgebnisStatusSerializer, StimmgrundlageHinzufuegenSerializer,
     TagesordnungspunktCreateSerializer, TagesordnungspunktSerializer,
+    VersammlungsortSerializer,
 )
 from apps.versammlung.services import (
-    beschluss_service, durchfuehrung_service, einladung_service, ev_service,
-    stimmkraft_service, tagesordnung_service,
+    beschluss_service, checkout_service, durchfuehrung_service,
+    einladung_service, ev_service, stimmgrundlage_service, stimmkraft_service,
+    tagesordnung_service,
 )
+
+
+class VersammlungsortViewSet(mixins.ListModelMixin,
+                             mixins.RetrieveModelMixin,
+                             mixins.CreateModelMixin,
+                             mixins.UpdateModelMixin,
+                             viewsets.GenericViewSet):
+    """``/api/v1/versammlungsorte/`` — Katalog (Spec v1.1 Kap. 1).
+
+    Kein ``destroy``: Deaktivieren (``aktiv=False``) statt Löschen, da
+    ``PROTECT``-Referenzen aus bestehenden EVs bestehen bleiben.
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = VersammlungsortSerializer
+    queryset = Versammlungsort.objects.all()
 
 
 def _fehler(exc: DjangoValidationError) -> Response:
@@ -317,54 +338,106 @@ class EigentuemerversammlungViewSet(mixins.ListModelMixin,
 
     @action(detail=True, methods=['get'])
     def quorum(self, request, pk=None):
-        """Anwesende Stimmkraft — rein informativ, kein Gate auf Abstimmungen."""
+        """Anwesende Stimmkraft je Stimmgrundlage — rein informativ, kein
+        Gate auf Abstimmungen (API-Vertrag v1.1 Abschnitt 3.5)."""
         ev = self.get_object()
-        return Response(stimmkraft_service.berechne_quorum(ev))
+        return Response({
+            'je_stimmgrundlage': stimmkraft_service.berechne_quorum_je_stimmgrundlage(ev),
+        })
 
-    @action(detail=True, methods=['post'], url_path='durchfuehrung-abschliessen')
-    def durchfuehrung_abschliessen(self, request, pk=None):
-        """Schließt Task 4 ab (Status → durchgefuehrt).
+    # ── Stimmgrundlagen (Spec v1.1 Kap. 2) ────────────────────────────────
 
-        Schlägt fehl, solange ein abstimmungspflichtiger TOP noch kein Ergebnis
-        hat — ein vergessener TOP fehlt sonst im Protokoll.
-        """
+    @action(detail=True, methods=['get'], url_path='stimmgrundlagen')
+    def stimmgrundlagen_liste(self, request, pk=None):
+        ev = self.get_object()
+        return Response(
+            EVStimmgrundlageSerializer(
+                ev.stimmgrundlagen.select_related('verteilerschluessel'), many=True,
+            ).data
+        )
+
+    @action(detail=True, methods=['post'], url_path='stimmgrundlage-hinzufuegen')
+    def stimmgrundlage_hinzufuegen(self, request, pk=None):
+        ev = self.get_object()
+        serializer = StimmgrundlageHinzufuegenSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            grundlage = stimmgrundlage_service.hinzufuegen(
+                ev, **serializer.validated_data,
+            )
+        except DjangoValidationError as exc:
+            return _fehler(exc)
+        return Response(
+            EVStimmgrundlageSerializer(grundlage).data, status=status.HTTP_201_CREATED,
+        )
+
+    # ── Checkout / Checkout-Rücknahme / Abschluss / Protokoll-Upload
+    #    (Spec v1.1 Kap. 4, ersetzt Task 4+5) ──────────────────────────────
+
+    @action(detail=True, methods=['post'])
+    def checkout(self, request, pk=None):
+        """Sperrt Tagesordnung/Teilnehmerliste/Stimmgrundlagen, Status →
+        ``ausgecheckt`` — Übergabe an das externe Abstimmtool."""
         ev = self.get_object()
         try:
-            durchfuehrung_service.schliesse_durchfuehrung_ab(ev, request.user)
+            checkout_service.checkout(ev, request.user)
         except DjangoValidationError as exc:
             return _fehler(exc)
         ev.refresh_from_db()
         return Response(EigentuemerversammlungDetailSerializer(ev).data)
 
-    # ── Task 5: Beschlussfassung ──────────────────────────────────────────
+    @action(detail=True, methods=['post'], url_path='checkout-zuruecknehmen')
+    def checkout_zuruecknehmen(self, request, pk=None):
+        """``{"grund": "…"}`` — Grund ist Pflicht. Status zurück auf
+        ``einladungen_versendet``."""
+        ev = self.get_object()
+        serializer = CheckoutZuruecknehmenSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            checkout_service.checkout_zuruecknehmen(
+                ev, request.user, serializer.validated_data['grund'],
+            )
+        except DjangoValidationError as exc:
+            return _fehler(exc)
+        ev.refresh_from_db()
+        return Response(EigentuemerversammlungDetailSerializer(ev).data)
 
-    @action(detail=True, methods=['post'], url_path='beschluesse-uebernehmen')
-    def beschluesse_uebernehmen(self, request, pk=None):
-        """Übernimmt angenommene TOPs in die Beschluss-Sammlung (§ 24 Abs. 7 WEG),
-        legt Folgeaufgaben an und erzeugt das Protokoll."""
+    @action(detail=True, methods=['post'])
+    def abschluss(self, request, pk=None):
+        """Schritt 1/2 der Rückgabe (API-Vertrag v1.1 Abschnitt 3.7) — kein
+        Payload. Response enthält die vergebenen Beschlussnummern je TOP."""
         ev = self.get_object()
         try:
-            ergebnis = beschluss_service.uebernimm_in_sammlung(ev, request.user)
+            ergebnis = checkout_service.abschluss(ev, request.user)
         except DjangoValidationError as exc:
             return _fehler(exc)
         return Response(ergebnis)
 
-    @action(detail=True, methods=['post'], url_path='protokoll-pdf')
-    def protokoll_pdf(self, request, pk=None):
-        """Erzeugt das Protokoll neu (z.B. nach einer Ergebniskorrektur).
-
-        Die vorherige Fassung bleibt als Dokument im DMS erhalten (GoBD).
-        """
+    @action(
+        detail=True, methods=['post'], url_path='protokoll-upload',
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def protokoll_upload(self, request, pk=None):
+        """Schritt 2/2 der Rückgabe (API-Vertrag v1.1 Abschnitt 3.8) —
+        multipart, Feld ``datei`` (PDF). Muss nach ``abschluss`` aufgerufen
+        werden."""
         ev = self.get_object()
+        datei = request.FILES.get('datei')
+        if datei is None:
+            return Response(
+                {'detail': 'Feld "datei" (PDF, multipart) ist erforderlich.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         try:
-            dokument = beschluss_service.erzeuge_protokoll_pdf(ev, request.user)
+            dokument = checkout_service.protokoll_upload(ev, request.user, datei)
         except DjangoValidationError as exc:
             return _fehler(exc)
         return Response({
             'dokument_id': str(dokument.id),
             'dateiname': dokument.dateiname,
-            'download_url': f'/api/v1/dokumente/{dokument.id}/datei/',
         }, status=status.HTTP_201_CREATED)
+
+    # ── Beschlüsse ────────────────────────────────────────────────────────
 
     @action(detail=True, methods=['get'])
     def beschluesse(self, request, pk=None):
@@ -457,8 +530,20 @@ class TagesordnungspunktViewSet(mixins.ListModelMixin,
         Enthaltungen zählen bei einfacher und qualifizierter Mehrheit nicht in
         den Nenner (Spec v1.1 Kap. 6.1). Eine erneute Erfassung überschreibt
         das Ergebnis und wird als Korrektur protokolliert.
+
+        **Verschärfung Spec v1.1 Kap. 4 (Nacharbeits-Auftrag 2026-09-26):**
+        nur im EV-Status ``ausgecheckt`` zulässig — analog ``einzelstimmen``
+        unten. Der frühere ungegatete Zugriff war nur wegen des inzwischen
+        entfernten alten Task4/5-Ablaufs (Status ``durchgefuehrt``) offen
+        gelassen worden.
         """
         top = self.get_object()
+        if top.ev.status != 'ausgecheckt':
+            return Response(
+                {'detail': 'Die Abstimmung kann nur im Status "ausgecheckt" '
+                           f'erfasst werden (aktuell "{top.ev.get_status_display()}").'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         serializer = AbstimmungSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
@@ -476,8 +561,21 @@ class TagesordnungspunktViewSet(mixins.ListModelMixin,
 
         Erlaubte Voten: ja, nein, enthaltung. Das Summenergebnis wird daraus
         abgeleitet; es gibt nur einen Bewertungspfad.
+
+        **Verschärfung Spec v1.1 Kap. 4:** nur im EV-Status ``ausgecheckt``
+        zulässig — vorher (z.B. direkt nach ``einladungen_versendet``) ebenso
+        gesperrt wie nachher (API-Vertrag v1.1 Abschnitt 3.4). Der frühere
+        Task4/5-Ablauf (Status ``durchgefuehrt`` ohne Checkout) wurde
+        ersatzlos entfernt (Nacharbeits-Auftrag 2026-09-26) — dieser Endpunkt
+        ist damit der einzige Weg zu einer Einzelstimme.
         """
         top = self.get_object()
+        if top.ev.status != 'ausgecheckt':
+            return Response(
+                {'detail': 'Einzelstimmen können nur im Status "ausgecheckt" '
+                           f'erfasst werden (aktuell "{top.ev.get_status_display()}").'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         serializer = EinzelstimmenSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
@@ -552,6 +650,21 @@ class EVTeilnehmerViewSet(mixins.RetrieveModelMixin,
             ('ist_anwesend', 'vertreten_durch', 'vertreter_name', 'vollmacht_dokument')
             if feld in daten
         }
+
+        # Verschärfung Spec v1.1 Kap. 4 / API-Vertrag v1.1 Abschnitt 3.3:
+        # Anwesenheits-/Vertretungsschreibzugriffe (das ist der "Check-in" des
+        # externen Abstimmtools) sind nur im Status "ausgecheckt" zulässig —
+        # vorher ebenso gesperrt wie nachher. ``zusage_status`` ist davon
+        # bewusst NICHT betroffen: die Zusage/Absage-Rückmeldung ist ein
+        # eigenständiges Feature (RSVP vor der Versammlung), das die
+        # API-Vertrags-Verschärfung nicht beschreibt.
+        if anwesenheit_felder and teilnehmer.ev.status != 'ausgecheckt':
+            return Response(
+                {'detail': 'Anwesenheit/Vertretung können nur im Status '
+                           f'"ausgecheckt" erfasst werden (aktuell '
+                           f'"{teilnehmer.ev.get_status_display()}").'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             with transaction.atomic():

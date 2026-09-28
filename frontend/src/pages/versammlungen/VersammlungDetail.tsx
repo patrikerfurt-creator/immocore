@@ -7,8 +7,7 @@ import { Badge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import { Input } from '../../components/ui/Input'
 import type {
-  EVAbstimmungsmodus, EVAnwesenheitPayload, EVDetail, EVTeilnehmer, EVVersandkanal,
-  EVVotum, Tagesordnungspunkt,
+  EVAbstimmungsmodus, EVDetail, EVVersandkanal, Tagesordnungspunkt,
 } from '../../types'
 
 const MODUS_OPTIONEN: { value: EVAbstimmungsmodus; label: string }[] = [
@@ -203,6 +202,49 @@ function TopFormular({ ev, onFertig }: { ev: EVDetail; onFertig: () => void }) {
   )
 }
 
+// Stimmgrundlage je TOP (Spec v1.1 Kap. 3) — änderbares Dropdown, solange die
+// Einladung noch nicht versendet ist; danach sperrt das Backend das Feld
+// serverseitig (tagesordnung_service), das Frontend zeigt dann nur noch den
+// Text an (analog zu den übrigen, nach Versand gesperrten TOP-Feldern).
+function TopStimmgrundlageAuswahl({
+  ev, top, gesperrt,
+}: { ev: EVDetail; top: Tagesordnungspunkt; gesperrt: boolean }) {
+  const queryClient = useQueryClient()
+  const [fehler, setFehler] = useState('')
+
+  const aendern = useMutation({
+    mutationFn: (stimmgrundlageId: string) =>
+      versammlungApi.topAendern(top.id, { stimmgrundlage_id: stimmgrundlageId || null }),
+    onSuccess: () => {
+      setFehler('')
+      queryClient.invalidateQueries({ queryKey: ['versammlung-tagesordnung', ev.id] })
+    },
+    onError: (e: any) => setFehler(fehlertext(e, 'Stimmgrundlage konnte nicht geändert werden.')),
+  })
+
+  if (gesperrt) {
+    return <span>· Stimmgrundlage: {top.stimmgrundlage?.bezeichnung ?? '—'}</span>
+  }
+
+  return (
+    <span className="flex items-center gap-1">
+      · Stimmgrundlage:
+      <select
+        className="rounded border border-gray-300 px-1 py-0.5 text-xs"
+        value={top.stimmgrundlage?.id ?? ''}
+        onChange={e => aendern.mutate(e.target.value)}
+        disabled={aendern.isPending}
+      >
+        <option value="">— keine —</option>
+        {ev.stimmgrundlagen.map(g => (
+          <option key={g.id} value={g.id}>{g.bezeichnung_anzeige}</option>
+        ))}
+      </select>
+      {fehler && <span className="text-red-600">{fehler}</span>}
+    </span>
+  )
+}
+
 function TagesordnungPanel({ ev }: { ev: EVDetail }) {
   const queryClient = useQueryClient()
   const [formOffen, setFormOffen] = useState(false)
@@ -223,7 +265,7 @@ function TagesordnungPanel({ ev }: { ev: EVDetail }) {
     onError: (e: any) => setFehler(fehlertext(e, 'Löschen fehlgeschlagen.')),
   })
 
-  const gesperrt = ['einladungen_versendet', 'durchgefuehrt',
+  const gesperrt = ['einladungen_versendet', 'ausgecheckt', 'durchgefuehrt',
     'beschluesse_verarbeitet', 'archiviert'].includes(ev.status)
 
   return (
@@ -265,6 +307,7 @@ function TagesordnungPanel({ ev }: { ev: EVDetail }) {
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-500">
                   <span>{top.abstimmungsmodus_display}</span>
                   {top.mehrheit_schwelle && <span>· {top.mehrheit_schwelle} %</span>}
+                  <TopStimmgrundlageAuswahl ev={ev} top={top} gesperrt={gesperrt} />
                   {top.triggert_vorgang && <Badge value="vorschlag" label="Folge-Vorgang" />}
                   {top.triggert_wirtschaftsplan && <Badge value="vorschlag" label="WP-Beschluss" />}
                   {top.abstimmungsergebnis !== 'offen' && (
@@ -637,429 +680,175 @@ function EinladungPanel({ ev }: { ev: EVDetail }) {
   )
 }
 
-// ── Task 4 ────────────────────────────────────────────────────────────────
+// ── Task 4: Checkout / Checkout-Rücknahme / Abschluss / Protokoll-Upload ───
+// (Spec v1.1 Kap. 4 — ersetzt die frühere Anwesenheits-/Abstimmungserfassung
+// und die Beschlussfassung vollständig. Bewusst KEIN Notfallpfad: Anwesenheit
+// und Stimmen werden ausschließlich über das externe Abstimmtool erfasst.)
 
-function AnwesenheitZeile({ teilnehmer, alle, onGeaendert }: {
-  teilnehmer: EVTeilnehmer
-  alle: EVTeilnehmer[]
-  onGeaendert: () => void
-}) {
-  const [fehler, setFehler] = useState('')
-
-  const setzen = useMutation({
-    mutationFn: (daten: EVAnwesenheitPayload) =>
-      versammlungDurchfuehrungApi.anwesenheit(teilnehmer.id, daten),
-    onSuccess: () => { setFehler(''); onGeaendert() },
-    onError: (e: any) => setFehler(fehlertext(e, 'Speichern fehlgeschlagen.')),
-  })
-
-  const knopf = (wert: boolean | null, label: string) => {
-    const aktiv = teilnehmer.ist_anwesend === wert
-    return (
-      <button
-        type="button"
-        onClick={() => setzen.mutate({ ist_anwesend: wert })}
-        className={`rounded border px-2 py-1 text-xs ${
-          aktiv
-            ? 'border-primary-500 bg-primary-50 font-medium text-primary-700'
-            : 'border-gray-300 text-gray-600 hover:bg-gray-50'
-        }`}
-      >
-        {label}
-      </button>
-    )
-  }
-
-  return (
-    <tr className={Number(teilnehmer.stimmkraft) === 0 ? 'text-gray-400' : ''}>
-      <td className="px-3 py-2">
-        {teilnehmer.person_name}
-        {fehler && <div className="text-xs text-red-600">{fehler}</div>}
-      </td>
-      <td className="px-3 py-2 text-xs text-gray-500">
-        {teilnehmer.anteile.map(a => a.einheit_nr_snapshot).join(', ') || '—'}
-      </td>
-      <td className="px-3 py-2 text-right">{teilnehmer.stimmkraft}</td>
-      <td className="px-3 py-2">
-        <div className="flex gap-1">
-          {knopf(true, 'anwesend')}
-          {knopf(false, 'abwesend')}
-          {knopf(null, 'offen')}
-        </div>
-      </td>
-      <td className="px-3 py-2">
-        <select
-          className="rounded border border-gray-300 px-2 py-1 text-xs"
-          value={teilnehmer.vertreten_durch ?? ''}
-          onChange={e => setzen.mutate({
-            vertreten_durch: e.target.value || null,
-          })}
-        >
-          <option value="">keine Vertretung</option>
-          {alle
-            .filter(t => t.person !== teilnehmer.person)
-            .map(t => (
-              <option key={t.id} value={t.person}>{t.person_name}</option>
-            ))}
-        </select>
-      </td>
-    </tr>
-  )
-}
-
-function AbstimmungBlock({ top, teilnehmer, onGeaendert }: {
-  top: Tagesordnungspunkt
-  teilnehmer: EVTeilnehmer[]
-  onGeaendert: () => void
-}) {
-  const [ja, setJa] = useState(top.abstimmung_ja)
-  const [nein, setNein] = useState(top.abstimmung_nein)
-  const [enthaltung, setEnthaltung] = useState(top.abstimmung_enthaltung)
-  const [bemerkung, setBemerkung] = useState(top.ergebnis_bemerkung)
-  const [namentlich, setNamentlich] = useState(false)
-  const [voten, setVoten] = useState<Record<string, EVVotum>>({})
-  const [fehler, setFehler] = useState('')
-
-  const anwesende = teilnehmer.filter(t => t.ist_anwesend === true)
-
-  const erfassen = useMutation({
-    mutationFn: () => versammlungDurchfuehrungApi.abstimmung(
-      top.id, ja, nein, enthaltung, bemerkung,
-    ),
-    onSuccess: () => { setFehler(''); onGeaendert() },
-    onError: (e: any) => setFehler(fehlertext(e, 'Erfassen fehlgeschlagen.')),
-  })
-
-  const erfassenNamentlich = useMutation({
-    mutationFn: () => versammlungDurchfuehrungApi.einzelstimmen(top.id, voten),
-    onSuccess: daten => {
-      setFehler('')
-      setJa(daten.abstimmung_ja)
-      setNein(daten.abstimmung_nein)
-      setEnthaltung(daten.abstimmung_enthaltung)
-      onGeaendert()
-    },
-    onError: (e: any) => setFehler(fehlertext(e, 'Erfassen fehlgeschlagen.')),
-  })
-
-  const statusSetzen = useMutation({
-    mutationFn: (ergebnis: 'vertagt' | 'entfallen') =>
-      versammlungDurchfuehrungApi.ergebnisStatus(top.id, ergebnis, bemerkung),
-    onSuccess: () => { setFehler(''); onGeaendert() },
-    onError: (e: any) => setFehler(fehlertext(e, 'Speichern fehlgeschlagen.')),
-  })
-
-  if (top.abstimmungsmodus === 'kein_beschluss') {
-    return (
-      <div className="rounded border border-gray-200 p-3">
-        <div className="font-medium text-gray-900">TOP {top.nummer}: {top.titel}</div>
-        <p className="mt-1 text-sm text-gray-500">
-          Ohne Beschlussfassung — hier ist nichts zu erfassen.
-        </p>
-      </div>
-    )
-  }
-
-  return (
-    <div className="rounded border border-gray-200 p-3">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <div className="font-medium text-gray-900">TOP {top.nummer}: {top.titel}</div>
-          <div className="text-xs text-gray-500">
-            {top.abstimmungsmodus_display}
-            {top.mehrheit_schwelle && ` · Schwelle ${top.mehrheit_schwelle} %`}
-          </div>
-        </div>
-        {top.abstimmungsergebnis !== 'offen' && (
-          <Badge
-            value={top.abstimmungsergebnis === 'angenommen' ? 'angenommen'
-              : top.abstimmungsergebnis === 'abgelehnt' ? 'abgelehnt' : 'wiedervorlage'}
-            label={top.abstimmungsergebnis_display}
-          />
-        )}
-      </div>
-
-      <p className="mt-2 border-l-2 border-primary-500 pl-2 text-sm whitespace-pre-line">
-        {top.beschlussvorlage}
-      </p>
-
-      {!namentlich ? (
-        <div className="mt-3 flex flex-wrap items-end gap-3">
-          <Input label="Ja" className="w-24" value={ja} onChange={e => setJa(e.target.value)} />
-          <Input label="Nein" className="w-24" value={nein} onChange={e => setNein(e.target.value)} />
-          <Input label="Enthaltung" className="w-28" value={enthaltung}
-            onChange={e => setEnthaltung(e.target.value)} />
-          <Button size="sm" onClick={() => erfassen.mutate()} disabled={erfassen.isPending}>
-            Ergebnis erfassen
-          </Button>
-        </div>
-      ) : (
-        <div className="mt-3 space-y-1">
-          {anwesende.length === 0 && (
-            <p className="text-sm text-amber-700">
-              Es ist niemand als anwesend erfasst — namentliche Abstimmung nicht möglich.
-            </p>
-          )}
-          {anwesende.map(t => (
-            <div key={t.id} className="flex items-center gap-3 text-sm">
-              <span className="w-56 truncate">{t.person_name}</span>
-              <span className="w-12 text-right text-gray-500">{t.stimmkraft}</span>
-              <select
-                className="rounded border border-gray-300 px-2 py-1 text-xs"
-                value={voten[t.id] ?? ''}
-                onChange={e => setVoten(alt => {
-                  const neu = { ...alt }
-                  if (e.target.value) neu[t.id] = e.target.value as EVVotum
-                  else delete neu[t.id]
-                  return neu
-                })}
-              >
-                <option value="">— nicht abgegeben —</option>
-                <option value="ja">Ja</option>
-                <option value="nein">Nein</option>
-                <option value="enthaltung">Enthaltung</option>
-              </select>
-            </div>
-          ))}
-          {anwesende.length > 0 && (
-            <Button
-              size="sm" className="mt-2"
-              onClick={() => erfassenNamentlich.mutate()}
-              disabled={erfassenNamentlich.isPending || Object.keys(voten).length === 0}
-            >
-              Namentliche Abstimmung erfassen
-            </Button>
-          )}
-        </div>
-      )}
-
-      <div className="mt-3 flex flex-wrap items-center gap-3">
-        <label className="flex items-center gap-2 text-xs text-gray-600">
-          <input type="checkbox" checked={namentlich}
-            onChange={e => setNamentlich(e.target.checked)} />
-          namentlich abstimmen
-        </label>
-        <Button variant="secondary" size="sm" onClick={() => statusSetzen.mutate('vertagt')}>
-          Vertagen
-        </Button>
-        <Button variant="secondary" size="sm" onClick={() => statusSetzen.mutate('entfallen')}>
-          Entfallen
-        </Button>
-      </div>
-
-      <div className="mt-2">
-        <Input
-          label="Bemerkung zum Ergebnis"
-          value={bemerkung}
-          onChange={e => setBemerkung(e.target.value)}
-        />
-      </div>
-
-      {fehler && <p className="mt-2 text-sm text-red-600">{fehler}</p>}
-    </div>
-  )
-}
-
-function DurchfuehrungPanel({ ev }: { ev: EVDetail }) {
+function CheckoutPanel({ ev }: { ev: EVDetail }) {
   const queryClient = useQueryClient()
   const [meldung, setMeldung] = useState('')
   const [fehler, setFehler] = useState('')
+  const [abschlussBeschluesse, setAbschlussBeschluesse] = useState<
+    { top_id: string; beschluss_nummer: number; wortlaut: string }[] | null
+  >(null)
 
-  const { data: teilnehmer } = useQuery({
-    queryKey: ['versammlung-teilnehmer', ev.id],
-    queryFn: () => versammlungApi.teilnehmer(ev.id),
-  })
   const { data: quorum } = useQuery({
     queryKey: ['versammlung-quorum', ev.id],
-    queryFn: () => versammlungDurchfuehrungApi.quorum(ev.id),
+    queryFn: () => versammlungApi.quorumJeStimmgrundlage(ev.id),
+    enabled: ev.status === 'ausgecheckt',
   })
-
-  const aktualisieren = () => {
-    queryClient.invalidateQueries({ queryKey: ['versammlung-teilnehmer', ev.id] })
-    queryClient.invalidateQueries({ queryKey: ['versammlung-quorum', ev.id] })
-    queryClient.invalidateQueries({ queryKey: ['versammlung', ev.id] })
-    queryClient.invalidateQueries({ queryKey: ['versammlung-ereignisse', ev.id] })
-  }
-
-  const abschliessen = useMutation({
-    mutationFn: () => versammlungDurchfuehrungApi.durchfuehrungAbschliessen(ev.id),
-    onSuccess: () => {
-      setFehler('')
-      setMeldung('Durchführung abgeschlossen.')
-      aktualisieren()
-    },
-    onError: (e: any) => {
-      setMeldung('')
-      setFehler(fehlertext(e, 'Abschluss fehlgeschlagen.'))
-    },
-  })
-
-  const gesperrt = ['beschluesse_verarbeitet', 'archiviert'].includes(ev.status)
-
-  return (
-    <div className="space-y-6">
-      {gesperrt && (
-        <p className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          Die Beschlüsse sind verarbeitet — Anwesenheit und Ergebnisse sind
-          nicht mehr änderbar.
-        </p>
-      )}
-
-      {quorum && (
-        <div className="rounded border border-gray-200 bg-gray-50 p-3 text-sm">
-          <div className="font-medium text-gray-900">
-            Anwesend: {quorum.anwesende_stimmkraft} von {quorum.gesamt_stimmkraft} Stimmen
-            ({quorum.anwesend_prozent} %) — {quorum.anzahl_anwesend} von{' '}
-            {quorum.anzahl_teilnehmer} Eigentümern
-          </div>
-          {quorum.anzahl_anwesenheit_offen > 0 && (
-            <div className="mt-1 text-xs text-amber-700">
-              Bei {quorum.anzahl_anwesenheit_offen} Teilnehmern ist die Anwesenheit
-              noch nicht erfasst.
-            </div>
-          )}
-          <div className="mt-1 text-xs text-gray-500">{quorum.hinweis}</div>
-        </div>
-      )}
-
-      <div>
-        <div className="mb-2 text-sm font-medium text-gray-700">Anwesenheit</div>
-        <div className="overflow-x-auto rounded border border-gray-200">
-          <table className="min-w-full divide-y divide-gray-200 text-sm">
-            <thead className="bg-gray-50 text-left text-xs uppercase text-gray-500">
-              <tr>
-                <th className="px-3 py-2">Eigentümer</th>
-                <th className="px-3 py-2">Einheiten</th>
-                <th className="px-3 py-2 text-right">Stimmen</th>
-                <th className="px-3 py-2">Anwesenheit</th>
-                <th className="px-3 py-2">Vertreten durch</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {(teilnehmer ?? []).map(t => (
-                <AnwesenheitZeile
-                  key={t.id} teilnehmer={t} alle={teilnehmer ?? []}
-                  onGeaendert={aktualisieren}
-                />
-              ))}
-              {(teilnehmer ?? []).length === 0 && (
-                <tr>
-                  <td colSpan={5} className="px-3 py-4 text-center text-gray-500">
-                    Noch keine Teilnehmer ermittelt — siehe Task 3.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div className="space-y-3">
-        <div className="text-sm font-medium text-gray-700">Abstimmungen</div>
-        {ev.tagesordnung.map(top => (
-          <AbstimmungBlock
-            key={top.id} top={top} teilnehmer={teilnehmer ?? []}
-            onGeaendert={aktualisieren}
-          />
-        ))}
-        {ev.tagesordnung.length === 0 && (
-          <p className="text-sm text-gray-500">Keine Tagesordnungspunkte vorhanden.</p>
-        )}
-      </div>
-
-      {meldung && <p className="text-sm text-green-700">{meldung}</p>}
-      {fehler && <p className="text-sm text-red-600">{fehler}</p>}
-
-      <Button
-        onClick={() => abschliessen.mutate()}
-        disabled={abschliessen.isPending || gesperrt}
-      >
-        Durchführung abschließen
-      </Button>
-    </div>
-  )
-}
-
-// ── Task 5 ────────────────────────────────────────────────────────────────
-
-function BeschlussfassungPanel({ ev }: { ev: EVDetail }) {
-  const queryClient = useQueryClient()
-  const [meldung, setMeldung] = useState('')
-  const [fehler, setFehler] = useState('')
-
   const { data: beschluesse } = useQuery({
     queryKey: ['versammlung-beschluesse', ev.id],
     queryFn: () => versammlungDurchfuehrungApi.beschluesseDerEv(ev.id),
   })
 
-  const uebernehmen = useMutation({
-    mutationFn: () => versammlungDurchfuehrungApi.beschluesseUebernehmen(ev.id),
+  const aktualisieren = () => {
+    queryClient.invalidateQueries({ queryKey: ['versammlung', ev.id] })
+    queryClient.invalidateQueries({ queryKey: ['versammlung-quorum', ev.id] })
+    queryClient.invalidateQueries({ queryKey: ['versammlung-beschluesse', ev.id] })
+    queryClient.invalidateQueries({ queryKey: ['versammlung-ereignisse', ev.id] })
+  }
+
+  const checkout = useMutation({
+    mutationFn: () => versammlungApi.checkout(ev.id),
+    onSuccess: () => {
+      setFehler('')
+      setMeldung('Checkout durchgeführt — die Versammlung ist für das Abstimmtool bereit.')
+      aktualisieren()
+    },
+    onError: (e: any) => { setMeldung(''); setFehler(fehlertext(e, 'Checkout fehlgeschlagen.')) },
+  })
+
+  const checkoutZuruecknehmen = useMutation({
+    mutationFn: (grund: string) => versammlungApi.checkoutZuruecknehmen(ev.id, grund),
+    onSuccess: () => {
+      setFehler('')
+      setMeldung('Checkout zurückgenommen.')
+      setAbschlussBeschluesse(null)
+      aktualisieren()
+    },
+    onError: (e: any) => { setMeldung(''); setFehler(fehlertext(e, 'Rücknahme fehlgeschlagen.')) },
+  })
+
+  const abschluss = useMutation({
+    mutationFn: () => versammlungApi.abschluss(ev.id),
     onSuccess: daten => {
       setFehler('')
+      setAbschlussBeschluesse(daten.beschluesse)
       setMeldung(
-        `${daten.beschluesse} Beschluss/Beschlüsse übernommen`
-        + (daten.uebersprungen ? `, ${daten.uebersprungen} bereits vorhanden` : '')
-        + `, ${daten.vorgaenge} Folgeaufgabe(n) angelegt.`,
+        daten.beschluesse.length > 0
+          ? `${daten.beschluesse.length} Beschluss/Beschlüsse mit Nummer vergeben — `
+            + 'das Abstimmtool kann jetzt das Protokoll erzeugen und hochladen.'
+          : 'Abschluss durchgeführt — kein angenommener TOP, es entsteht kein Beschluss.',
       )
-      queryClient.invalidateQueries({ queryKey: ['versammlung', ev.id] })
-      queryClient.invalidateQueries({ queryKey: ['versammlung-beschluesse', ev.id] })
-      queryClient.invalidateQueries({ queryKey: ['versammlung-ereignisse', ev.id] })
+      aktualisieren()
     },
-    onError: (e: any) => {
-      setMeldung('')
-      setFehler(fehlertext(e, 'Übernahme fehlgeschlagen.'))
-    },
+    onError: (e: any) => { setMeldung(''); setFehler(fehlertext(e, 'Abschluss fehlgeschlagen.')) },
   })
 
-  const protokoll = useMutation({
-    mutationFn: () => versammlungDurchfuehrungApi.protokollErzeugen(ev.id),
+  const protokollUpload = useMutation({
+    mutationFn: (datei: File) => versammlungApi.protokollUpload(ev.id, datei),
     onSuccess: daten => {
       setFehler('')
-      setMeldung(`Protokoll erzeugt: ${daten.dateiname}`)
-      queryClient.invalidateQueries({ queryKey: ['versammlung', ev.id] })
+      setMeldung(`Protokoll hochgeladen: ${daten.dateiname}`)
+      aktualisieren()
     },
-    onError: (e: any) => setFehler(fehlertext(e, 'Protokoll fehlgeschlagen.')),
+    onError: (e: any) => { setMeldung(''); setFehler(fehlertext(e, 'Protokoll-Upload fehlgeschlagen.')) },
   })
 
-  const angenommen = ev.tagesordnung.filter(t => t.abstimmungsergebnis === 'angenommen')
+  const kannAuschecken = ['in_bearbeitung', 'einladungen_versendet'].includes(ev.status)
+  const istAusgecheckt = ev.status === 'ausgecheckt'
+  const istVerarbeitet = ['beschluesse_verarbeitet', 'archiviert'].includes(ev.status)
 
   return (
     <div className="space-y-6">
-      <div className="rounded border border-gray-200 bg-gray-50 p-3 text-sm">
-        {angenommen.length === 0
-          ? 'Kein angenommener Tagesordnungspunkt — es entsteht kein Beschluss.'
-          : `${angenommen.length} angenommene(r) TOP wird in die Beschluss-Sammlung `
-            + 'nach § 24 Abs. 7 WEG übernommen. Je Beschluss entsteht ein '
-            + 'revisionssicheres PDF; konfigurierte Folgeaufgaben werden als '
-            + 'Vorgang angelegt.'}
+      <div className="rounded border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700">
+        Anwesenheit und Abstimmungsergebnisse werden ausschließlich über das
+        externe Abstimmtool (Reply-Interact-Keypads) erfasst — dafür muss die
+        Versammlung zuerst hier ausgecheckt werden. Es gibt bewusst keinen
+        Ersatzweg in IMMOCORE, falls das Tool ausfällt.
       </div>
+
+      {istVerarbeitet && (
+        <p className="rounded border border-green-300 bg-green-50 px-3 py-2 text-sm text-green-800">
+          Die Beschlüsse sind verarbeitet — das Protokoll wurde vom Abstimmtool
+          hochgeladen.
+        </p>
+      )}
 
       <div className="flex flex-wrap gap-3">
         <Button
-          onClick={() => uebernehmen.mutate()}
-          disabled={uebernehmen.isPending || ev.status === 'archiviert'}
+          onClick={() => checkout.mutate()}
+          disabled={checkout.isPending || !kannAuschecken}
         >
-          {uebernehmen.isPending ? 'Übernimmt…' : 'Beschlüsse übernehmen und Protokoll erzeugen'}
+          {checkout.isPending ? 'Checkout läuft…' : 'Checkout'}
         </Button>
         <Button
           variant="secondary"
-          onClick={() => protokoll.mutate()}
-          disabled={protokoll.isPending}
+          onClick={() => {
+            const grund = window.prompt('Grund für die Checkout-Rücknahme?')
+            if (grund) checkoutZuruecknehmen.mutate(grund)
+          }}
+          disabled={checkoutZuruecknehmen.isPending || !istAusgecheckt}
         >
-          Protokoll neu erzeugen
+          Checkout zurücknehmen
         </Button>
-        {ev.protokoll_pdf && (
-          <Button
-            variant="secondary"
-            onClick={() => dokumenteApi.openDatei(ev.protokoll_pdf!)}
-          >
-            Protokoll öffnen
-          </Button>
-        )}
       </div>
+
+      {istAusgecheckt && quorum && (
+        <div className="rounded border border-gray-200 bg-gray-50 p-3 text-sm">
+          <div className="mb-1 font-medium text-gray-900">
+            Anwesende Stimmkraft je Stimmgrundlage (informativ)
+          </div>
+          {quorum.je_stimmgrundlage.map(q => (
+            <div key={q.stimmgrundlage_id} className="text-gray-700">
+              {q.bezeichnung}: {q.anwesende_stimmkraft} von {q.gesamt_stimmkraft}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {istAusgecheckt && (
+        <div className="space-y-3 rounded border border-gray-200 p-3">
+          <div className="text-sm font-medium text-gray-700">
+            Abschluss — Beschlussnummern vergeben (Schritt 1 von 2)
+          </div>
+          <Button size="sm" onClick={() => abschluss.mutate()} disabled={abschluss.isPending}>
+            {abschluss.isPending ? 'Abschluss läuft…' : 'Abschluss'}
+          </Button>
+          {abschlussBeschluesse && abschlussBeschluesse.length > 0 && (
+            <ul className="text-sm text-gray-700">
+              {abschlussBeschluesse.map(b => (
+                <li key={b.top_id}>Beschluss {b.beschluss_nummer}: {b.wortlaut}</li>
+              ))}
+            </ul>
+          )}
+
+          <div className="text-sm font-medium text-gray-700 pt-2">
+            Protokoll-Upload (Schritt 2 von 2, erst nach dem Abschluss möglich)
+          </div>
+          <input
+            type="file"
+            accept="application/pdf"
+            onChange={e => {
+              const datei = e.target.files?.[0]
+              if (datei) protokollUpload.mutate(datei)
+            }}
+            disabled={protokollUpload.isPending}
+            className="text-sm"
+          />
+        </div>
+      )}
 
       {meldung && <p className="text-sm text-green-700">{meldung}</p>}
       {fehler && <p className="text-sm text-red-600">{fehler}</p>}
+
+      {ev.protokoll_pdf && (
+        <Button variant="secondary" onClick={() => dokumenteApi.openDatei(ev.protokoll_pdf!)}>
+          Protokoll öffnen
+        </Button>
+      )}
 
       {(beschluesse ?? []).length > 0 && (
         <div className="space-y-2">
@@ -1117,7 +906,7 @@ function BeschlussfassungPanel({ ev }: { ev: EVDetail }) {
 
 const TASK_TITEL: Record<number, string> = {
   1: 'Terminierung', 2: 'Tagesordnung', 3: 'Einladung',
-  4: 'Durchführung', 5: 'Beschlussfassung',
+  4: 'Checkout',
 }
 
 export function VersammlungDetail() {
@@ -1163,7 +952,10 @@ export function VersammlungDetail() {
   }
 
   const taskStatus = ev.task_status
-  const tasks = [1, 2, 3, 4, 5].map(nr => ({
+  // Task 5 entfällt als manueller Schritt (Spec v1.1 Kap. 4) — der Übergang
+  // zu 'beschluesse_verarbeitet' passiert automatisch durch den
+  // Protokoll-Upload im Checkout-Panel (Task 4), nicht durch einen Button.
+  const tasks = [1, 2, 3, 4].map(nr => ({
     nr,
     titel: TASK_TITEL[nr],
     erledigt: (taskStatus as any)[`task${nr}`].erledigt as boolean,
@@ -1201,7 +993,7 @@ export function VersammlungDetail() {
         </p>
       )}
 
-      <div className="grid gap-2 md:grid-cols-5">
+      <div className="grid gap-2 md:grid-cols-4">
         {tasks.map(t => (
           <button
             key={t.nr}
@@ -1231,27 +1023,32 @@ export function VersammlungDetail() {
           <h2 className="text-lg font-medium text-gray-900">
             Task {aktiverTask}: {TASK_TITEL[aktiverTask]}
           </h2>
-          <div className="flex gap-2">
-            {tasks[aktiverTask - 1].erledigt ? (
-              <Button
-                variant="secondary" size="sm"
-                onClick={() => {
-                  const grund = window.prompt('Grund für die Rücksetzung?')
-                  if (grund) taskZuruecksetzen.mutate({ taskNr: aktiverTask, grund })
-                }}
-              >
-                Task zurücksetzen
-              </Button>
-            ) : (
-              <Button
-                size="sm"
-                onClick={() => taskErledigt.mutate(aktiverTask)}
-                disabled={taskErledigt.isPending}
-              >
-                Task als erledigt markieren
-              </Button>
-            )}
-          </div>
+          {/* Task 4 (Checkout) hat KEINEN manuellen "erledigt/zurücksetzen"-
+              Button mehr — das Flag wird ausschließlich durch checkout()
+              bzw. checkout_zuruecknehmen() gesetzt (Spec v1.1 Kap. 4). */}
+          {aktiverTask !== 4 && (
+            <div className="flex gap-2">
+              {tasks[aktiverTask - 1].erledigt ? (
+                <Button
+                  variant="secondary" size="sm"
+                  onClick={() => {
+                    const grund = window.prompt('Grund für die Rücksetzung?')
+                    if (grund) taskZuruecksetzen.mutate({ taskNr: aktiverTask, grund })
+                  }}
+                >
+                  Task zurücksetzen
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  onClick={() => taskErledigt.mutate(aktiverTask)}
+                  disabled={taskErledigt.isPending}
+                >
+                  Task als erledigt markieren
+                </Button>
+              )}
+            </div>
+          )}
         </div>
 
         {aktiverTask === 1 && <TerminierungPanel ev={ev} />}
@@ -1262,8 +1059,7 @@ export function VersammlungDetail() {
             <EinladungPanel ev={ev} />
           </div>
         )}
-        {aktiverTask === 4 && <DurchfuehrungPanel ev={ev} />}
-        {aktiverTask === 5 && <BeschlussfassungPanel ev={ev} />}
+        {aktiverTask === 4 && <CheckoutPanel ev={ev} />}
       </div>
 
       <div className="rounded border border-gray-200 bg-white p-4">

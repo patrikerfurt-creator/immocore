@@ -6,13 +6,129 @@ import { versammlungApi } from '../../api/versammlung'
 import { Badge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import { Input } from '../../components/ui/Input'
-import type { EVArt, EVStimmprinzip } from '../../types'
+import type { EVArt, EVDetail, EVStimmprinzip } from '../../types'
+
+function fehlertext(error: any, fallback: string) {
+  return error?.response?.data?.detail
+    ?? (typeof error?.response?.data === 'object'
+      ? JSON.stringify(error.response.data)
+      : fallback)
+}
+
+// ── Stimmgrundlagen-Mehrfachauswahl bei EV-Anlage (Spec v1.1 Kap. 2) ────────
+// Die Standard-Stimmgrundlage entsteht bereits automatisch beim Anlegen der
+// EV (aus stimmprinzip/stimm_verteilerschluessel, siehe
+// stimmgrundlage_service.erzeuge_aus_legacy_feldern) — dieses Panel ergänzt
+// nach der Anlage optional weitere Stimmgrundlagen über den bestehenden
+// stimmgrundlage-hinzufuegen-Endpunkt.
+function ZusatzStimmgrundlagenPanel({ ev, onFertig }: { ev: EVDetail; onFertig: () => void }) {
+  const [ausgewaehlt, setAusgewaehlt] = useState<string[]>([])
+  const [standard, setStandard] = useState('')
+  const [fehler, setFehler] = useState('')
+
+  const { data: verteilerschluessel } = useQuery({
+    queryKey: ['verteilerschluessel', ev.objekt],
+    queryFn: () => objekteApi.verteilerschluessel({ objekt: ev.objekt }),
+    staleTime: 60_000,
+  })
+
+  // Verbrauchsschlüssel sind keine zulässige Stimmgrundlage (Spec v1.1 Kap. 2)
+  // und bereits vergebene Grundlagen (Kopfprinzip bzw. derselbe
+  // Verteilerschlüssel) dürfen wegen der Unique-Constraints je EV nicht
+  // doppelt angeboten werden.
+  const vorhandeneVsIds = new Set(
+    ev.stimmgrundlagen.filter(g => g.verteilerschluessel).map(g => g.verteilerschluessel as string),
+  )
+  const hatKopfprinzip = ev.stimmgrundlagen.some(g => g.ist_kopfprinzip)
+
+  const optionen: { id: string; label: string }[] = [
+    ...(hatKopfprinzip ? [] : [{ id: 'kopf', label: 'Kopfprinzip — eine Stimme je Eigentümer' }]),
+    ...(verteilerschluessel ?? [])
+      .filter(vs => vs.aktiv && vs.vs_typ !== 'verbrauch' && !vorhandeneVsIds.has(vs.id))
+      .map(vs => ({ id: vs.id, label: `${vs.schluessel} ${vs.bezeichnung}` })),
+  ]
+
+  const toggle = (id: string) => {
+    setAusgewaehlt(alt => (alt.includes(id) ? alt.filter(x => x !== id) : [...alt, id]))
+    if (standard === id) setStandard('')
+  }
+
+  const speichern = useMutation({
+    mutationFn: async () => {
+      for (const id of ausgewaehlt) {
+        // eslint-disable-next-line no-await-in-loop -- bewusst sequenziell:
+        // ist_standard darf serverseitig nur je Aufruf einmal umgesetzt werden.
+        await versammlungApi.stimmgrundlageHinzufuegen(ev.id, id === 'kopf'
+          ? { ist_kopfprinzip: true, ist_standard: standard === id }
+          : { verteilerschluessel: id, ist_standard: standard === id })
+      }
+    },
+    onSuccess: () => {
+      setFehler('')
+      onFertig()
+    },
+    onError: (e: any) => setFehler(fehlertext(e, 'Stimmgrundlagen konnten nicht ergänzt werden.')),
+  })
+
+  return (
+    <div className="space-y-3 rounded border border-gray-200 bg-gray-50 p-4">
+      <p className="text-sm text-gray-700">
+        „{ev.arbeitsname || ev.art_display}" wurde angelegt — Standard-Stimmgrundlage
+        ist „{ev.stimmgrundlagen.find(g => g.ist_standard)?.bezeichnung_anzeige}".
+        Weicht die Teilungserklärung für einzelne Tagesordnungspunkte davon ab,
+        können hier weitere Stimmgrundlagen ergänzt werden — optional, das
+        lässt sich auch später an der Versammlung selbst nachholen.
+      </p>
+      {optionen.length === 0 && (
+        <p className="text-sm text-gray-500">Keine weiteren Stimmgrundlagen verfügbar.</p>
+      )}
+      <div className="space-y-1">
+        {optionen.map(o => (
+          <div key={o.id} className="flex flex-wrap items-center gap-3 text-sm">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={ausgewaehlt.includes(o.id)}
+                onChange={() => toggle(o.id)}
+              />
+              {o.label}
+            </label>
+            {ausgewaehlt.includes(o.id) && (
+              <label className="flex items-center gap-1 text-xs text-gray-600">
+                <input
+                  type="radio"
+                  name="standard-stimmgrundlage"
+                  checked={standard === o.id}
+                  onChange={() => setStandard(o.id)}
+                />
+                als neue Standard-Stimmgrundlage für den ersten TOP
+              </label>
+            )}
+          </div>
+        ))}
+      </div>
+      {fehler && <p className="text-sm text-red-600">{fehler}</p>}
+      <div className="flex gap-2">
+        <Button
+          onClick={() => speichern.mutate()}
+          disabled={ausgewaehlt.length === 0 || speichern.isPending}
+        >
+          {speichern.isPending ? 'Speichert…' : 'Stimmgrundlagen ergänzen'}
+        </Button>
+        <Button variant="secondary" onClick={onFertig}>
+          {ausgewaehlt.length === 0 ? 'Fertig' : 'Ohne weitere Stimmgrundlagen fortfahren'}
+        </Button>
+      </div>
+    </div>
+  )
+}
 
 const STATUS_OPTIONEN = [
   { value: 'entwurf', label: 'Entwurf' },
   { value: 'in_bearbeitung', label: 'In Bearbeitung' },
   { value: 'einladungen_versendet', label: 'Einladungen versendet' },
-  { value: 'durchgefuehrt', label: 'Durchgeführt' },
+  { value: 'ausgecheckt', label: 'Ausgecheckt (Abstimmtool)' },
+  { value: 'durchgefuehrt', label: 'Durchgeführt (Altdaten)' },
   { value: 'beschluesse_verarbeitet', label: 'Beschlüsse verarbeitet' },
   { value: 'archiviert', label: 'Archiviert' },
 ]
@@ -44,6 +160,7 @@ export function VersammlungenListe() {
   const [objektFilter, setObjektFilter] = useState(searchParams.get('objekt') ?? '')
   const [statusFilter, setStatusFilter] = useState('')
   const [formOffen, setFormOffen] = useState(false)
+  const [neuAngelegt, setNeuAngelegt] = useState<EVDetail | null>(null)
   const [fehler, setFehler] = useState('')
 
   const [neuObjekt, setNeuObjekt] = useState(searchParams.get('objekt') ?? '')
@@ -85,16 +202,23 @@ export function VersammlungenListe() {
       stimm_verteilerschluessel:
         neuStimmprinzip === 'verteilerschluessel' ? neuVs : null,
     }),
-    onSuccess: () => {
-      setFormOffen(false)
+    onSuccess: (ev: EVDetail) => {
       setNeuArbeitsname('')
       setFehler('')
+      // Formular bleibt offen — es folgt die optionale Ergänzung weiterer
+      // Stimmgrundlagen (Spec v1.1 Kap. 2), erst danach wird geschlossen.
+      setNeuAngelegt(ev)
       queryClient.invalidateQueries({ queryKey: ['versammlungen'] })
     },
     onError: (error: any) => {
       setFehler(error?.response?.data?.detail ?? 'Anlage fehlgeschlagen.')
     },
   })
+
+  const formAbschliessen = () => {
+    setFormOffen(false)
+    setNeuAngelegt(null)
+  }
 
   // Eine EV gibt es nur für WEG — SEV/ZH weist das Backend ab, deshalb hier
   // gar nicht erst anbieten.
@@ -109,12 +233,16 @@ export function VersammlungenListe() {
             Fünf Tasks von der Terminierung bis zur Beschlussfassung.
           </p>
         </div>
-        <Button onClick={() => setFormOffen(o => !o)}>
+        <Button onClick={() => (formOffen ? formAbschliessen() : setFormOffen(true))}>
           {formOffen ? 'Abbrechen' : 'Versammlung anlegen'}
         </Button>
       </div>
 
-      {formOffen && (
+      {formOffen && neuAngelegt && (
+        <ZusatzStimmgrundlagenPanel ev={neuAngelegt} onFertig={formAbschliessen} />
+      )}
+
+      {formOffen && !neuAngelegt && (
         <div className="rounded border border-gray-200 bg-white p-4 space-y-4">
           <div className="grid gap-4 md:grid-cols-2">
             <div className="flex flex-col gap-1">
@@ -204,7 +332,7 @@ export function VersammlungenListe() {
             >
               {anlegen.isPending ? 'Wird angelegt…' : 'Anlegen'}
             </Button>
-            <Button variant="secondary" onClick={() => setFormOffen(false)}>
+            <Button variant="secondary" onClick={formAbschliessen}>
               Abbrechen
             </Button>
           </div>
