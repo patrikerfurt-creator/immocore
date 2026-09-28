@@ -256,6 +256,12 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'dokumente.ordner_scan',
         'schedule': 300,
     },
+    # Mail-Posteingang: laeuft nur, wenn eine ImportOrdnerEinstellung mit
+    # bereich='mails' aktiv ist — sonst ist der Task ein No-op.
+    'mail-ordner-scan-alle-5min': {
+        'task': 'vorgaenge.mail_ordner_scan',
+        'schedule': 300,
+    },
     'wkz-ops-taeglich-03uhr': {
         'task': 'buchhaltung.erzeuge_faellige_wkz_ops',
         'schedule': celery_crontab(hour=3, minute=0) if celery_crontab else 86400,

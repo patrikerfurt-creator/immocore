@@ -31,10 +31,21 @@ class DokumentUploadErgebnis:
     duplikat_warnung: bool
 
 
-def _kontext_aus_kwargs(objekt, einheit, vorgang, person) -> tuple[str, object]:
-    """Prüft, dass GENAU EIN Kontext gesetzt ist, und gibt (feldname, wert) zurück."""
+def _kontext_aus_kwargs(objekt, einheit, vorgang, person,
+                        mail_import=None) -> tuple[str, object] | tuple[None, None]:
+    """Prüft die Kontextangabe und gibt (feldname, wert) zurück.
+
+    Regel bleibt: GENAU EIN Kontext. Einzige Ausnahme ist eine eingegangene
+    Mail (``mail_import``) — deren Zuordnung trifft später ein Mensch im
+    Posteingang, aufbewahrt wird sie aber sofort. Dann ist auch KEIN Kontext
+    zulässig und es kommt (None, None) zurück.
+    """
     werte = {'objekt': objekt, 'einheit': einheit, 'vorgang': vorgang, 'person': person}
     gesetzt = {feld: wert for feld, wert in werte.items() if wert is not None}
+
+    if not gesetzt and mail_import is not None:
+        return None, None
+
     if len(gesetzt) != 1:
         raise ValidationError(
             'lade_dokument_hoch erfordert genau einen Kontext '
@@ -68,7 +79,9 @@ def _ist_beleg_dokument(dokument: Dokument) -> bool:
 def lade_dokument_hoch(datei_bytes: bytes, dateiname: str, erstellt_von, *,
                         objekt=None, einheit=None, vorgang=None, person=None,
                         kategorie: str = 'Sonstiges', dokument_typ: str = 'sonstiges',
-                        beschreibung: str = '') -> DokumentUploadErgebnis:
+                        beschreibung: str = '', mail_import=None,
+                        register=None, dokument_datum=None,
+                        titel: str = '') -> DokumentUploadErgebnis:
     """Lädt ein Dokument mit genau einem Kontext hoch (Spec Kap. 1.6).
 
     - Berechnet SHA-256 aus ``datei_bytes`` (``Dokument.sha256``).
@@ -77,12 +90,20 @@ def lade_dokument_hoch(datei_bytes: bytes, dateiname: str, erstellt_von, *,
     - Bei Kontext ``vorgang``: zusätzlich ``VorgangEreignis`` Typ
       ``dokument_verknuepft`` am Vorgang.
     """
-    kontext_feld, kontext_wert = _kontext_aus_kwargs(objekt, einheit, vorgang, person)
+    kontext_feld, kontext_wert = _kontext_aus_kwargs(
+        objekt, einheit, vorgang, person, mail_import)
     sha256 = hashlib.sha256(datei_bytes).hexdigest()
 
-    duplikat_warnung = Dokument.objects.filter(
-        sha256=sha256, **{kontext_feld: kontext_wert},
-    ).exists()
+    if kontext_feld is not None:
+        kontext = {kontext_feld: kontext_wert}
+        duplikat_warnung = Dokument.objects.filter(sha256=sha256, **kontext).exists()
+    else:
+        # Noch nicht zugeordnete Mail: gegen den Bestand ohne Kontext pruefen,
+        # sonst meldet jede erneut eingelesene Mail faelschlich "neu".
+        kontext = {}
+        duplikat_warnung = Dokument.objects.filter(
+            sha256=sha256, mail_import__isnull=False,
+        ).exists()
 
     dokument = Dokument(
         datei=ContentFile(datei_bytes, name=dateiname),
@@ -93,7 +114,11 @@ def lade_dokument_hoch(datei_bytes: bytes, dateiname: str, erstellt_von, *,
         version=1,
         sha256=sha256,
         hochgeladen_von=erstellt_von,
-        **{kontext_feld: kontext_wert},
+        mail_import=mail_import,
+        register=register,
+        dokument_datum=dokument_datum,
+        titel=titel,
+        **kontext,
     )
     dokument.full_clean()
     dokument.save()

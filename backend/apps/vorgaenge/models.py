@@ -201,6 +201,7 @@ class VorgangEreignis(models.Model):
         ('handwerker_abgelehnt',        'Handwerker: Auftrag abgelehnt'),
         ('handwerker_abgeschlossen',    'Handwerker: Auftrag abgeschlossen'),
         ('handwerker_abgelaufen',       'Handwerker: Auftragsbestätigung abgelaufen'),
+        ('mail_eingegangen',            'E-Mail eingegangen'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
@@ -305,3 +306,171 @@ class VorgangAntwortVorschlag(models.Model):
 
     def __str__(self):
         return f"{self.vorgang.nummer} — Antwortvorschlag ({self.get_status_display()})"
+
+
+class MailImportProtokoll(models.Model):
+    """Ein Eintrag je verarbeiteter ``.eml``-Datei aus dem Mail-Posteingang.
+
+    Zweck ist AUSDRÜCKLICH die Messbarkeit der Erkennung: jede Datei
+    hinterlässt hier eine Zeile mit dem, was Stufe 1 (regelbasiert) und
+    Stufe 2 (KI) erkannt haben — auch dann, wenn kein Vorgang entstanden ist.
+    Ohne dieses Protokoll liesse sich die Trefferquote nur aus Logzeilen
+    rekonstruieren.
+
+    ``bewertung`` wird NICHT vom System gesetzt, sondern beim Testlauf vom
+    Menschen — daraus entsteht die eigentliche Auswertung (``mail_scan
+    --auswertung``). Das Protokoll ist reine Diagnose und hat deshalb bewusst
+    keine GoBD-Relevanz: es darf gelöscht und neu erzeugt werden.
+    """
+
+    STATUS_CHOICES = [
+        ('vorgang_neu',       'Neuer Vorgang angelegt'),
+        ('thread_zuordnung',  'Bestehendem Vorgang zugeordnet'),
+        ('duplikat',          'Duplikat (Message-ID bereits verarbeitet)'),
+        ('nicht_zugeordnet',  'Nicht zugeordnet (Absender unbekannt)'),
+        ('fehler',            'Fehler'),
+    ]
+    # Wie die Person gefunden wurde — die entscheidende Kennzahl dafür, ob die
+    # regelbasierte Stufe trägt oder ob die KI die Arbeit macht.
+    ZUORDNUNG_CHOICES = [
+        ('email_exakt',   'E-Mail-Adresse exakt'),
+        ('email_geteilt', 'E-Mail-Adresse, von mehreren Personen genutzt'),
+        ('name_betreff',  'Name/Objekt aus Betreff'),
+        ('ki',            'KI-Vorschlag'),
+        ('keine',         'Keine Zuordnung'),
+    ]
+    BEWERTUNG_CHOICES = [
+        ('offen',    'Noch nicht bewertet'),
+        ('richtig',  'Erkennung korrekt'),
+        ('teilweise','Teilweise korrekt'),
+        ('falsch',   'Erkennung falsch'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+
+    # --- Quelle -----------------------------------------------------------
+    dateiname = models.CharField(max_length=255)
+    message_id = models.CharField(
+        max_length=255, blank=True, default='', db_index=True,
+        help_text='Message-ID-Header der Mail — Duplikatkennung.',
+    )
+    bezug_message_id = models.CharField(
+        max_length=255, blank=True, default='',
+        verbose_name='Bezug (In-Reply-To)',
+        help_text='Message-ID der Mail, auf die geantwortet wurde. Ohne '
+                  'dieses Feld laesst sich im Nachhinein nicht mehr '
+                  'feststellen, ob eine Thread-Zuordnung mangels Bezug '
+                  'unterblieb oder weil der bezogene Vorgang zum '
+                  'Verarbeitungszeitpunkt noch nicht existierte.',
+    )
+    absender = models.CharField(max_length=320, blank=True, default='')
+    absender_name = models.CharField(max_length=200, blank=True, default='')
+    betreff = models.CharField(max_length=500, blank=True, default='')
+    gesendet_am = models.DateTimeField(null=True, blank=True)
+    body_auszug = models.TextField(
+        blank=True, default='',
+        help_text='Erste Zeichen des Mailtexts — für die Sichtprüfung im Report.',
+    )
+    anhaenge_anzahl = models.IntegerField(default=0)
+
+    # --- Ergebnis ---------------------------------------------------------
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES)
+    vorgang = models.ForeignKey(
+        Vorgang, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='mail_importe',
+        help_text='Der angelegte bzw. zugeordnete Vorgang (SET_NULL: das '
+                  'Protokoll überlebt das Löschen eines Testvorgangs).',
+    )
+
+    # --- Stufe 1: regelbasiert -------------------------------------------
+    person = models.ForeignKey(
+        Person, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='mail_import_protokolle',
+    )
+    objekt = models.ForeignKey(
+        Objekt, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='mail_import_protokolle',
+    )
+    einheit = models.ForeignKey(
+        Einheit, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='mail_import_protokolle',
+    )
+    zuordnung_quelle = models.CharField(
+        max_length=20, choices=ZUORDNUNG_CHOICES, default='keine',
+    )
+    mehrdeutig = models.BooleanField(
+        default=False,
+        help_text='True = Person oder Einheit liessen sich nicht eindeutig '
+                  'bestimmen (Adresse von mehreren Personen genutzt, mehrere '
+                  'Einheiten, oder nur ein beendetes Eigentumsverhaeltnis). '
+                  'Was offen blieb, wurde bewusst NICHT geraten.',
+    )
+    personen_treffer = models.IntegerField(
+        default=0,
+        verbose_name='Personen unter dieser Adresse',
+        help_text='Wie viele Personen die Absenderadresse fuehren. >1 heisst '
+                  'geteilte Adresse — in den Stammdaten sind das teils '
+                  'Ehepaare mit getrennten Datensaetzen, teils echte '
+                  'Dubletten. Macht die Kennzahl "Einheit eindeutig" '
+                  'erklaerbar.',
+    )
+
+    # --- Stufe 2: KI ------------------------------------------------------
+    ki_typ_code = models.CharField(max_length=30, blank=True, default='')
+    ki_prioritaet = models.CharField(max_length=10, blank=True, default='')
+    ki_betreff = models.CharField(max_length=200, blank=True, default='')
+    ki_konfidenz = models.DecimalField(
+        max_digits=4, decimal_places=3, null=True, blank=True,
+        help_text='0.000–1.000, Selbsteinschätzung der KI.',
+    )
+    ki_begruendung = models.TextField(blank=True, default='')
+    ki_modell = models.CharField(max_length=50, blank=True, default='')
+    ki_fehler = models.TextField(blank=True, default='')
+
+    # --- Auswertung (manuell) --------------------------------------------
+    # --- Posteingang (Schritt 2) -----------------------------------------
+    # Bewusst GETRENNT von ``status``: dort steht, was beim Import passiert
+    # ist (unveraenderliche Tatsache), hier, was ein Mensch daraus gemacht
+    # hat. Wuerde man ``status`` ueberschreiben, ginge die Erkennungs-
+    # auswertung verloren, sobald jemand im Posteingang arbeitet.
+    POSTEINGANG_CHOICES = [
+        ('automatisch', 'Automatisch zugeordnet'),
+        ('offen',       'Offen — wartet auf Zuordnung'),
+        ('zugeordnet',  'Von Hand zugeordnet'),
+        ('abgelegt',    'Nur abgelegt (kein Vorgang noetig)'),
+        ('verworfen',   'Verworfen'),
+    ]
+    posteingang_status = models.CharField(
+        max_length=12, choices=POSTEINGANG_CHOICES, default='offen',
+        db_index=True,
+        verbose_name='Posteingang',
+        help_text='"automatisch" = beim Import bereits zugeordnet, gehoert '
+                  'nie in die Posteingangsliste. "offen" = wartet auf eine '
+                  'Entscheidung.',
+    )
+    erledigt_am = models.DateTimeField(null=True, blank=True)
+    erledigt_von = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        null=True, blank=True, related_name='erledigte_mail_importe',
+    )
+    erledigt_notiz = models.TextField(
+        blank=True, default='',
+        help_text='Warum so entschieden — vor allem beim Verwerfen die '
+                  'einzige Spur, die bleibt.',
+    )
+
+    bewertung = models.CharField(
+        max_length=10, choices=BEWERTUNG_CHOICES, default='offen',
+    )
+    bewertung_notiz = models.TextField(blank=True, default='')
+
+    fehler = models.TextField(blank=True, default='')
+    verarbeitet_am = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Mail-Import-Protokoll'
+        verbose_name_plural = 'Mail-Import-Protokolle'
+        ordering = ['-verarbeitet_am']
+
+    def __str__(self):
+        return f"{self.dateiname} — {self.get_status_display()}"

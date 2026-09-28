@@ -1,6 +1,7 @@
 from rest_framework.routers import DefaultRouter
 
 from .views import VorgangTypAdminViewSet, VorgangTypViewSet, VorgangViewSet
+from .views_posteingang import MailPosteingangViewSet
 
 router = DefaultRouter()
 # Reihenfolge wichtig: 'vorgang-typen/admin' muss VOR 'vorgang-typen' registriert
@@ -9,5 +10,6 @@ router = DefaultRouter()
 router.register(r'vorgang-typen/admin', VorgangTypAdminViewSet, basename='vorgang-typen-admin')
 router.register(r'vorgang-typen', VorgangTypViewSet, basename='vorgang-typen')
 router.register(r'vorgaenge', VorgangViewSet, basename='vorgaenge')
+router.register(r'mail-posteingang', MailPosteingangViewSet, basename='mail-posteingang')
 
 urlpatterns = router.urls

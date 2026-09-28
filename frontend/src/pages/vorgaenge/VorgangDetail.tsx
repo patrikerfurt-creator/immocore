@@ -5,6 +5,7 @@ import { vorgaengeApi } from '../../api/vorgaenge'
 import { mitarbeiterApi } from '../../api/mitarbeiter'
 import { handwerkerApi } from '../../api/handwerker'
 import { objekteApi } from '../../api/objekte'
+import { dokumenteApi } from '../../api/dokumente'
 import { Badge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import type {
@@ -849,12 +850,36 @@ export function VorgangDetail() {
       <div className="bg-white rounded-lg border border-gray-200 p-5">
         <h2 className="font-medium text-gray-800 mb-3">Dokumente</h2>
         <ul className="divide-y divide-gray-100 mb-3">
-          {vorgang.dokumente.map(d => (
-            <li key={d.id} className="py-2 text-sm flex justify-between">
-              <span>{d.dateiname} {d.version > 1 && <span className="text-gray-400">(v{d.version})</span>}</span>
-              <span className="text-gray-400">{DATUM(d.hochgeladen_am)}</span>
-            </li>
-          ))}
+          {vorgang.dokumente.map(d => {
+            // Browser stellen .msg nicht dar und laden es nur herunter —
+            // fuer Mails gibt es deshalb zusaetzlich eine Textvorschau.
+            const istMail = /\.(eml|msg)$/i.test(d.dateiname)
+            return (
+              <li key={d.id} className="py-2 text-sm flex justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => (istMail ? dokumenteApi.openMailVorschau(d.id) : dokumenteApi.openDatei(d.id))}
+                  className="text-left text-blue-700 hover:underline truncate"
+                  title={istMail ? `${d.dateiname} als Textvorschau oeffnen` : `${d.dateiname} oeffnen`}
+                >
+                  {d.dateiname} {d.version > 1 && <span className="text-gray-400">(v{d.version})</span>}
+                </button>
+                <span className="flex items-center gap-3 whitespace-nowrap">
+                  {istMail && (
+                    <button
+                      type="button"
+                      onClick={() => dokumenteApi.openDatei(d.id)}
+                      className="text-gray-500 hover:text-gray-800 hover:underline text-xs"
+                      title="Originaldatei herunterladen"
+                    >
+                      Original
+                    </button>
+                  )}
+                  <span className="text-gray-400">{DATUM(d.hochgeladen_am)}</span>
+                </span>
+              </li>
+            )
+          })}
           {vorgang.dokumente.length === 0 && (
             <li className="py-2 text-sm text-gray-400">Keine Dokumente vorhanden.</li>
           )}

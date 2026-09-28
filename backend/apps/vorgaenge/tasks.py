@@ -101,3 +101,36 @@ def erzeuge_antwort_vorschlag(vorgang_id):
         logger.exception(
             "erzeuge_antwort_vorschlag für Vorgang %s unerwartet fehlgeschlagen.", vorgang.nummer,
         )
+
+
+@shared_task(name='vorgaenge.mail_ordner_scan')
+def mail_ordner_scan(einstellung_id: str | None = None):
+    """Scannt den Mail-Posteingangs-Ordner (Muster: ``rechnungen.ordner_scan``).
+
+    Konfiguriert wird der Ordner über ``ImportOrdnerEinstellung`` mit
+    ``bereich='mails'`` — dieselbe Stelle wie Rechnungs- und Dokument-Import.
+    Ohne aktive Einstellung passiert nichts; der Task ist damit gefahrlos im
+    Beat-Schedule, auch wenn niemand einen Ordner hinterlegt hat.
+    """
+    from apps.buchhaltung.models import ImportOrdnerEinstellung
+    from apps.vorgaenge.services import mail_import_service
+
+    if einstellung_id:
+        qs = ImportOrdnerEinstellung.objects.filter(
+            pk=einstellung_id, aktiv=True, bereich='mails')
+    else:
+        qs = ImportOrdnerEinstellung.objects.filter(
+            aktiv=True, bereich='mails', import_ordner__gt='')
+
+    gesamt = {'dateien': 0, 'vorgang_neu': 0, 'thread_zuordnung': 0,
+              'duplikat': 0, 'nicht_zugeordnet': 0, 'fehler': 0,
+              'uebersprungen': 0}
+    for einst in qs:
+        ergebnis = mail_import_service.scan_ordner(
+            einst.import_ordner, einst.archiv_ordner, einst.fehler_ordner,
+        )
+        for schluessel in gesamt:
+            gesamt[schluessel] += ergebnis.get(schluessel, 0)
+
+    logger.info("Mail-Scan abgeschlossen: %s", gesamt)
+    return gesamt

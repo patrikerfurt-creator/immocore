@@ -42,6 +42,7 @@ services:
       - backend_media:/app/media
       - ./CamtDAT:/app/camt_dat
       - ./Rechnungen:/app/rechnungen
+      - ./Maileingang:/app/maileingang
     depends_on:
       - db
       - redis
@@ -67,6 +68,7 @@ services:
       - ./backend:/app
       - ./CamtDAT:/app/camt_dat
       - ./Rechnungen:/app/rechnungen
+      - ./Maileingang:/app/maileingang
     depends_on:
       - db
       - redis

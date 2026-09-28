@@ -60,6 +60,7 @@ local_seed/*.sql.gz
 # nicht ins Repository (enthalten Kontodaten und Personendaten).
 /Rechnungen/
 /CamtDAT/
+/Maileingang/
 /Testdateine IMPORT/
 
 # Celery-Laufzeitstand (wird beim Start neu erzeugt)
