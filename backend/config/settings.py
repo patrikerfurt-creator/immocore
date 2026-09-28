@@ -186,6 +186,15 @@ EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
 EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'True') == 'True'
 DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'info@demme-immobilien.de')
+
+# Microsoft-Graph-Versand (app-only). Nur aktiv, wenn EMAIL_BACKEND auf
+# config.email_backends.GraphEmailBackend gestellt UND die drei Werte in
+# .env.prod eingetragen sind. Solange leer, versendet IMMOCORE nichts über Graph.
+MS_GRAPH_TENANT_ID = os.environ.get('MS_GRAPH_TENANT_ID', '')
+MS_GRAPH_CLIENT_ID = os.environ.get('MS_GRAPH_CLIENT_ID', '')
+MS_GRAPH_CLIENT_SECRET = os.environ.get('MS_GRAPH_CLIENT_SECRET', '')
+MS_GRAPH_SENDER = os.environ.get('MS_GRAPH_SENDER', DEFAULT_FROM_EMAIL)
+
 # Empfangsadresse für den Rechnungsrücklauf von Handwerkern (Hinweis im Mailtext).
 RECHNUNG_EMPFANG_EMAIL = os.environ.get('RECHNUNG_EMPFANG_EMAIL', 'rechnungen@demme-immobilien.de')
 # Basis-URL des Frontends für Links in E-Mails (z.B. Auftragsbestätigung).

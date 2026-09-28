@@ -40,6 +40,11 @@ def versand_konfiguriert() -> bool:
         return False
     if backend == 'django.core.mail.backends.smtp.EmailBackend' and not settings.EMAIL_HOST:
         return False
+    if backend == 'config.email_backends.GraphEmailBackend' and not (
+        settings.MS_GRAPH_TENANT_ID and settings.MS_GRAPH_CLIENT_ID
+        and settings.MS_GRAPH_CLIENT_SECRET
+    ):
+        return False
     return True
 
 

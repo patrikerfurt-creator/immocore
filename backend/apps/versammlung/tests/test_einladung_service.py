@@ -318,6 +318,21 @@ class VersandTest(TestCase):
         self.assertEqual(len(mail.outbox[0].attachments), 1)
         self.assertTrue(mail.outbox[0].attachments[0][0].endswith('.pdf'))
 
+    def test_gesperrtes_objekt_haelt_email_zurueck_epost_laeuft_weiter(self):
+        # Objekt-Gate (schrittweiser Rollout): mailversand_aktiv=False → keine
+        # E-Mail-Einladung, aber der EPost-Kanal bleibt unberührt.
+        self.objekt.mailversand_aktiv = False
+        self.objekt.save(update_fields=['mailversand_aktiv'])
+        self._pdf()
+        ergebnis = einladung_service.versende_einladungen(self.ev, self.user)
+
+        self.assertEqual(ergebnis['kanaele']['email'], 0)
+        self.assertEqual(ergebnis['kanaele']['epost'], 1)
+        self.assertEqual(len(mail.outbox), 0)
+
+        protokolle = {p.person_id: p for p in EVVersandprotokoll.objects.filter(ev=self.ev)}
+        self.assertEqual(protokolle[self.mailer.id].status, 'uebersprungen')
+
     def test_epost_ordner_enthaelt_pdf_und_csv(self):
         self._pdf()
         ergebnis = einladung_service.versende_einladungen(self.ev, self.user)

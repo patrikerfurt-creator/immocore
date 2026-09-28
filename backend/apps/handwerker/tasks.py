@@ -54,6 +54,11 @@ def _versand_konfiguriert() -> bool:
         return False
     if backend == 'django.core.mail.backends.smtp.EmailBackend' and not settings.EMAIL_HOST:
         return False
+    if backend == 'config.email_backends.GraphEmailBackend' and not (
+        settings.MS_GRAPH_TENANT_ID and settings.MS_GRAPH_CLIENT_ID
+        and settings.MS_GRAPH_CLIENT_SECRET
+    ):
+        return False
     return True
 
 
@@ -110,6 +115,31 @@ def versende_auftragsmail(auftrag_id):
         except Exception:
             logger.exception(
                 "Konnte Versandfehler für Auftrag %s nicht protokollieren.", auftrag_id,
+            )
+        return
+
+    # Objektbezogenes Versand-Gate (schrittweiser Rollout): Solange das Objekt
+    # nicht freigeschaltet ist (Objekt.mailversand_aktiv=False, Default),
+    # geht KEINE Auftragsmail raus — bewusst auch lokal (DEBUG), damit
+    # Testobjekte nie versehentlich einen echten Handwerker anmailen. Der
+    # Status bleibt unverändert (i.d.R. 'entwurf'): nach dem Freischalten des
+    # Objekts kann der Auftrag einfach erneut versendet werden.
+    if not (auftrag.objekt_id and auftrag.objekt.mailversand_aktiv):
+        logger.info(
+            "versende_auftragsmail: Objekt %s ist nicht für E-Mail-Versand "
+            "freigeschaltet (mailversand_aktiv=False) — Auftrag %s wird NICHT versendet.",
+            auftrag.objekt_id, auftrag.nummer,
+        )
+        try:
+            auftrag_service.protokolliere_versandfehler(
+                auftrag,
+                "Versand zurückgehalten: Das Objekt ist noch nicht für den "
+                "E-Mail-Versand freigeschaltet (mailversand_aktiv=False).",
+            )
+        except Exception:
+            logger.exception(
+                "Konnte Versand-Zurückhaltung für Auftrag %s nicht protokollieren.",
+                auftrag.nummer,
             )
         return
 

@@ -88,6 +88,7 @@ export interface Objekt extends Omit<ObjektList, 'eingaenge'> {
   glaeubiger_id: string
   kurzbezeichnung: string
   auto_pipeline_aktiv: boolean
+  mailversand_aktiv: boolean
   bundesland: string
   eingaenge: Eingang[]
   bankkonten: Bankkonto[]

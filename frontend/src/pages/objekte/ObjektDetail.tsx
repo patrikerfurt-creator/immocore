@@ -79,6 +79,17 @@ function AutoPipelineSection({
             </select>
           </div>
           <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">E-Mail-Versand aktiv</label>
+            <select
+              className={inputCls}
+              value={(formData.mailversand_aktiv ?? data.mailversand_aktiv) ? 'ja' : 'nein'}
+              onChange={e => set('mailversand_aktiv', e.target.value === 'ja')}
+            >
+              <option value="ja">Ja — Objekt ist live</option>
+              <option value="nein">Nein — kein Versand</option>
+            </select>
+          </div>
+          <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Bundesland (Bankfeiertage)</label>
             <select
               className={inputCls}
@@ -99,6 +110,14 @@ function AutoPipelineSection({
               data.auto_pipeline_aktiv ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-500'
             }`}>
               {data.auto_pipeline_aktiv ? 'Aktiv' : 'Deaktiviert'}
+            </span>
+          </div>
+          <div>
+            <p className="text-xs text-gray-500">E-Mail-Versand</p>
+            <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium mt-1 ${
+              data.mailversand_aktiv ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-500'
+            }`}>
+              {data.mailversand_aktiv ? 'Aktiv' : 'Deaktiviert'}
             </span>
           </div>
           <div>
@@ -897,6 +916,7 @@ export function ObjektDetail() {
       kurzbezeichnung: data.kurzbezeichnung ?? '',
       status: data.status,
       auto_pipeline_aktiv: data.auto_pipeline_aktiv ?? true,
+      mailversand_aktiv: data.mailversand_aktiv ?? false,
       bundesland: data.bundesland ?? 'HE',
     })
     setEingaengeEdits(data.eingaenge ?? [])

@@ -46,6 +46,9 @@ def _objekt(nr="H900"):
         bezeichnung="Test-WEG Task", objektnummer=nr, objekt_typ="weg",
         strasse="Teststraße 1", plz="12345", ort="Teststadt",
         verwaltung_seit=date(2020, 1, 1), bundesland="HE",
+        # Für Versand-Tests freigeschaltet; das Objekt-Gate (Default False)
+        # wird gezielt in VersendeAuftragsmailObjektGateTest geprüft.
+        mailversand_aktiv=True,
     )
 
 
@@ -363,5 +366,44 @@ class PruefeAbgelaufeneAuftraegeTest(TestCase):
 
         pruefe_abgelaufene_auftraege()
 
+        auftrag.refresh_from_db()
+        self.assertEqual(auftrag.status, "versendet")
+
+
+class VersendeAuftragsmailObjektGateTest(TestCase):
+    """Objekt-Gate (Objekt.mailversand_aktiv, Default False): ohne Freischaltung
+    geht KEINE Auftragsmail raus – bewusst auch bei DEBUG/Konsolen-Backend."""
+
+    def setUp(self):
+        self.user = _user()
+        self.kreditor = _kreditor()
+
+    def _auftrag(self, *, freigeschaltet):
+        objekt = _objekt()
+        objekt.mailversand_aktiv = freigeschaltet
+        objekt.save(update_fields=["mailversand_aktiv"])
+        auftrag = Handwerkerauftrag.objects.create(
+            objekt=objekt, kreditor=self.kreditor, titel="Test",
+            erstellt_von=self.user, status="entwurf",
+        )
+        AuftragsbestaetigungsToken.objects.create(auftrag=auftrag)
+        return auftrag
+
+    def test_gesperrtes_objekt_versendet_nicht(self):
+        auftrag = self._auftrag(freigeschaltet=False)
+        versende_auftragsmail(str(auftrag.id))
+
+        self.assertEqual(len(mail.outbox), 0)
+        auftrag.refresh_from_db()
+        self.assertEqual(auftrag.status, "entwurf")
+        ereignisse = auftrag.ereignisse.filter(typ="versand_fehlgeschlagen")
+        self.assertEqual(ereignisse.count(), 1)
+        self.assertIn("freigeschaltet", ereignisse.first().text)
+
+    def test_freigeschaltetes_objekt_versendet(self):
+        auftrag = self._auftrag(freigeschaltet=True)
+        versende_auftragsmail(str(auftrag.id))
+
+        self.assertEqual(len(mail.outbox), 1)
         auftrag.refresh_from_db()
         self.assertEqual(auftrag.status, "versendet")

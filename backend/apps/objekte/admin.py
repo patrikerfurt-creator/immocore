@@ -14,8 +14,9 @@ class ObjektHandwerkerInline(admin.TabularInline):
 
 @admin.register(Objekt)
 class ObjektAdmin(admin.ModelAdmin):
-    list_display = ['bezeichnung', 'objekt_typ', 'ort', 'status', 'verwaltung_seit']
-    list_filter = ['objekt_typ', 'status', 'umsatzsteuer_pflichtig']
+    list_display = ['bezeichnung', 'objekt_typ', 'ort', 'status', 'verwaltung_seit', 'mailversand_aktiv']
+    list_editable = ['mailversand_aktiv']
+    list_filter = ['objekt_typ', 'status', 'umsatzsteuer_pflichtig', 'mailversand_aktiv']
     search_fields = ['bezeichnung', 'strasse', 'ort', 'plz']
     ordering = ['bezeichnung']
     inlines = [ObjektHandwerkerInline]

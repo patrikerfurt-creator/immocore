@@ -65,6 +65,11 @@ def versand_konfiguriert() -> bool:
         return False
     if backend == 'django.core.mail.backends.smtp.EmailBackend' and not settings.EMAIL_HOST:
         return False
+    if backend == 'config.email_backends.GraphEmailBackend' and not (
+        settings.MS_GRAPH_TENANT_ID and settings.MS_GRAPH_CLIENT_ID
+        and settings.MS_GRAPH_CLIENT_SECRET
+    ):
+        return False
     return True
 
 
@@ -426,6 +431,11 @@ def versende_einladungen(ev, versendet_von, plan: dict = None) -> dict:
         raise ValidationError('Unbekannter Versandkanal: ' + ', '.join(sorted(unbekannt)))
 
     mail_moeglich = versand_konfiguriert()
+    # Objektbezogenes Versand-Gate (schrittweiser Rollout): E-Mail-Einladungen
+    # gehen nur raus, wenn das Objekt freigeschaltet ist (Objekt.mailversand_aktiv).
+    # EPost/Portal bleiben unberührt — ein noch nicht "live" geschaltetes Objekt
+    # kann weiterhin per Brief geladen werden.
+    objekt_freigeschaltet = bool(ev.objekt_id and ev.objekt.mailversand_aktiv)
     pdf_bytes = beleg_service.dokument_pfad(ev.einladungs_pdf).read_bytes()
     dateiname = ev.einladungs_pdf.dateiname
 
@@ -464,6 +474,13 @@ def versende_einladungen(ev, versendet_von, plan: dict = None) -> dict:
                 if not eintrag['hat_email']:
                     status = 'uebersprungen'
                     fehlertext = 'Keine E-Mail-Adresse hinterlegt.'
+                elif not objekt_freigeschaltet:
+                    status = 'uebersprungen'
+                    fehlertext = (
+                        'Objekt ist noch nicht für den E-Mail-Versand '
+                        'freigeschaltet (mailversand_aktiv=False) — Einladung '
+                        'ggf. per Post/EPost versenden.'
+                    )
                 elif not mail_moeglich:
                     status = 'fehlgeschlagen'
                     fehlertext = (

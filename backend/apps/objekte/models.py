@@ -52,6 +52,13 @@ class Objekt(models.Model):
         verbose_name='Auto-Verbuchen aktiv (E-Banking)',
         help_text='Eindeutig erkannte Bankbuchungen (Konfidenz 1.0) automatisch ins Hauptbuch übernehmen.',
     )
+    mailversand_aktiv        = models.BooleanField(
+        default=False,
+        verbose_name='E-Mail-Versand aktiv',
+        help_text='Erst aktivieren, wenn das Objekt live geht. Solange deaktiviert, '
+                  'werden für dieses Objekt KEINE Handwerker-Auftragsmails und '
+                  'EV-Einladungen versendet (schrittweiser Rollout).',
+    )
     bundesland               = models.CharField(
         max_length=50, blank=True, default='',
         verbose_name='Bundesland',

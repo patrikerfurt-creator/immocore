@@ -40,6 +40,9 @@ def objekt(*, typ='WEG', bezeichnung='Test-WEG Versammlung', nummer=None):
         plz='12345',
         ort='Teststadt',
         verwaltung_seit=date(2020, 1, 1),
+        # Für Versand-Tests freigeschaltet; das Objekt-Gate (Default False)
+        # wird gezielt in test_einladung_service geprüft.
+        mailversand_aktiv=True,
     )
 
 
