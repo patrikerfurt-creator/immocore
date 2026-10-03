@@ -54,6 +54,7 @@
 
   .status-zeile { margin-top: 14pt; font-size: 10pt; }
   .angenommen { color: #1b6e2f; font-weight: bold; }
+  .abgelehnt { color: #b00020; font-weight: bold; }
   .hinweis {
     border: 1px solid #b58100; background: #fdf6e3;
     padding: 6pt 8pt; font-size: 9pt; margin-top: 14pt;
@@ -143,7 +144,12 @@
 </table>
 
 <div class="status-zeile">
-  Ergebnis: <span class="angenommen">ANGENOMMEN</span>
+  Ergebnis:
+  {% if beschluss.ergebnis == 'abgelehnt' %}
+    <span class="abgelehnt">ABGELEHNT</span>
+  {% else %}
+    <span class="angenommen">ANGENOMMEN</span>
+  {% endif %}
 </div>
 
 {% if beschluss.anfechtung_status != 'keine' %}

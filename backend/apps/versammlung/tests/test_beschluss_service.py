@@ -93,7 +93,9 @@ class _Basis(TestCase):
 
 
 class UebernahmeTest(_Basis):
-    def test_nur_angenommene_tops_werden_beschluss(self):
+    def test_angenommene_und_abgelehnte_werden_beschluss(self):
+        # Auch abgelehnte Anträge (Negativbeschlüsse) kommen in die Sammlung,
+        # mit festgeschriebenem Ergebnis. 'kein_beschluss'/'offen' nicht.
         angenommen = self._top('Jahresabrechnung')
         abgelehnt = self._top('Sonderumlage')
         self._checkout()
@@ -102,13 +104,20 @@ class UebernahmeTest(_Basis):
 
         ergebnis = beschluss_service.uebernimm_in_sammlung(self.ev, self.user)
 
-        self.assertEqual(ergebnis['beschluesse'], 1)
-        self.assertEqual(Beschluss.objects.filter(ev=self.ev).count(), 1)
-        beschluss = Beschluss.objects.get(ev=self.ev)
-        self.assertEqual(beschluss.top_id, angenommen.id)
-        self.assertEqual(beschluss.wortlaut, angenommen.beschlussvorlage)
-        self.assertEqual(beschluss.ergebnis_ja, Decimal('3'))
-        self.assertEqual(beschluss.ort, self.ev.ort)
+        self.assertEqual(ergebnis['beschluesse'], 2)
+        self.assertEqual(Beschluss.objects.filter(ev=self.ev).count(), 2)
+
+        b_ja = Beschluss.objects.get(top=angenommen)
+        self.assertEqual(b_ja.ergebnis, 'angenommen')
+        self.assertEqual(b_ja.ergebnis_ja, Decimal('3'))
+        self.assertEqual(b_ja.ort, self.ev.ort)
+
+        b_nein = Beschluss.objects.get(top=abgelehnt)
+        self.assertEqual(b_nein.ergebnis, 'abgelehnt')
+        self.assertEqual(b_nein.ergebnis_ja, Decimal('1'))
+        self.assertEqual(b_nein.ergebnis_nein, Decimal('2'))
+        # Fortlaufende Nummern auch über abgelehnte hinweg.
+        self.assertNotEqual(b_ja.nummer, b_nein.nummer)
 
     def test_nummern_laufen_je_objekt_fortlaufend(self):
         tops = [self._top(titel) for titel in ('TOP A', 'TOP B')]
@@ -244,13 +253,19 @@ class TriggerTest(_Basis):
         self.assertEqual(ergebnis['vorgaenge'], 0)
         self.assertIsNone(Beschluss.objects.get(ev=self.ev).vorgang_id)
 
-    def test_abgelehnter_top_loest_nichts_aus(self):
+    def test_abgelehnter_top_wird_beschluss_aber_loest_keine_vorgaenge_aus(self):
+        # Negativbeschluss: kommt in die Sammlung, triggert aber keine
+        # Automationen, auch wenn triggert_vorgang gesetzt ist.
         top = self._top('Sanierung', triggert_vorgang=True)
         self._checkout()
         self._abstimmen(top, ja=0, nein=3)
         ergebnis = beschluss_service.uebernimm_in_sammlung(self.ev, self.user)
-        self.assertEqual(ergebnis['beschluesse'], 0)
+        self.assertEqual(ergebnis['beschluesse'], 1)
         self.assertEqual(ergebnis['vorgaenge'], 0)
+        self.assertEqual(ergebnis['mit_vorgang_trigger'], 0)
+        beschluss = Beschluss.objects.get(top=top)
+        self.assertEqual(beschluss.ergebnis, 'abgelehnt')
+        self.assertIsNone(beschluss.vorgang_id)
 
 
 class AnfechtungTest(_Basis):

@@ -876,6 +876,11 @@ class Beschluss(models.Model):
         ('aufgehoben', 'Beschluss gerichtlich aufgehoben'),
     ]
 
+    ERGEBNIS_CHOICES = [
+        ('angenommen', 'Angenommen'),
+        ('abgelehnt',  'Abgelehnt'),
+    ]
+
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
     objekt = models.ForeignKey(
         'objekte.Objekt', on_delete=models.PROTECT, related_name='beschluesse',
@@ -899,6 +904,12 @@ class Beschluss(models.Model):
     ort = models.CharField(max_length=255, blank=True, default='')
     wortlaut = models.TextField(
         help_text='Wortlaut des Beschlusses — unveränderlich (§ 24 Abs. 7 WEG).',
+    )
+    ergebnis            = models.CharField(
+        max_length=12, choices=ERGEBNIS_CHOICES, default='angenommen',
+        help_text='Abstimmungsergebnis des Antrags. Auch abgelehnte Anträge '
+                  '(Negativbeschlüsse) kommen in die Sammlung — nach BGH ist '
+                  'auch die Ablehnung ein Beschluss.',
     )
     ergebnis_ja         = models.DecimalField(max_digits=12, decimal_places=4, default=0)
     ergebnis_nein       = models.DecimalField(max_digits=12, decimal_places=4, default=0)

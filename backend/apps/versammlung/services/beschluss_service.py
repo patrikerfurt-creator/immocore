@@ -170,11 +170,12 @@ def erzeuge_folgevorgaenge(beschluss, erstellt_von) -> list:
 
 @transaction.atomic
 def uebernimm_in_sammlung(ev, erstellt_von) -> dict:
-    """Angenommene TOPs in die Beschluss-Sammlung übernehmen.
+    """Abgestimmte TOPs in die Beschluss-Sammlung übernehmen.
 
-    Je angenommenem TOP entsteht genau ein ``Beschluss`` mit fortlaufender
-    Nummer je Objekt, dazu ein revisionssicheres PDF im DMS und die
-    konfigurierten Folgeaufgaben.
+    Je abgestimmtem TOP (angenommen ODER abgelehnt) entsteht genau ein
+    ``Beschluss`` mit fortlaufender Nummer je Objekt und ein revisionssicheres
+    PDF im DMS. Folgeaufgaben entstehen nur bei angenommenen Beschlüssen — ein
+    abgelehnter Antrag (Negativbeschluss) löst keine Automationen aus.
 
     Aufrufkontext (Spec v1.1 Kap. 4C): ausschließlich
     ``checkout_service.abschluss`` (Status ``ausgecheckt``, "Schritt 1 von
@@ -197,15 +198,20 @@ def uebernimm_in_sammlung(ev, erstellt_von) -> dict:
             'verlangt Datum und Ort).'
         )
 
-    angenommen = list(
-        ev.tagesordnung.filter(abstimmungsergebnis='angenommen').order_by('nummer')
+    # Auch abgelehnte Anträge (Negativbeschlüsse) kommen in die Sammlung — nach
+    # BGH ist auch die Ablehnung ein Beschluss. Nur 'kein_beschluss'/'offen'/
+    # 'vertagt'/'entfallen' bleiben außen vor.
+    zu_uebernehmen = list(
+        ev.tagesordnung
+        .filter(abstimmungsergebnis__in=['angenommen', 'abgelehnt'])
+        .order_by('nummer')
     )
     ergebnis = {
         'beschluesse': 0, 'uebersprungen': 0, 'vorgaenge': 0,
         'mit_vorgang_trigger': 0, 'mit_wp_trigger': 0, 'nummern': [],
     }
 
-    for top in angenommen:
+    for top in zu_uebernehmen:
         if hasattr(top, 'beschluss'):
             ergebnis['uebersprungen'] += 1
             continue
@@ -215,6 +221,7 @@ def uebernimm_in_sammlung(ev, erstellt_von) -> dict:
             beschluss_datum=timezone.localtime(ev.termin).date(),
             ort=ev.ort,
             wortlaut=top.beschlussvorlage,
+            ergebnis=top.abstimmungsergebnis,
             ergebnis_ja=top.abstimmung_ja,
             ergebnis_nein=top.abstimmung_nein,
             ergebnis_enthaltung=top.abstimmung_enthaltung,
@@ -230,16 +237,22 @@ def uebernimm_in_sammlung(ev, erstellt_von) -> dict:
         ergebnis['nummern'].append(beschluss.nummer)
         ev_service.vermerke_ereignis(
             ev, 'beschluss_erzeugt', erstellt_von, top=top,
-            text=f'Beschluss {beschluss.nummer} aus TOP {top.nummer}: {top.titel}',
+            text=(
+                f'Beschluss {beschluss.nummer} aus TOP {top.nummer} '
+                f'({beschluss.get_ergebnis_display()}): {top.titel}'
+            ),
             neuer_wert=str(beschluss.nummer),
         )
 
-        vorgaenge = erzeuge_folgevorgaenge(beschluss, erstellt_von)
-        ergebnis['vorgaenge'] += len(vorgaenge)
-        if top.triggert_vorgang:
-            ergebnis['mit_vorgang_trigger'] += 1
-        if top.triggert_wirtschaftsplan:
-            ergebnis['mit_wp_trigger'] += 1
+        # Folgevorgänge/Automationen nur bei angenommenen Beschlüssen — ein
+        # abgelehnter Antrag löst nichts aus.
+        if top.abstimmungsergebnis == 'angenommen':
+            vorgaenge = erzeuge_folgevorgaenge(beschluss, erstellt_von)
+            ergebnis['vorgaenge'] += len(vorgaenge)
+            if top.triggert_vorgang:
+                ergebnis['mit_vorgang_trigger'] += 1
+            if top.triggert_wirtschaftsplan:
+                ergebnis['mit_wp_trigger'] += 1
 
     # Kein eigenes Protokoll, kein Statuswechsel — das übernimmt
     # protokoll_upload (Schritt 2 von 2, Spec v1.1 Kap. 4D).
