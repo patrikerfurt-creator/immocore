@@ -59,6 +59,15 @@ def checkout(ev, erstellt_von):
             + ', '.join(f'TOP {n}' for n in ohne_grundlage)
         )
 
+    # Ohne ermittelte Teilnehmer gäbe es vor Ort niemanden abzustimmen — und das
+    # externe Abstimmtool bekäme eine leere Eigentümerliste. Die Ermittlung
+    # (stimmkraft_service.ermittle_teilnehmer) gehört vor den Checkout.
+    if not ev.teilnehmer.exists():
+        raise ValidationError(
+            'Checkout nicht möglich — es sind keine Teilnehmer ermittelt. '
+            'Bitte zuerst die Teilnehmer und Stimmkraft ermitteln.'
+        )
+
     # Analog zum früheren, inzwischen entfernten Task4/5-Ablauf
     # (durchfuehrung_service.schliesse_durchfuehrung_ab): der erste
     # Statuswechsel weg von 'entwurf' darf auch hier automatisch passieren —

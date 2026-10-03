@@ -116,6 +116,17 @@ class CheckoutTest(_Basis):
                 beschlussvorlage='Text.',
             )
 
+    def test_ohne_teilnehmer_400(self):
+        # Ohne ermittelte Teilnehmer darf nicht ausgecheckt werden — sonst
+        # bekäme das Abstimmtool eine leere Eigentümerliste.
+        self._top()
+        self.ev.teilnehmer.all().delete()
+        with self.assertRaises(ValidationError) as ctx:
+            checkout_service.checkout(self.ev, self.user)
+        self.assertIn('keine Teilnehmer', str(ctx.exception))
+        self.ev.refresh_from_db()
+        self.assertNotEqual(self.ev.status, 'ausgecheckt')
+
 
 class CheckoutZuruecknahmeTest(_Basis):
     def setUp(self):

@@ -557,10 +557,12 @@ class TagesordnungspunktViewSet(mixins.ListModelMixin,
 
     @action(detail=True, methods=['post'])
     def einzelstimmen(self, request, pk=None):
-        """``{"voten": {teilnehmer_id: votum}}`` — namentliche Abstimmung.
+        """``{"voten": {teilnehmer_id: votum}, "ergebnis": {...}}`` — namentliche Abstimmung.
 
-        Erlaubte Voten: ja, nein, enthaltung. Das Summenergebnis wird daraus
-        abgeleitet; es gibt nur einen Bewertungspfad.
+        Erlaubte Voten: ja, nein, enthaltung. Liefert das Abstimmtool den
+        optionalen ``ergebnis``-Block mit (API-Vertrag v1.3), übernimmt immocore
+        ihn 1:1 ohne Neubewertung (das Tool ist die Beschluss-Autorität); sonst
+        wird das Summenergebnis serverseitig aus den Einzelstimmen abgeleitet.
 
         **Verschärfung Spec v1.1 Kap. 4:** nur im EV-Status ``ausgecheckt``
         zulässig — vorher (z.B. direkt nach ``einladungen_versendet``) ebenso
@@ -581,6 +583,7 @@ class TagesordnungspunktViewSet(mixins.ListModelMixin,
         try:
             durchfuehrung_service.erfasse_einzelstimmen(
                 top, request.user, serializer.validated_data['voten'],
+                ergebnis=serializer.validated_data.get('ergebnis'),
             )
         except DjangoValidationError as exc:
             return _fehler(exc)

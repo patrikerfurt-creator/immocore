@@ -26,29 +26,42 @@ def _bezeichnung(*, ist_kopfprinzip: bool, verteilerschluessel=None) -> str:
     return f'{verteilerschluessel.schluessel} {verteilerschluessel.bezeichnung}'.strip()
 
 
+def _erzeuge_kopfprinzip(ev, *, ist_standard: bool) -> EVStimmgrundlage:
+    return EVStimmgrundlage.objects.create(
+        ev=ev, verteilerschluessel=None, ist_kopfprinzip=True,
+        wirtschaftsjahr=0, ist_standard=ist_standard,
+        bezeichnung_anzeige=_bezeichnung(ist_kopfprinzip=True),
+    )
+
+
 @transaction.atomic
 def erzeuge_aus_legacy_feldern(ev) -> EVStimmgrundlage:
-    """Legt die erste (Standard-)Stimmgrundlage einer frisch angelegten EV an.
+    """Legt die Stimmgrundlagen einer frisch angelegten EV an.
 
-    1:1 abgeleitet aus ``ev.stimmprinzip``/``ev.stimm_verteilerschluessel``/
-    ``ev.stimm_wirtschaftsjahr`` — genau dieselbe Grundlage, die
-    ``stimmkraft_service`` bisher EV-weit verwendet hat. Wird ausschließlich
-    von ``ev_service.erstelle_ev`` aufgerufen.
+    Die (Standard-)Stimmgrundlage wird 1:1 aus ``ev.stimmprinzip``/
+    ``ev.stimm_verteilerschluessel``/``ev.stimm_wirtschaftsjahr`` abgeleitet —
+    genau die Grundlage, die ``stimmkraft_service`` bisher EV-weit verwendet
+    hat. Gibt diese Standard-Grundlage zurück. Wird ausschließlich von
+    ``ev_service.erstelle_ev`` aufgerufen.
+
+    Das echte Kopfprinzip (§ 25 Abs. 2 WEG, eine Stimme je Person) muss bei
+    jeder EV als Gewichtungsoption verfügbar sein. Ist die Standard-Grundlage
+    ein Verteilerschlüssel (MEA/Objekt), wird daher zusätzlich eine
+    Kopfprinzip-Grundlage angelegt (nicht Standard); ist die Standard-Grundlage
+    ohnehin schon das Kopfprinzip, genügt diese eine.
     """
     if ev.stimmprinzip == 'verteilerschluessel':
         vs = ev.stimm_verteilerschluessel
-        return EVStimmgrundlage.objects.create(
+        standard = EVStimmgrundlage.objects.create(
             ev=ev, verteilerschluessel=vs, ist_kopfprinzip=False,
             wirtschaftsjahr=ev.stimm_wirtschaftsjahr, ist_standard=True,
             bezeichnung_anzeige=_bezeichnung(
                 ist_kopfprinzip=False, verteilerschluessel=vs,
             ),
         )
-    return EVStimmgrundlage.objects.create(
-        ev=ev, verteilerschluessel=None, ist_kopfprinzip=True,
-        wirtschaftsjahr=0, ist_standard=True,
-        bezeichnung_anzeige=_bezeichnung(ist_kopfprinzip=True),
-    )
+        _erzeuge_kopfprinzip(ev, ist_standard=False)
+        return standard
+    return _erzeuge_kopfprinzip(ev, ist_standard=True)
 
 
 @transaction.atomic

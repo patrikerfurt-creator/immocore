@@ -50,10 +50,26 @@ class ErstelleEvAutoStimmgrundlageTest(TestCase):
             stimmprinzip='verteilerschluessel', stimm_verteilerschluessel=vs,
             stimm_wirtschaftsjahr=0,
         )
-        grundlage = ev.stimmgrundlagen.get()
+        grundlage = ev.stimmgrundlagen.get(ist_standard=True)
         self.assertFalse(grundlage.ist_kopfprinzip)
         self.assertEqual(grundlage.verteilerschluessel_id, vs.id)
         self.assertEqual(grundlage.bezeichnung_anzeige, '030 Anzahl Einheiten Gesamt')
+
+    def test_kopfprinzip_ist_bei_vs_ev_immer_zusaetzlich_verfuegbar(self):
+        # Das echte Kopfprinzip muss als Gewichtungsoption bei JEDER EV
+        # vorhanden sein — auch wenn die Standard-Grundlage ein
+        # Verteilerschlüssel ist (jeder Eigentümer eine Stimme, § 25 Abs. 2 WEG).
+        eh, _ = f.eigentuemer(self.objekt, nr='001')
+        vs = f.einheiten_schluessel(self.objekt, [eh])
+        ev = ev_service.erstelle_ev(
+            objekt=self.objekt, erstellt_von=self.user,
+            stimmprinzip='verteilerschluessel', stimm_verteilerschluessel=vs,
+            stimm_wirtschaftsjahr=0,
+        )
+        self.assertEqual(ev.stimmgrundlagen.count(), 2)
+        kopf = ev.stimmgrundlagen.get(ist_kopfprinzip=True)
+        self.assertFalse(kopf.ist_standard)
+        self.assertEqual(kopf.bezeichnung_anzeige, 'Kopfprinzip')
 
 
 class EVStimmgrundlageConstraintTest(TestCase):

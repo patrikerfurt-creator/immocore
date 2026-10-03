@@ -229,17 +229,109 @@ def erfasse_abstimmung(top, erfasst_von, *, ja, nein, enthaltung=0, bemerkung=No
     return top
 
 
+def _stimmkraft_fuer(teilnehmer, top) -> Decimal:
+    """Stimmkraft eines Teilnehmers für die Stimmgrundlage DIESES TOP.
+
+    Bevorzugt den mehrdimensionalen ``EVTeilnehmerStimmkraft``-Snapshot zur
+    ``top.stimmgrundlage`` (Spec v1.1 Kap. 2) — so ist die namentliche
+    Einzelstimme korrekt gewichtet, wenn der TOP z.B. nach MEA statt nach Kopf
+    abgestimmt wird. Fällt auf den Legacy-Einzelwert ``teilnehmer.stimmkraft``
+    zurück, falls der TOP keine Stimmgrundlage hat oder kein Snapshot existiert
+    (Alt-/Testdaten ohne Datenmigration).
+    """
+    if top.stimmgrundlage_id:
+        snapshot = (
+            teilnehmer.stimmkraft_snapshots
+            .filter(stimmgrundlage_id=top.stimmgrundlage_id)
+            .first()
+        )
+        if snapshot is not None:
+            return snapshot.stimmkraft
+    return teilnehmer.stimmkraft
+
+
 @transaction.atomic
-def erfasse_einzelstimmen(top, erfasst_von, voten: dict):
-    """Erfasst namentliche Einzelvoten und leitet das Summenergebnis daraus ab.
+def _uebernehme_tool_ergebnis(top, erfasst_von, ergebnis: dict,
+                              einzelstimmen_summen: dict):
+    """Übernimmt das vom Abstimmtool final bewertete Ergebnis 1:1.
+
+    immocore bewertet hier NICHT neu (``bewerte_ergebnis`` wird bewusst nicht
+    aufgerufen) — das Tool ist die Beschluss-Autorität (API-Vertrag v1.3). Die
+    namentlichen Einzelstimmen bleiben als Nachweis erhalten; weicht ihre Summe
+    von den gelieferten Werten ab, wird das als Warnung im Ereignis-Log
+    vermerkt, ohne den Vorgang abzubrechen.
+    """
+    ja = Decimal(str(ergebnis['ja']))
+    nein = Decimal(str(ergebnis['nein']))
+    enthaltung = Decimal(str(ergebnis.get('enthaltung') or 0))
+    entscheidung = ergebnis['ergebnis']
+    bemerkung = ergebnis.get('bemerkung')
+
+    war_erfasst = top.abstimmungsergebnis != 'offen'
+    alt = (
+        f'{top.abstimmung_ja}/{top.abstimmung_nein}/{top.abstimmung_enthaltung}'
+        f' → {top.abstimmungsergebnis}'
+    )
+
+    top.abstimmung_ja = ja
+    top.abstimmung_nein = nein
+    top.abstimmung_enthaltung = enthaltung
+    top.abstimmungsergebnis = entscheidung
+    felder = ['abstimmung_ja', 'abstimmung_nein', 'abstimmung_enthaltung',
+              'abstimmungsergebnis']
+    if bemerkung:
+        top.ergebnis_bemerkung = bemerkung
+        felder.append('ergebnis_bemerkung')
+    top.save(update_fields=felder)
+
+    # Weiche Konsistenzprüfung: die Summe der namentlichen Stimmen (immocore
+    # rechnet mit Decimal-Snapshots, das Tool mit Fließkomma) sollte dem
+    # gemeldeten Ergebnis entsprechen. Kleine Rundungsdifferenzen sind
+    # unkritisch; nur echte Abweichungen werden vermerkt.
+    abweichung = ''
+    toleranz = Decimal('0.01')
+    erwartet = (
+        einzelstimmen_summen['ja'], einzelstimmen_summen['nein'],
+        einzelstimmen_summen['enthaltung'],
+    )
+    if any(abs(a - b) > toleranz for a, b in
+           zip(erwartet, (ja, nein, enthaltung))):
+        abweichung = (
+            f' [Hinweis: Einzelstimmen-Summe '
+            f'{erwartet[0]}/{erwartet[1]}/{erwartet[2]} weicht vom gemeldeten '
+            f'Ergebnis ab]'
+        )
+
+    ev_service.vermerke_ereignis(
+        top.ev, 'abstimmung_korrigiert' if war_erfasst else 'abstimmung_erfasst',
+        erfasst_von, top=top,
+        text=(
+            f'TOP {top.nummer} ({top.get_abstimmungsmodus_display()}): '
+            f'Ja {ja}, Nein {nein}, Enthaltung {enthaltung} → '
+            f'{entscheidung.upper()} (vom Abstimmtool übernommen){abweichung}'
+        ),
+        alter_wert=alt if war_erfasst else '',
+        neuer_wert=f'{ja}/{nein}/{enthaltung} → {entscheidung}',
+    )
+    return top
+
+
+@transaction.atomic
+def erfasse_einzelstimmen(top, erfasst_von, voten: dict, ergebnis: dict | None = None):
+    """Erfasst namentliche Einzelvoten als Nachweis und setzt das Ergebnis.
 
     ``voten``: ``{teilnehmer_id: 'ja'|'nein'|'enthaltung'}``. Nicht genannte
     Teilnehmer gelten als nicht abgegeben. Abwesende dürfen nicht abstimmen —
     ein Votum für einen Abwesenden ist ein Eingabefehler und wird abgewiesen,
     nicht stillschweigend verworfen.
 
-    Vorhandene Einzelstimmen des TOP werden ersetzt; das Summenergebnis läuft
-    danach über ``erfasse_abstimmung``, damit es genau einen Bewertungspfad gibt.
+    ``ergebnis`` (API-Vertrag v1.3): das vom Abstimmtool final bewertete
+    Ergebnis ``{ja, nein, enthaltung, ergebnis}``. Ist es gesetzt, übernimmt
+    immocore es 1:1 und bewertet NICHT neu (das Tool ist die Beschluss-
+    Autorität). Fehlt es, leitet immocore das Summenergebnis wie bisher über
+    ``erfasse_abstimmung`` ab — dann aber gewichtet nach ``top.stimmgrundlage``.
+
+    Vorhandene Einzelstimmen des TOP werden in beiden Fällen ersetzt.
     """
     ev = top.ev
     _pruefe_offen(ev)
@@ -265,11 +357,12 @@ def erfasse_einzelstimmen(top, erfasst_von, voten: dict):
             abwesende.append(teilnehmer.person.name)
             continue
 
+        stimmkraft = _stimmkraft_fuer(teilnehmer, top)
         EVStimme.objects.create(
             top=top, teilnehmer=teilnehmer, votum=votum,
-            stimmkraft=teilnehmer.stimmkraft, erfasst_von=erfasst_von,
+            stimmkraft=stimmkraft, erfasst_von=erfasst_von,
         )
-        summen[votum] += teilnehmer.stimmkraft
+        summen[votum] += stimmkraft
 
     if abwesende:
         raise ValidationError(
@@ -277,6 +370,9 @@ def erfasse_einzelstimmen(top, erfasst_von, voten: dict):
             + ', '.join(sorted(abwesende))
             + '. Bitte zuerst die Anwesenheit erfassen.'
         )
+
+    if ergebnis is not None:
+        return _uebernehme_tool_ergebnis(top, erfasst_von, ergebnis, summen)
 
     return erfasse_abstimmung(
         top, erfasst_von,

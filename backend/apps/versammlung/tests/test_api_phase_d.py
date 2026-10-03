@@ -102,11 +102,14 @@ class QuorumApiTest(_Basis):
         response = self.client.get(f'{VERSAMMLUNGEN}{self.ev.id}/quorum/')
         self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
         je_grundlage = response.data['je_stimmgrundlage']
-        self.assertEqual(len(je_grundlage), 1)
-        eintrag = je_grundlage[0]
-        self.assertEqual(Decimal(eintrag['anwesende_stimmkraft']), Decimal('3'))
-        self.assertEqual(Decimal(eintrag['gesamt_stimmkraft']), Decimal('3'))
-        self.assertIn('stimmgrundlage_id', eintrag)
+        # Die EV hat die VS-Standardgrundlage plus die garantierte
+        # Kopfprinzip-Grundlage. Bei je 1 Stimme pro Einheit/Person und drei
+        # anwesenden Eigentümern ergeben beide 3 von 3.
+        self.assertEqual(len(je_grundlage), 2)
+        for eintrag in je_grundlage:
+            self.assertEqual(Decimal(eintrag['anwesende_stimmkraft']), Decimal('3'))
+            self.assertEqual(Decimal(eintrag['gesamt_stimmkraft']), Decimal('3'))
+            self.assertIn('stimmgrundlage_id', eintrag)
 
 
 class AnwesenheitApiTest(_Basis):

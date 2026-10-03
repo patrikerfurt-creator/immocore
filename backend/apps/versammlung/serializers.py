@@ -393,12 +393,37 @@ class AbstimmungSerializer(serializers.Serializer):
     bemerkung = serializers.CharField(required=False, allow_blank=True)
 
 
+class EinzelstimmenErgebnisSerializer(serializers.Serializer):
+    """Das vom Abstimmtool final bewertete Ergebnis eines TOP.
+
+    Das Tool ist die Beschluss-Autorität (vor Ort verkündet) — immocore
+    übernimmt diese Werte 1:1 und bewertet NICHT neu. ``ergebnis`` kennt nur
+    ``angenommen``/``abgelehnt``: Stimmengleichheit ist kein Mehrheitsbeschluss
+    und wird vom Tool bereits als ``abgelehnt`` geliefert.
+    """
+
+    ja = serializers.DecimalField(max_digits=12, decimal_places=4)
+    nein = serializers.DecimalField(max_digits=12, decimal_places=4)
+    enthaltung = serializers.DecimalField(
+        max_digits=12, decimal_places=4, required=False, default=0,
+    )
+    ergebnis = serializers.ChoiceField(choices=['angenommen', 'abgelehnt'])
+    bemerkung = serializers.CharField(required=False, allow_blank=True, default='')
+
+
 class EinzelstimmenSerializer(serializers.Serializer):
-    """Eingabe für ``POST /tagesordnungspunkte/{id}/einzelstimmen/``."""
+    """Eingabe für ``POST /tagesordnungspunkte/{id}/einzelstimmen/``.
+
+    ``ergebnis`` ist optional: liefert das Tool es mit (Regelfall ab
+    Vertrag v1.3), speichert immocore es unverändert. Fehlt es (Altpfad /
+    Robustheit), leitet immocore das Ergebnis weiterhin selbst aus den
+    namentlichen Stimmen ab — dann gewichtet nach ``top.stimmgrundlage``.
+    """
 
     voten = serializers.DictField(
         child=serializers.ChoiceField(choices=EVStimme.VOTUM_CHOICES),
     )
+    ergebnis = EinzelstimmenErgebnisSerializer(required=False)
 
 
 class ErgebnisStatusSerializer(serializers.Serializer):

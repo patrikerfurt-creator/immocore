@@ -1,18 +1,32 @@
 # API-Vertrag: Externes Abstimmungs-Tool (Reply-Interact-Keypads) — v1.3
 
-**Finale, code-geprüfte Fassung.** Ersetzt `API_VERTRAG_VERSAMMLUNGSTOOL_v1_2.md`
-— einzige Änderung: neuer Abschnitt 3 (Versammlung auswählen). Alle übrigen
-Inhalte sind identisch und weiterhin gegen den Code verifiziert (Stand
-2026-09-27).
+**Code-geprüfte Fassung** — ersetzt `API_VERTRAG_VERSAMMLUNGSTOOL_v1_2.md`.
+Gegenüber v1.2 geändert (Stand 2026-10-03):
+
+1. **Ergebnishoheit beim Abstimmtool.** `POST .../einzelstimmen/` nimmt
+   zusätzlich zu den Einzelvoten einen optionalen `ergebnis`-Block mit den
+   fertigen (gewichteten) Summen und der Entscheidung entgegen. Liefert das
+   Tool ihn, speichert immocore ihn **1:1** und bewertet **nicht** neu — das
+   Tool ist die Beschluss-Autorität (das vor Ort am Beamer verkündete Ergebnis
+   muss im Protokoll stehen). Die namentlichen Einzelstimmen bleiben als
+   Nachweis erhalten.
+2. **Stimmengleichheit = abgelehnt** (kein Mehrheitsbeschluss). Das Tool
+   liefert in diesem Fall `ergebnis: "abgelehnt"`.
+3. **Kopfprinzip immer verfügbar.** Jede EV hat garantiert eine Kopfprinzip-
+   Stimmgrundlage (§ 25 Abs. 2 WEG, eine Stimme je Person) — zusätzlich zu den
+   aus Verteilerschlüsseln abgeleiteten Stimmgrundlagen.
+4. **Nachweis-Einzelstimmen gewichtet** nach `top.stimmgrundlage` (nicht mehr
+   nach dem Legacy-Einzelwert).
 
 ## Wer ruft was auf
 
 - **Immocore-Mitarbeiter** (im Immocore-Frontend): legt die EV an, pflegt
-  Tagesordnung, versendet Einladungen, löst **Checkout** und
-  **Checkout-Rücknahme** aus.
+  Tagesordnung und Stimmgrundlagen, versendet Einladungen, löst **Checkout**
+  und **Checkout-Rücknahme** aus.
 - **Das Abstimmtool**: liest Tagesordnung/Teilnehmer, schreibt Anwesenheit
-  und Abstimmungsergebnisse (nur im Status `ausgecheckt`), löst am Ende
-  **Abschluss** und **Protokoll-Upload** aus.
+  und — als Beschluss-Autorität — das bewertete Abstimmungsergebnis (nur im
+  Status `ausgecheckt`), löst am Ende **Abschluss** und **Protokoll-Upload**
+  aus.
 
 ## 1. Auth
 
@@ -47,60 +61,25 @@ Den aktuellen Status liest das Tool über `GET /versammlungen/{id}/` (Feld
 `status`) — das Tool sollte vor jedem Schreibversuch (oder zumindest beim
 Start der Versammlung) prüfen, ob bereits ausgecheckt wurde.
 
-## 3. Versammlung auswählen (neu in v1.3)
+## 3. Ablauf
 
-Damit die Bedienperson am Abstimmtool nicht die EV-ID manuell eingeben muss,
-gibt es bereits einen fertigen Endpunkt (keine Backend-Änderung nötig):
-
-`GET /api/v1/versammlungen/?status=ausgecheckt`
-
-```json
-[
-  {
-    "id": "7897ad88-9f71-499a-829d-f814d815bba1",
-    "objekt": "uuid",
-    "objekt_bezeichnung": "WEG Theresenstraße 4",
-    "objektnummer": "10001",
-    "arbeitsname": "",
-    "art": "ordentlich",
-    "termin": "2026-12-01T17:00:00+01:00",
-    "ort": "Büro Frankfurt",
-    "status": "ausgecheckt",
-    "status_display": "Ausgecheckt (Abstimmtool)",
-    "anzahl_tops": 3,
-    "anzahl_teilnehmer": 6,
-    "erstellt_am": "2026-09-27T11:40:41+02:00"
-  }
-]
-```
-
-**Empfehlung fürs Auswahl-UI:** Anzeige als `"{objektnummer} — {objekt_bezeichnung}"`
-(z. B. `"10001 — WEG Theresenstraße 4"`), bei mehreren EVs am selben Objekt
-zusätzlich `termin` oder `arbeitsname` zur Unterscheidung. `id` ist der
-`ev_id`, der bei allen folgenden Aufrufen (Abschnitt 5) verwendet wird.
-
-Der Filter `?status=ausgecheckt` ist derselbe Endpunkt, der auch ohne
-Filter alle EVs listet — mit dem Query-Parameter zeigt er nur die, die
-gerade fürs Abstimmtool freigegeben sind. Sinnvoll: Liste beim Start des
-Tools abrufen und bei Bedarf manuell aktualisieren (kein Live-Push, falls
-zwischenzeitlich eine weitere EV ausgecheckt wird).
-
-## 4. Ablauf
-
-1. **Login**, dann Liste der ausgecheckten Versammlungen abrufen
-   (Abschnitt 3) und der Bedienperson zur Auswahl anzeigen.
-2. Für die gewählte EV: `GET /versammlungen/{id}/tagesordnung/` +
+1. **Login**, dann `GET /versammlungen/{id}/tagesordnung/` +
    `GET /versammlungen/{id}/teilnehmer/` abrufen, lokal cachen.
+2. Warten, bis ein Immocore-Mitarbeiter den **Checkout** ausgelöst hat
+   (`status` wechselt zu `ausgecheckt`) — vorher lehnt die API alle
+   Schreibzugriffe des Tools ab.
 3. **Check-in vor Ort:** `PATCH /ev-teilnehmer/{id}/` je Teilnehmer.
-4. **Während der Versammlung:** je TOP `POST .../einzelstimmen/`.
+4. **Während der Versammlung:** je TOP das Tool lokal auswerten und das
+   Ergebnis per `POST .../einzelstimmen/` (mit `ergebnis`-Block) an immocore
+   übergeben.
 5. **Abschluss:** `POST /versammlungen/{id}/abschluss/` — liefert die
    vergebenen Beschlussnummern zurück.
 6. **Protokoll-Upload:** Tool baut das Protokoll-PDF (mit den Nummern aus
    Schritt 5) und lädt es hoch: `POST /versammlungen/{id}/protokoll-upload/`.
 
-## 5. Endpunkte
+## 4. Endpunkte
 
-### 5.1 Tagesordnung lesen
+### 4.1 Tagesordnung lesen
 
 `GET /api/v1/versammlungen/{ev_id}/tagesordnung/`
 
@@ -127,9 +106,11 @@ zwischenzeitlich eine weitere EV ausgecheckt wird).
 
 `stimmgrundlage` ist `null`, falls (im Ausnahmefall) keine gesetzt ist —
 im UI des Tools **je TOP anzeigen**, damit klar ist, mit welcher Gewichtung
-gerade abgestimmt wird.
+gerade abgestimmt wird. Der Abstimmungsmodus (`abstimmungsmodus`,
+`mehrheit_schwelle`) bestimmt, welche Mehrheit das Tool anwenden muss (siehe
+4.4 und Abschnitt 5).
 
-### 5.2 Teilnehmer + Stimmkraft lesen
+### 4.2 Teilnehmer + Stimmkraft lesen
 
 `GET /api/v1/versammlungen/{ev_id}/teilnehmer/`
 
@@ -158,10 +139,17 @@ gerade abgestimmt wird.
 Stimmwert einer Person bei einem bestimmten TOP: `teilnehmer_id` +
 `top.stimmgrundlage.id` → in `stimmkraft_je_grundlage` den Eintrag mit
 passender `stimmgrundlage_id` suchen. Das ältere Einzelfeld `stimmkraft`
-bleibt zusätzlich vorhanden (erste/Standard-Grundlage), aber **für Voten
-immer `stimmkraft_je_grundlage` verwenden**, nicht das Einzelfeld.
+bleibt zusätzlich vorhanden (erste/Standard-Grundlage), aber **für die
+gewichtete Auswertung immer `stimmkraft_je_grundlage` verwenden**, nicht das
+Einzelfeld.
 
-### 5.3 Anwesenheit/Vertretung schreiben (nur Status `ausgecheckt`)
+**Kopfprinzip ist garantiert vorhanden:** `stimmkraft_je_grundlage` enthält
+für jede EV einen Eintrag zur Kopfprinzip-Stimmgrundlage (Wert `1.0000` je
+anwesender Person). Welche `stimmgrundlage_id` das Kopfprinzip ist, zeigt die
+Tagesordnung bzw. die Stimmgrundlagen-Liste der EV (`bezeichnung` =
+`"Kopfprinzip"`).
+
+### 4.3 Anwesenheit/Vertretung schreiben (nur Status `ausgecheckt`)
 
 `PATCH /api/v1/ev-teilnehmer/{teilnehmer_id}/`
 
@@ -177,7 +165,7 @@ immer `stimmkraft_je_grundlage` verwenden**, nicht das Einzelfeld.
 Alle Felder optional, nur Übergebenes wird geändert. `zusage_status` kann
 im selben Request mitgeschickt werden, ist aber vom Status-Gate ausgenommen.
 
-### 5.4 Abstimmung je TOP schreiben (nur Status `ausgecheckt`)
+### 4.4 Abstimmung je TOP schreiben (nur Status `ausgecheckt`)
 
 `POST /api/v1/tagesordnungspunkte/{top_id}/einzelstimmen/`
 
@@ -187,17 +175,40 @@ im selben Request mitgeschickt werden, ist aber vom Status-Gate ausgenommen.
     "teilnehmer_id_1": "ja",
     "teilnehmer_id_2": "nein",
     "teilnehmer_id_3": "enthaltung"
+  },
+  "ergebnis": {
+    "ja": "2.0000",
+    "nein": "1.0000",
+    "enthaltung": "0.0000",
+    "ergebnis": "abgelehnt"
   }
 }
 ```
 
-Erlaubte Werte: `"ja"`, `"nein"`, `"enthaltung"`. Server berechnet die
-Gewichtung automatisch aus `stimmkraft_je_grundlage` zur `top.stimmgrundlage`.
+**`voten`** (erforderlich): die namentlichen Einzelstimmen, `teilnehmer_id →
+"ja"|"nein"|"enthaltung"`. Sie werden als **Nachweis** (`EVStimme`)
+gespeichert — jede Stimme mit der nach `top.stimmgrundlage` gewichteten
+Stimmkraft des Teilnehmers. Abwesende dürfen nicht abstimmen (HTTP 400, nennt
+die betroffenen Namen); unbekannte `teilnehmer_id` → HTTP 400.
+
+**`ergebnis`** (optional, Regelfall ab v1.3): das vom Tool **final bewertete**
+Ergebnis. Ist es gesetzt, übernimmt immocore `ja`/`nein`/`enthaltung` (bereits
+gewichtete Summen) und `ergebnis` **unverändert** und bewertet nicht neu — das
+Tool ist die Beschluss-Autorität. `ergebnis` ist einer von `"angenommen"` /
+`"abgelehnt"`; **Stimmengleichheit ist `"abgelehnt"`** (kein
+Mehrheitsbeschluss). Weichen die Summen der namentlichen `voten` von den
+gemeldeten Summen ab, vermerkt immocore das als Hinweis im Ereignis-Log, ohne
+den Vorgang abzulehnen.
+
+Fehlt `ergebnis` (Robustheit / Altpfad), leitet immocore das Summenergebnis
+selbst aus den `voten` ab — dann gewichtet nach `top.stimmgrundlage` und
+bewertet nach `top.abstimmungsmodus`.
+
 Erneute Erfassung überschreibt das vorherige Ergebnis (Korrektur, unkritisch
-bei Retry). Response: aktualisiertes TOP-Objekt (Form wie 5.1, mit befülltem
+bei Retry). Response: aktualisiertes TOP-Objekt (Form wie 4.1, mit befülltem
 `abstimmung_ja/_nein/_enthaltung` + `abstimmungsergebnis`).
 
-### 5.5 Quorum lesen (informativ, kein Gate)
+### 4.5 Quorum lesen (informativ, kein Gate)
 
 `GET /api/v1/versammlungen/{ev_id}/quorum/`
 
@@ -220,7 +231,7 @@ bei Retry). Response: aktualisiertes TOP-Objekt (Form wie 5.1, mit befülltem
 }
 ```
 
-### 5.6 Abschluss (Schritt 1 von 2 — löst den Beschlussnummern-Zirkelbezug)
+### 4.6 Abschluss (Schritt 1 von 2 — löst den Beschlussnummern-Zirkelbezug)
 
 `POST /api/v1/versammlungen/{ev_id}/abschluss/` — kein Payload.
 
@@ -236,43 +247,56 @@ bei Retry). Response: aktualisiertes TOP-Objekt (Form wie 5.1, mit befülltem
 weit fortlaufend. Schlägt mit HTTP 400 fehl, wenn: Status ≠ `ausgecheckt`,
 oder ein abstimmungspflichtiger TOP noch kein Ergebnis hat (Fehlermeldung
 nennt die betroffenen TOP-Nummern). Status wechselt **noch nicht** — erst
-nach 5.7.
+nach 4.7.
 
-### 5.7 Protokoll-Upload (Schritt 2 von 2)
+### 4.7 Protokoll-Upload (Schritt 2 von 2)
 
 `POST /api/v1/versammlungen/{ev_id}/protokoll-upload/` — `multipart/form-data`,
-**Feld-Name exakt `datei`** (PDF). Muss nach 5.6 aufgerufen werden — die
-Beschlussnummern aus 5.6 müssen im hochgeladenen PDF bereits enthalten sein.
+**Feld-Name exakt `datei`** (PDF). Muss nach 4.6 aufgerufen werden — die
+Beschlussnummern aus 4.6 müssen im hochgeladenen PDF bereits enthalten sein.
 
 ```json
 { "dokument_id": "uuid", "dateiname": "Protokoll_....pdf" }
 ```
 
 (HTTP 201). Fehler: 400 wenn Feld `datei` fehlt, kein echtes PDF ist
-(Magic-Bytes-Prüfung), zu groß ist, oder Abschluss (5.6) noch nicht gelaufen
+(Magic-Bytes-Prüfung), zu groß ist, oder Abschluss (4.6) noch nicht gelaufen
 ist. Setzt `ev.status = 'beschluesse_verarbeitet'`.
 
-## 6. Wichtige Fallstricke
+## 5. Wichtige Fallstricke
 
-- **Kein Notfallpfad in Immocore.** Es gibt keine Immocore-eigene
-  Oberfläche mehr für Anwesenheit/Abstimmung — fällt das Tool aus, gibt es
-  aktuell keinen Fallback.
+- **Das Tool bewertet, immocore speichert.** Mit dem `ergebnis`-Block aus 4.4
+  trägt das Tool die volle Verantwortung für die Entscheidung
+  (angenommen/abgelehnt). immocore prüft sie nicht gegen den Abstimmungsmodus
+  — das vor Ort verkündete Ergebnis ist maßgeblich und muss im Protokoll
+  stehen.
+- **Qualifizierte Mehrheiten liegen beim Tool.** Bei
+  `abstimmungsmodus = "qualifizierte_mehrheit"` (Schwelle in
+  `mehrheit_schwelle`), `"einstimmigkeit"` oder `"allstimmigkeit"` muss das
+  Tool die passende Mehrheit selbst anwenden, bevor es `ergebnis` setzt. Eine
+  nur auf einfache Mehrheit gerechnete Auswertung ist für diese Modi falsch —
+  entweder rechnet das Tool die Schwelle korrekt, oder der Bearbeiter setzt das
+  Ergebnis manuell (und das Tool sendet es erst dann).
+- **Stimmengleichheit = abgelehnt.** Kein Mehrheitsbeschluss.
+- **Kein Notfallpfad in Immocore.** Es gibt keine Immocore-eigene Oberfläche
+  mehr für Anwesenheit/Abstimmung — fällt das Tool aus, gibt es aktuell keinen
+  Fallback.
 - **`teilnehmer_id` ist EV-spezifisch** — bei jeder neuen Versammlung neu,
   nie über EVs hinweg wiederverwenden.
 - **Keine Wahlen-Unterstützung** — nur Ja/Nein/Enthaltung je TOP, keine
   Mehrpersonenwahlen.
-- **Reihenfolge 5.6 vor 5.7 ist zwingend** — das PDF ohne die
-  Beschlussnummern aus dem Abschluss-Schritt zu bauen, ergibt ein inhaltlich
-  falsches Protokoll.
-- **`abstimmung/`** (Summenerfassung, `{"ja": ..., "nein": ..., "enthaltung": ...}`)
-  existiert parallel zu `einzelstimmen/`, wird aber vom Tool nicht gebraucht
-  — es liefert keine personenbezogene Gewichtung, sondern nur Summen. Für
-  das Tool ist ausschließlich `einzelstimmen/` relevant.
+- **Reihenfolge 4.6 vor 4.7 ist zwingend** — das PDF ohne die Beschlussnummern
+  aus dem Abschluss-Schritt zu bauen, ergibt ein inhaltlich falsches Protokoll.
+- **`abstimmung/`** (reine Summenerfassung,
+  `{"ja": ..., "nein": ..., "enthaltung": ...}`) existiert weiterhin parallel
+  zu `einzelstimmen/`, bewertet aber serverseitig und speichert keine
+  namentlichen Stimmen — für das Tool ist ausschließlich `einzelstimmen/`
+  relevant.
 - **Vollmacht-Dokument-Upload** läuft über den allgemeinen DMS-Endpunkt der
   Immocore-API (Pfad außerhalb des Scopes dieses Vertrags) — die
   zurückgegebene Dokument-ID wird dann in `vollmacht_dokument` referenziert.
 
-## 7. Referenzen
+## 6. Referenzen
 
 - `docs/CLAUDE_CODE_ANLEITUNG_EV_ABSTIMMTOOL_INTEGRATION_v1_1.md` (fachliche
   Spezifikation)

@@ -401,6 +401,50 @@ class EinzelstimmenTest(_Basis):
         self.assertEqual(top.abstimmung_ja, Decimal('2'))
 
 
+class EinzelstimmenMitToolErgebnisTest(_Basis):
+    """Das Abstimmtool ist die Beschluss-Autorität (API-Vertrag v1.3):
+    liefert es den ``ergebnis``-Block mit, übernimmt immocore ihn 1:1 ohne
+    eigene Neubewertung; die Einzelstimmen bleiben als Nachweis erhalten."""
+
+    def test_tool_ergebnis_wird_uebernommen_ohne_neubewertung(self):
+        self._anwesend('Alpha', 'Beta', 'Gamma')
+        top = self._top()  # einfache_mehrheit → immocore selbst: 'angenommen'
+        # Das Tool meldet ABGELEHNT trotz 2 Ja : 1 Nein (z.B. qualifizierte
+        # Mehrheit laut TE nicht erreicht). immocore darf NICHT neu bewerten.
+        durchfuehrung_service.erfasse_einzelstimmen(
+            top, self.user,
+            {
+                str(self.teilnehmer['Alpha'].id): 'ja',
+                str(self.teilnehmer['Beta'].id): 'ja',
+                str(self.teilnehmer['Gamma'].id): 'nein',
+            },
+            ergebnis={'ja': '2', 'nein': '1', 'enthaltung': '0',
+                      'ergebnis': 'abgelehnt'},
+        )
+        top.refresh_from_db()
+        self.assertEqual(top.abstimmungsergebnis, 'abgelehnt')
+        self.assertEqual(top.abstimmung_ja, Decimal('2'))
+        self.assertEqual(top.abstimmung_nein, Decimal('1'))
+        # Einzelstimmen als Nachweis erhalten.
+        self.assertEqual(top.stimmen.count(), 3)
+
+    def test_gleichstand_wird_als_abgelehnt_uebernommen(self):
+        self._anwesend('Alpha', 'Beta')
+        top = self._top()
+        durchfuehrung_service.erfasse_einzelstimmen(
+            top, self.user,
+            {
+                str(self.teilnehmer['Alpha'].id): 'ja',
+                str(self.teilnehmer['Beta'].id): 'nein',
+            },
+            ergebnis={'ja': '1', 'nein': '1', 'enthaltung': '0',
+                      'ergebnis': 'abgelehnt'},
+        )
+        top.refresh_from_db()
+        self.assertEqual(top.abstimmungsergebnis, 'abgelehnt')
+        self.assertEqual(top.stimmen.count(), 2)
+
+
 class PruefeErgebnisseVollstaendigTest(_Basis):
     """Ersetzt die frühere ``DurchfuehrungAbschliessenTest`` (testete den
     entfernten ``schliesse_durchfuehrung_ab``) — die gleiche Prüf-Logik läuft
