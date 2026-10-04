@@ -111,7 +111,6 @@ EIGENTUEMER_BEGRUESSUNG = dict(
             'Ihr monatliches Hausgeld beträgt ab dem {{ hausgeld.gueltig_ab | datum }} '
             '{{ hausgeld.monatsbetrag | euro }} und ist jeweils zum Monatsbeginn fällig.'
         )},
-        {'typ': 'tabelle', 'quelle': 'hausgeld.positionen'},
         {'typ': 'bedingt', 'bedingung': 'ev.sepa_mandat_fehlt', 'inhalt': (
             'Damit wir das Hausgeld bequem per Lastschrift einziehen können, senden Sie uns bitte '
             'das beigefügte SEPA-Lastschriftmandat unterschrieben zurück. Bis dahin überweisen Sie '
