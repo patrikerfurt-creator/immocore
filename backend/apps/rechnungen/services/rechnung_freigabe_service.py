@@ -100,11 +100,11 @@ def route_zur_freigabe(rechnung, geprueft_von=None):
     (gleiches Konto → trefferzahl++). Der Stufe-2-Freigeber ändert die
     Regel nur bei bewusster Konto-Korrektur mit Rückfrage (Spec 5.3).
 
-    Sonderfall WKZ: Besteht zu der Rechnung eine (nicht beendete) WKZ-Vorlage,
-    läuft die Zahlung über die wiederkehrende Zahlung — mit eigener Freigabe
-    unter „Rechnungsfreigabe". Die Rechnung verlässt deshalb JETZT, mit dem
-    Abschluss der Erfassung, den normalen Zahlweg (status='wkz_beleg') und
-    nicht schon beim Anlegen der Vorlage."""
+    Entkopplung WKZ (2026-10): Eine aus dieser Rechnung abgeleitete WKZ-Vorlage
+    hat KEINE Auswirkung mehr auf die Rechnung. Eine PDF kann zwei getrennte
+    Forderungen tragen (z.B. Schlussrechnung + künftige Abschläge); die Rechnung
+    bleibt deshalb immer eine normale Rechnung und wird regulär verbucht/bezahlt.
+    `vorlage.rechnung` ist nur noch der PDF-/DMS-Bezug (geteilter Beleg)."""
     # Stufe 1 → 2 ist nur aus einem Stufe-1-Zustand zulaessig. Ohne diese
     # Pruefung liess sich eine bereits freigegebene Rechnung zurueck nach
     # 'zur_freigabe' setzen, waehrend ihr offener Posten bestehen blieb — der
@@ -123,10 +123,6 @@ def route_zur_freigabe(rechnung, geprueft_von=None):
             "Zu dieser Rechnung ist bereits eine OP-Buchung vorhanden — "
             "fuer eine Korrektur muss die Freigabe zuerst storniert werden."
         )
-
-    if _hat_offene_wkz_vorlage(rechnung):
-        from apps.buchhaltung.services.wkz.vorlage_service import uebergib_rechnung_an_wkz
-        return uebergib_rechnung_an_wkz(rechnung, user=geprueft_von)
 
     if geprueft_von is not None:
         from ..recognition import lege_match_regel_an

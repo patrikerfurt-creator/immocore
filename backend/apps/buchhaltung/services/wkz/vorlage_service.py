@@ -163,12 +163,14 @@ def uebergib_rechnung_an_wkz(rechnung, user=None):
 def verknuepfe_rechnung_als_wkz_beleg(vorlage, rechnung, user):
     """
     Verknüpft eine Eingangsrechnung als Beleg/Bescheid einer WKZ-Vorlage:
-      - vorlage.rechnung = rechnung
+      - vorlage.rechnung = rechnung (nur PDF-/DMS-Bezug — geteilter Beleg)
       - Bescheid gilt als erbracht: offene WKZ-OPs verlassen 'bescheid_fehlt',
         bescheid_hochgeladen_am/von werden gesetzt.
-      - Rechnung wird aus dem normalen Zahlweg genommen (status='wkz_beleg').
-      - Ein bereits angelegter Kreditor-OP der Rechnung (Phase 1, unbezahlt,
-        Buchung im Entwurf) wird aufgelöst, damit die Zahlung nicht doppelt läuft.
+
+    Entkopplung (2026-10): Die Rechnung bleibt eine eigenständige Rechnung und
+    wird NICHT mehr aus dem Zahlweg genommen. Eine PDF kann zwei getrennte
+    Forderungen tragen (Schlussrechnung + künftige Abschläge); die Verknüpfung
+    teilt nur den Beleg, lässt die Rechnung aber unberührt.
     """
     vorlage.rechnung = rechnung
     vorlage.save(update_fields=['rechnung'])
@@ -186,8 +188,7 @@ def verknuepfe_rechnung_als_wkz_beleg(vorlage, rechnung, user):
         if felder:
             op.save(update_fields=felder)
 
-    _rechnung_als_wkz_beleg_markieren(rechnung)
-    logger.info("Rechnung %s als WKZ-Beleg mit Vorlage %s verknüpft", rechnung.id, vorlage.id)
+    logger.info("Rechnung %s als WKZ-Beleg (PDF-Bezug) mit Vorlage %s verknüpft", rechnung.id, vorlage.id)
     return vorlage
 
 

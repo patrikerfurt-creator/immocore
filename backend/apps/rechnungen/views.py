@@ -482,25 +482,19 @@ class RechnungViewSet(viewsets.ModelViewSet):
         # bleibt in Stufe 1 (in_buchhaltung). Beim Übergang lernt die
         # Match-Regel aus der geprüften Kontierung (route_zur_freigabe).
         if modus in ('zur_freigabe', 'freigeben'):
-            # Bei WKZ-Belegen liegt die Kontierung in den Splits der WKZ-Vorlage —
-            # ein Aufwandskonto auf der Rechnung ist dann nicht erforderlich.
-            from .services.rechnung_freigabe_service import _hat_offene_wkz_vorlage
-            ist_wkz_beleg = _hat_offene_wkz_vorlage(rechnung)
-            if not ist_wkz_beleg and not rechnung.aufwandskonto_id and not rechnung.splits.exists():
+            # Entkopplung WKZ (2026-10): Eine Rechnung bleibt immer eine Rechnung —
+            # auch wenn aus ihr eine WKZ-Vorlage abgeleitet wurde. Sie braucht daher
+            # immer ein Aufwandskonto bzw. Splits und geht regulär in die Freigabe.
+            if not rechnung.aufwandskonto_id and not rechnung.splits.exists():
                 return Response({'error': 'Aufwandskonto oder Split-Positionen für die Freigabe erforderlich.'},
                                 status=status.HTTP_400_BAD_REQUEST)
             route_zur_freigabe(rechnung, geprueft_von=request.user)
             bearbeiter = request.user.get_full_name() or request.user.username
             Verarbeitungslog.objects.create(
                 rechnung=rechnung,
-                aktion='An WKZ übergeben' if ist_wkz_beleg else 'Geprüft → zur Freigabe',
+                aktion='Geprüft → zur Freigabe',
                 status=rechnung.status,
-                details=(
-                    f'Erfassung abgeschlossen durch {bearbeiter}; Zahlung läuft über die '
-                    f'wiederkehrende Zahlung (WKZ), Freigabe dort'
-                    if ist_wkz_beleg
-                    else f'Stufe 1 abgeschlossen durch {bearbeiter}'
-                ),
+                details=f'Stufe 1 abgeschlossen durch {bearbeiter}',
             )
         else:
             rechnung.status = 'in_buchhaltung'

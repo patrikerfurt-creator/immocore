@@ -3,7 +3,8 @@ Tests für die WKZ-Freigabe unter „Rechnungsfreigabe" (Stufe 2):
 - /wkz-vorlagen/freigabe-liste/ zeigt eingereichte Vorlagen mit Belegbezug
 - Zuständigkeit über objektbasierte zahlungsfreigabe_grenzen (GF sieht alles)
 - freigeben / ablehnen inkl. Berechtigungsprüfung
-- WKZ aus Eingangsrechnung nimmt die Rechnung aus dem normalen Zahlweg
+- WKZ-Entkopplung: eine aus einer Rechnung abgeleitete WKZ lässt die Rechnung
+  unberührt (sie bleibt eine normale Rechnung im regulären Zahlweg)
 """
 from decimal import Decimal
 from datetime import date
@@ -91,16 +92,36 @@ class WKZFreigabeTests(TestCase):
         self.assertEqual(rechnung.status, 'importiert')
         self.assertEqual(vorlage.status, 'eingereicht')
 
-    def test_abschluss_der_erfassung_uebergibt_an_wkz(self):
-        """Erst 'Geprüft → zur Freigabe' nimmt die Rechnung aus dem Zahlweg:
-        Status 'wkz_beleg' statt 'zur_freigabe', weil die Zahlung über die
-        WKZ läuft (die ihre eigene Freigabe hat)."""
+    def test_abschluss_mit_wkz_laesst_rechnung_normal(self):
+        """Entkopplung: Auch wenn aus der Rechnung eine WKZ-Vorlage abgeleitet
+        wurde, bleibt die Rechnung eine normale Rechnung und geht regulär in die
+        Freigabe (Status 'zur_freigabe', NICHT 'wkz_beleg'). Ihr Zahlweg bleibt
+        erhalten (kein OP gelöscht), und die Vorlage behält ihren PDF-Bezug."""
         rechnung = self._rechnung()
-        self._vorlage(rechnung=rechnung)
+        vorlage = self._vorlage(rechnung=rechnung)
 
         route_zur_freigabe(rechnung, geprueft_von=self.gf)
         rechnung.refresh_from_db()
-        self.assertEqual(rechnung.status, 'wkz_beleg')
+        vorlage.refresh_from_db()
+        self.assertEqual(rechnung.status, 'zur_freigabe')
+        self.assertIsNone(rechnung.op_buchung_id)
+        self.assertEqual(vorlage.rechnung_id, rechnung.id)
+
+    def test_beleg_verknuepfen_laesst_rechnung_unberuehrt(self):
+        """'Beleg verknüpfen' teilt nur das PDF: vorlage.rechnung wird gesetzt,
+        die Rechnung behält aber ihren Status und ihren Zahlweg (nicht wkz_beleg)."""
+        from apps.buchhaltung.services.wkz.vorlage_service import (
+            verknuepfe_rechnung_als_wkz_beleg,
+        )
+        rechnung = self._rechnung()
+        vorlage = self._vorlage(eingereicht=False)   # noch keine Rechnung verknüpft
+        self.assertIsNone(vorlage.rechnung_id)
+
+        verknuepfe_rechnung_als_wkz_beleg(vorlage, rechnung, self.gf)
+        rechnung.refresh_from_db()
+        vorlage.refresh_from_db()
+        self.assertEqual(vorlage.rechnung_id, rechnung.id)
+        self.assertEqual(rechnung.status, 'importiert')   # unverändert, nicht wkz_beleg
 
     def test_abschluss_ohne_wkz_geht_regulaer_in_die_freigabe(self):
         rechnung = self._rechnung()
