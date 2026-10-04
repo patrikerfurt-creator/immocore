@@ -44,6 +44,14 @@ const abrechnungWpItems: NavItemDef[] = [
   { to: '/abrechnung-wp/jahresabrechnung', label: 'Jahresabrechnung', icon: '🧾', objektAware: true },
 ]
 
+const korrespondenzItems: NavItemDef[] = [
+  { to: '/korrespondenz/postausgang', label: 'Postausgang',      icon: '📤' },
+  { to: '/korrespondenz/druckstapel',  label: 'Druckstapel',      icon: '🖨️' },
+  { to: '/korrespondenz/serienbrief',  label: 'Serienbrief',      icon: '📑' },
+  { to: '/korrespondenz/vorlagen',     label: 'Vorlagen & Briefe', icon: '✉️' },
+  { to: '/korrespondenz/briefboegen',  label: 'Briefbögen (Admin)', icon: '🖋️' },
+]
+
 const katalogeItems: NavItemDef[] = [
   { to: '/kataloge/versammlungsorte', label: 'Versammlungsorte', icon: '📍' },
 ]
@@ -68,6 +76,7 @@ const buchhaltungPaths = [...buchhaltungItems.map(i => i.to), '/rechnungen', '/b
 const zahlungsverkehrPaths = zahlungsverkehrItems.map(i => i.to)
 const abrechnungWpPaths = abrechnungWpItems.map(i => i.to)
 const katalogePaths = katalogeItems.map(i => i.to)
+const korrespondenzPaths = ['/korrespondenz']
 
 function resolvedTo(item: NavItemDef, selectedId: string | null) {
   if (item.objektAware && selectedId) {
@@ -146,12 +155,14 @@ export function Sidebar() {
   const isInZahlungsverkehr = zahlungsverkehrPaths.some(p => location.pathname.startsWith(p))
   const isInAbrechnungWp = abrechnungWpPaths.some(p => location.pathname.startsWith(p))
   const isInKataloge = katalogePaths.some(p => location.pathname.startsWith(p))
+  const isInKorrespondenz = korrespondenzPaths.some(p => location.pathname.startsWith(p))
 
   const [stammdatenOpen, setStammdatenOpen] = useState(isInStammdaten)
   const [buchhaltungOpen, setBuchhaltungOpen] = useState(isInBuchhaltung)
   const [zahlungsverkehrOpen, setZahlungsverkehrOpen] = useState(isInZahlungsverkehr)
   const [abrechnungWpOpen, setAbrechnungWpOpen] = useState(isInAbrechnungWp)
   const [katalogeOpen, setKatalogeOpen] = useState(isInKataloge)
+  const [korrespondenzOpen, setKorrespondenzOpen] = useState(isInKorrespondenz)
 
   const { selectedId } = useObjektStore()
 
@@ -266,6 +277,30 @@ export function Sidebar() {
           {abrechnungWpOpen && (
             <div>
               {abrechnungWpItems.map(item => (
+                <SidebarLink key={item.to} item={item} selectedId={selectedId} indent />
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <button
+            onClick={() => setKorrespondenzOpen(o => !o)}
+            className={`w-full flex items-center justify-between px-5 py-2.5 text-sm transition-colors ${
+              isInKorrespondenz
+                ? 'text-white font-medium'
+                : 'text-primary-200 hover:bg-primary-800 hover:text-white'
+            }`}
+          >
+            <span className="flex items-center gap-3">
+              <span className="text-base">✉️</span>
+              Korrespondenz
+            </span>
+            <span className="text-xs text-primary-400">{korrespondenzOpen ? '▲' : '▼'}</span>
+          </button>
+          {korrespondenzOpen && (
+            <div>
+              {korrespondenzItems.map(item => (
                 <SidebarLink key={item.to} item={item} selectedId={selectedId} indent />
               ))}
             </div>

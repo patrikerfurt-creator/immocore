@@ -37,6 +37,14 @@ import { VorgaengeListe } from './pages/vorgaenge/VorgaengeListe'
 import { VorgangDetail } from './pages/vorgaenge/VorgangDetail'
 import { VorgangTypenAdmin } from './pages/vorgaenge/VorgangTypenAdmin'
 import MailPosteingang from './pages/vorgaenge/MailPosteingang'
+import { KorrVorlagenListe } from './pages/korrespondenz/KorrVorlagenListe'
+import { KorrVorlageDetail } from './pages/korrespondenz/KorrVorlageDetail'
+import { VorlagenEditorPage } from './pages/korrespondenz/VorlagenEditorPage'
+import { BriefbogenVerwaltung } from './pages/korrespondenz/BriefbogenVerwaltung'
+import { PostausgangPage } from './pages/korrespondenz/schreiben/PostausgangPage'
+import { SchreibenPruefungPage } from './pages/korrespondenz/schreiben/SchreibenPruefungPage'
+import { DruckstapelPage } from './pages/korrespondenz/schreiben/DruckstapelPage'
+import { SerienbriefAssistentPage } from './pages/korrespondenz/serienbrief/SerienbriefAssistentPage'
 import Hausakte from './pages/dokumente/Hausakte'
 import { AbrechnungsartenPage } from './pages/stammdaten/AbrechnungsartenPage'
 import { VerteilerschluesselPage } from './pages/stammdaten/VerteilerschluesselPage'
@@ -148,6 +156,14 @@ export default function App() {
             <Route path="vorgaenge/posteingang" element={<MailPosteingang />} />
             <Route path="vorgaenge/:id" element={<VorgangDetail />} />
             <Route path="admin/vorgang-typen" element={<VorgangTypenAdmin />} />
+            <Route path="korrespondenz/vorlagen" element={<KorrVorlagenListe />} />
+            <Route path="korrespondenz/vorlagen/:id" element={<KorrVorlageDetail />} />
+            <Route path="korrespondenz/vorlagen/:id/versionen/:versionId" element={<VorlagenEditorPage />} />
+            <Route path="korrespondenz/briefboegen" element={<BriefbogenVerwaltung />} />
+            <Route path="korrespondenz/postausgang" element={<PostausgangPage />} />
+            <Route path="korrespondenz/postausgang/:id" element={<SchreibenPruefungPage />} />
+            <Route path="korrespondenz/druckstapel" element={<DruckstapelPage />} />
+            <Route path="korrespondenz/serienbrief" element={<SerienbriefAssistentPage />} />
             <Route path="handwerker/auftraege" element={<HandwerkerauftraegeListe />} />
             <Route path="handwerker/auftraege/:id" element={<HandwerkerauftragDetail />} />
             <Route path="versammlungen" element={<VersammlungenListe />} />

@@ -2249,7 +2249,7 @@ Legende: ✅ vollständig · ⚠️ teilweise · 🔧 fertig, aber Konfiguration
 | Hausgeld-Nebenbuch | v1.1 (`docs/CLAUDE_CODE_ANLEITUNG_HAUSGELD_NEBENBUCH_v1_1.md`) | ✅ Fertig | Keine |
 | OP-Buchung (§ 28 WEG, 3-Phasen) | v1.1 (`..._OP_BUCHUNG_v1_1.md`) | ✅ Fertig | Drei Nummernkreise laufen parallel (`belegnr`, `op_nummer`, `beleg_nummer`) |
 | Buchungsnummer / Kreditoren-OP | v1.0 | ✅ Fertig | Keine |
-| Rechnungserkennung 3-stufig | v1.3 (`..._Rechnungserkennung_3stufig_v1_3.md`) | ✅ Fertig | OCR benötigt `ANTHROPIC_API_KEY`; Prod-Image ohne `fitz`/`pytesseract` (Direktübergabe an Claude) |
+| Rechnungserkennung 3-stufig | v1.3 (`..._Rechnungserkennung_3stufig_v1_3.md`) | ✅ Fertig | KI-OCR benötigt `ANTHROPIC_API_KEY`. Korrektur 2026-09-29: Der OCR-Stack IST im Prod-Image vorhanden — `Dockerfile.prod:11-13` installiert `tesseract-ocr`/`tesseract-ocr-deu`/`poppler-utils`, `requirements.txt` `PyMuPDF`/`pytesseract`/`pdf2image`; die Kaskade PyMuPDF→Tesseract→Claude läuft in `invoice_parser.py`. Die frühere Notiz „Prod-Image ohne `fitz`/`pytesseract`" war überholt |
 | Rechnungseingang-Umbau | v1.1 | ✅ Fertig | Keine |
 | Beleg-Dokument-Kopplung (DMS-Basis) | v1.1 | ✅ Fertig, live | `Rechnung.pfad` läuft weiterhin im Doppelbetrieb; Ablösung für v1_2 vorgesehen |
 | Vorgang & DMS (Ticket-Ablösung) | v1.0 | ✅ Fertig, live | Leere Tabelle `tickets_ticket` existiert produktiv noch (lokal gedroppt, live nicht — harmlos, 0 Zeilen) |

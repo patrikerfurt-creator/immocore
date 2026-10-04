@@ -223,6 +223,35 @@ class ObjektViewSet(viewsets.ModelViewSet):
         qs = qs.order_by('-abgelegt_am')
         return Response(ObjektDokumentSerializer(qs, many=True).data)
 
+    @action(detail=True, methods=['get', 'put'], url_path='mahn-einstellung')
+    def mahn_einstellung(self, request, pk=None):
+        """Objektspezifische Mahn-Konfiguration (Pflicht für den Mahnlauf) lesen/setzen.
+
+        GET: 404, solange das Objekt nicht konfiguriert ist.
+        PUT: mahngebuehr (Pflicht), anzahl_mahnstufen (1-2, Default 2), zinsen_erheben (Default False);
+        ersetzt die Konfiguration vollständig. Wirkt nur auf künftige Mahnläufe.
+        """
+        from apps.buchhaltung.serializers import MahnEinstellungSerializer
+        from apps.buchhaltung.services import mahn_einstellung_service
+
+        objekt = self.get_object()
+        if request.method == 'GET':
+            einstellung = mahn_einstellung_service.hole(objekt)
+            if einstellung is None:
+                return Response(
+                    {'error': 'Für dieses Objekt ist keine Mahn-Konfiguration hinterlegt.'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            return Response(MahnEinstellungSerializer(einstellung).data)
+
+        serializer = MahnEinstellungSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        einstellung, angelegt = mahn_einstellung_service.setze(objekt, **serializer.validated_data)
+        return Response(
+            MahnEinstellungSerializer(einstellung).data,
+            status=status.HTTP_201_CREATED if angelegt else status.HTTP_200_OK,
+        )
+
 
 class EingangViewSet(viewsets.ModelViewSet):
     serializer_class = EingangSerializer

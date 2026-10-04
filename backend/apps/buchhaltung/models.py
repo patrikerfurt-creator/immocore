@@ -695,6 +695,38 @@ class Mahnsperre(models.Model):
         return f"Mahnsperre {self.personenkonto} bis {self.gesperrt_bis}"
 
 
+class MahnEinstellung(models.Model):
+    """Objektspezifische Mahn-Konfiguration (Pflicht je Objekt).
+
+    Die Existenz des Datensatzes ist das Pflicht-Signal: ohne ihn wird für das Objekt
+    nicht gemahnt (``mahnwesen.konfig_fuer``). Verzugstage und Zahlungsfristen je Stufe
+    sind global (``mahnwesen.MAHNSTUFEN``); die Gebühr ist je Objekt fest und gilt bei
+    jeder Stufe gleich.
+    """
+    objekt = models.OneToOneField(
+        Objekt, on_delete=models.CASCADE, related_name='mahn_einstellung'
+    )
+    mahngebuehr = models.DecimalField(max_digits=8, decimal_places=2)
+    anzahl_mahnstufen = models.PositiveSmallIntegerField(default=2)
+    zinsen_erheben = models.BooleanField(default=False)
+
+    class Meta:
+        verbose_name = 'Mahn-Einstellung'
+        verbose_name_plural = 'Mahn-Einstellungen'
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(anzahl_mahnstufen__gte=1, anzahl_mahnstufen__lte=2),
+                name='mahneinstellung_anzahl_stufen_1_bis_2',
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"Mahn-Einstellung {self.objekt} | {self.mahngebuehr} € | "
+            f"{self.anzahl_mahnstufen} Stufen"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Forderungsfälle
 # ---------------------------------------------------------------------------
@@ -1755,6 +1787,8 @@ class FrontofficeAufgabe(models.Model):
         ('eigentuemerwechsel_forderung',       'Eigentümerwechsel: Forderung Neueigentümer'),
         ('saldenmitteilung_wirtschaftsplan',   'Wirtschaftsplan: Saldenmitteilung versenden'),
         ('stundung_laeuft_ab',                 'Umlaufbeschluss-Stundung läuft ab'),
+        ('schreiben_zur_pruefung',             'Schreiben zur Prüfung'),
+        ('schreiben_nicht_erzeugbar',          'Schreiben nicht erzeugbar'),
     ]
     STATUS_CHOICES = [
         ('offen',          'Offen'),

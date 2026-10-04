@@ -47,6 +47,7 @@ LOCAL_APPS = [
     'apps.mitarbeiter',
     'apps.abrechnung_wp',
     'apps.versammlung',
+    'apps.korrespondenz',
     'apps.portal',
 ]
 
@@ -200,6 +201,15 @@ MS_GRAPH_SENDER = os.environ.get('MS_GRAPH_SENDER', 'info@demme-immobilien.de')
 # EMAIL_*-Variablen. So bleiben info@ (Graph, Handwerker/EV) und noreply@ (SMTP,
 # Portal) sauber getrennt. Siehe apps/portal/services/mail_service.py.
 PORTAL_FROM_EMAIL = os.environ.get('PORTAL_FROM_EMAIL', 'noreply@immospace.cloud')
+
+# Modul Vorlagen & Korrespondenz, Anbindung Mahnwesen (Spec 9.1). Solange False,
+# verhält sich der Mahnlauf exakt wie bisher (keine Schreiben, keine Prüfung, kein
+# Kontoauszug). Erst bei True erzeugt `fuehre_mahnlauf_aus` je Mahnung ein
+# freigegebenes Mahnschreiben und blockiert bei fehlender Vorlage. Bewusst nur per
+# Umgebungsvariable schaltbar (kein Admin-Toggle).
+KORRESPONDENZ_MAHNWESEN_AKTIV = os.environ.get(
+    'KORRESPONDENZ_MAHNWESEN_AKTIV', 'False'
+).strip().lower() in ('1', 'true', 'yes', 'ja', 'on')
 
 # Arbeitsordner für per Graph abgerufene info@-Mails (MIME → .eml → Posteingang-
 # Pipeline). Ephemer: die Mails landen anschließend im DMS, die Quelle bleibt

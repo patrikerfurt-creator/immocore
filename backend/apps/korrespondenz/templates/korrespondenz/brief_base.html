@@ -1,0 +1,102 @@
+{% load l10n %}{% localize off %}<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>{{ betreff }}</title>
+<style>
+{% include "korrespondenz/brief.css" %}
+</style>
+</head>
+<body>
+
+{# Falz- und Lochmarken sowie Fußzeile: position: fixed = auf jeder Seite (auch Anlage-Seiten). #}
+<div class="marke falz1"></div>
+<div class="marke loch"></div>
+<div class="marke falz2"></div>
+
+{# Nur in der Editor-Vorschau (vorschau_service): Hinweis auf jeder Seite + dezentes Wasserzeichen. Echte Schreiben setzen vorschau_hinweis nie. #}
+{% if vorschau_hinweis %}
+<div class="vorschau-hinweis">{{ vorschau_hinweis }}</div>
+<div class="vorschau-wasserzeichen">VORSCHAU</div>
+{% endif %}
+
+{% if fusszeile.typ == "weg" %}
+<div class="fuss weg">
+  {% for zeile in fusszeile.zeilen %}<div>{{ zeile }}</div>{% endfor %}
+  {% if fusszeile.pflichtangaben %}<div class="pflicht">{{ fusszeile.pflichtangaben }}</div>{% endif %}
+</div>
+{% else %}
+<div class="fuss firma">
+  {% for zeile in fusszeile.zeilen %}<div>{{ zeile }}</div>{% endfor %}
+</div>
+{% endif %}
+
+{# Seite 1: Briefkopf, absolut positioniert. Steht am Dokumentanfang und erscheint deshalb nur auf Seite 1. #}
+<div class="seite1">
+  <div class="logo"><img src="{{ logo_uri }}" alt=""></div>
+  {% if steuerzeichen %}<div class="steuerzeichen">{{ steuerzeichen }}</div>{% endif %}
+  <div class="absender">{% for zeile in absender %}<div>{{ zeile }}</div>{% endfor %}</div>
+  <div class="anschrift">{% for zeile in anschrift %}<div>{{ zeile }}</div>{% endfor %}</div>
+  <div class="infoblock">
+    {% for zeile in infoblock.firma_zeilen %}<div class="zeile">{{ zeile }}</div>{% endfor %}
+    {% if infoblock.strasse %}<div class="zeile">{{ infoblock.strasse }}</div>{% endif %}
+    {% if infoblock.ort %}<div class="zeile">{{ infoblock.ort }}</div>{% endif %}
+    {% if infoblock.telefon %}<div class="abstand"></div><div class="zeile">Fon {{ infoblock.telefon }}</div>{% endif %}
+    {% if infoblock.email %}<div class="abstand"></div><div class="zeile">{{ infoblock.email }}</div>{% endif %}
+    {% if infoblock.sprechzeiten %}
+    <div class="linie"></div>
+    <div class="klein">Sprechzeiten:</div>
+    {% for sz in infoblock.sprechzeiten %}<div class="klein">{% if sz.zeit %}<span class="sz-tag">{{ sz.tag }}</span>{{ sz.zeit }}{% else %}{{ sz.tag }}{% endif %}</div>{% endfor %}
+    {% endif %}
+    {% if infoblock.hinweis %}
+    <div class="linie"></div>
+    <div class="klein">{{ infoblock.hinweis }}</div>
+    <div class="linie"></div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="bezug">
+  <table>
+    <colgroup><col style="width: 38mm"><col style="width: 44mm"><col style="width: 40mm"><col style="width: 38mm"></colgroup>
+    <tr>
+      <td class="label">Ihr Zeichen:</td>
+      <td class="label">Ihr Schreiben vom:</td>
+      <td class="label">Unser Zeichen:</td>
+      <td class="label">Datum:</td>
+    </tr>
+    <tr>
+      <td class="wert">{{ bezug.ihr_zeichen }}</td>
+      <td class="wert">{{ bezug.ihr_schreiben_vom }}</td>
+      <td class="wert">{{ bezug.unser_zeichen }}</td>
+      <td class="wert">{{ bezug.datum }}</td>
+    </tr>
+  </table>
+</div>
+
+<div class="betreff">
+  {% for zeile in objektzeilen %}<div>{{ zeile }}</div>{% endfor %}
+  <div>{{ betreff }}</div>
+</div>
+
+<div class="anrede">{% for zeile in anrede %}<div>{{ zeile }}</div>{% endfor %}</div>
+
+<div class="brieftext">{{ brief_html|safe }}</div>
+
+<div class="schluss">
+  <p>Mit freundlichen Grüßen</p>
+  <p>{{ schluss.firma }}</p>
+  {% if schluss.unterzeichner %}<p>gez. {{ schluss.unterzeichner }}</p>{% endif %}
+</div>
+
+{% if anlagen_hinweis %}
+<div class="anlagen-hinweis">
+  <p>Anlagen:</p>
+  {% for a in anlagen_hinweis %}<p>{{ a }}</p>{% endfor %}
+</div>
+{% endif %}
+
+{{ anlagen_html|safe }}
+
+</body>
+</html>{% endlocalize %}

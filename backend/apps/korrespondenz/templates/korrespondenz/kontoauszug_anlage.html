@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Kontoauszug {{ kopf.personenkonto }}</title>
+<style>
+@font-face { font-family: "Auszug-Sans"; font-weight: normal; src: url("{{ schrift_regular }}"); }
+@font-face { font-family: "Auszug-Sans"; font-weight: bold;   src: url("{{ schrift_bold }}"); }
+
+@page {
+  size: A4 portrait;
+  margin: 18mm 18mm 20mm 18mm;
+  @bottom-left  { content: "Kontoauszug {{ kopf.personenkonto }} · Stand {{ stichtag }}"; font-family: "Auszug-Sans", Arial, sans-serif; font-size: 8pt; }
+  @bottom-right { content: "Seite " counter(page) " von " counter(pages); font-family: "Auszug-Sans", Arial, sans-serif; font-size: 8pt; }
+}
+html { font-family: "Auszug-Sans", Arial, "Liberation Sans", Helvetica, sans-serif; font-size: 9pt; color: #000; }
+body { margin: 0; }
+h1 { font-size: 14pt; margin: 0 0 4mm 0; }
+.kopf { margin: 0 0 6mm 0; border-collapse: collapse; }
+.kopf td { padding: 0.6mm 6mm 0.6mm 0; vertical-align: top; }
+.kopf td.l { color: #444; }
+table.auszug { width: 100%; border-collapse: collapse; }
+table.auszug thead { display: table-header-group; }
+table.auszug th { text-align: left; border-bottom: 0.8pt solid #000; padding: 1.2mm 1.5mm; font-weight: bold; }
+table.auszug td { padding: 1mm 1.5mm; border-bottom: 0.3pt solid #bbb; vertical-align: top; }
+table.auszug tr { page-break-inside: avoid; }
+.r { text-align: right; white-space: nowrap; }
+.storno td { color: #777; text-decoration: line-through; }
+.storno td.hinweis { text-decoration: none; font-style: italic; }
+.summe td { border-top: 0.8pt solid #000; border-bottom: none; font-weight: bold; padding-top: 2mm; }
+.legende { margin-top: 5mm; font-size: 8pt; color: #444; }
+</style>
+</head>
+<body>
+
+<h1>Kontoauszug</h1>
+<table class="kopf">
+  <tr><td class="l">Eigentümer</td><td>{{ kopf.empfaenger }}</td></tr>
+  <tr><td class="l">Objekt</td><td>{{ kopf.objekt }}</td></tr>
+  {% if kopf.einheit_nr %}<tr><td class="l">Einheit</td><td>{{ kopf.einheit_nr }}</td></tr>{% endif %}
+  <tr><td class="l">Personenkonto</td><td>{{ kopf.personenkonto }}</td></tr>
+  <tr><td class="l">Zeitraum</td><td>{{ von }} bis {{ stichtag }}</td></tr>
+</table>
+
+<table class="auszug">
+  <thead>
+    <tr>
+      <th style="width: 19mm">Datum</th>
+      <th style="width: 27mm">Beleg</th>
+      <th>Buchungstext</th>
+      <th class="r" style="width: 24mm">Forderung (Soll)</th>
+      <th class="r" style="width: 24mm">Zahlung (Haben)</th>
+      <th class="r" style="width: 24mm">Saldo</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% if vortrag %}
+    <tr>
+      <td colspan="5">Saldovortrag zum {{ von }}</td>
+      <td class="r">{{ vortrag }}</td>
+    </tr>
+    {% endif %}
+    {% for z in zeilen %}
+    <tr{% if z.storniert %} class="storno"{% endif %}>
+      <td>{{ z.datum }}</td>
+      <td>{{ z.beleg }}</td>
+      <td>{{ z.text }}{% if z.storniert %} <span class="hinweis">(storniert)</span>{% endif %}</td>
+      <td class="r">{{ z.soll }}</td>
+      <td class="r">{{ z.haben }}</td>
+      <td class="r">{{ z.saldo }}</td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="6">Im Zeitraum liegen keine Buchungen vor.</td></tr>
+    {% endfor %}
+    <tr class="summe">
+      <td colspan="5">Saldo zum {{ stichtag }} ({{ saldo_hinweis }})</td>
+      <td class="r">{{ saldo }}</td>
+    </tr>
+  </tbody>
+</table>
+
+<p class="legende">Ein negativer Saldo bedeutet einen Rückstand, ein positiver Saldo ein Guthaben.
+Stornierte Forderungen sind durchgestrichen und ohne Wirkung auf den Saldo.</p>
+
+</body>
+</html>

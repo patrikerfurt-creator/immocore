@@ -95,6 +95,14 @@ export interface Objekt extends Omit<ObjektList, 'eingaenge'> {
   einheiten: Einheit[]
 }
 
+/** Objektspezifische Mahn-Konfiguration (GET/PUT /objekte/<pk>/mahn-einstellung/). */
+export interface MahnEinstellung {
+  /** Decimal als String (DRF), z. B. "5.00" */
+  mahngebuehr: string
+  anzahl_mahnstufen: 1 | 2
+  zinsen_erheben: boolean
+}
+
 // ── Auto-Pipeline ─────────────────────────────────────────────────────
 export type AutoLaufStatus = 'erfolg' | 'teilweise_erfolg' | 'fehler' | 'uebersprungen'
 
@@ -1881,3 +1889,6 @@ export interface EVAnwesenheitPayload {
   vollmacht_dokument?: string | null
   zusage_status?: 'offen' | 'zugesagt' | 'abgesagt'
 }
+
+// ── Vorlagen & Korrespondenz ──────────────────────────────────────────
+export * from './korrespondenz'

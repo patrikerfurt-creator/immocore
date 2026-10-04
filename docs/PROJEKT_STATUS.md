@@ -339,5 +339,28 @@
 
 ---
 
-*Zuletzt aktualisiert: 09.09.2026 (Belegübersicht-Anreicherung + Löschsperre geprüfter Belege)*
-*Nächste Priorität: Mahnwesen Frontend-Page*
+## 11. Modul Vorlagen & Korrespondenz (`apps.korrespondenz`) — neu 2026-09-30
+
+Umgesetzt nach `docs/CLAUDE_CODE_ANLEITUNG_VORLAGEN_KORRESPONDENZ_v1_2.md` (Bestandsaufnahme + alle Entscheidungen in `docs/korrespondenz_bestandsaufnahme.md`). Stand: **lokal fertig, verifiziert (1603 Backend- + 147 Frontend-Tests grün), noch nicht committet/deployt.**
+
+| Baustein | Status | Hinweis |
+|---|---|---|
+| Datenmodell (Briefbogen, Vorlage, VorlagenVersion, Textbaustein, VorlageAnlage, Schreiben, Serienlauf, Druckstapel, Nummernzähler) | ✅ | UUID-PKs, Constraints (code+objekt eindeutig, max. ein Schreiben-Kontext), Permission `vorlage_freigeben` |
+| Render-Engine (Jinja2 Sandbox + StrictUndefined, 8 Filter) + Platzhalter-Registry je Anlass | ✅ | deterministisch, keine KI je Schreiben; Tests 1–8, 20 |
+| Briefbogen & PDF (WeasyPrint, DIN 5008, Arial, WEG-Fußzeile über `zahlungsverkehr`-Konto) | ✅ | Layout von Patrik freigegeben; Tests 9–13, 15 |
+| Postausgang, Versand (E-Mail via bestehenden Mail-Weg + PDF-Anhang, Druckstapel), Serienbrief | ✅ | Kanal-Auflösung inkl. „letzte Stufe immer Brief"; Tests 16, 19 |
+| Frontend: TipTap-Editor, KI-Assistent, PDF-Vorschau, Vorlagenverwaltung, Postausgang, Druckstapel, Serienbrief-Assistent, „Schreiben erstellen"-Buttons | ✅ | neue Sidebar-Sektion „Korrespondenz" |
+| KI-Assistent im Editor (Abschnitt 6, Output-Validierung) | ✅ | nur im Editor, nie je Schreiben; ohne `ANTHROPIC_API_KEY` ausgeblendet; Test 14 |
+| Prozess-Anbindung Mahnwesen (9.1) + Kontoauszug-Anlage | ✅ | hinter Schalter `KORRESPONDENZ_MAHNWESEN_AKTIV` (**Default AUS**); Test 17 |
+| **Mahn-Konfiguration je Objekt** (`buchhaltung.MahnEinstellung`) | ✅ | feste Gebühr + Anzahl Stufen (Default 2) + Zinsen-Schalter (Default aus) je Objekt; ohne Konfig ist der Mahnlauf **gesperrt**; Staffel Stufe 1 = 15 T Verzug/Frist 14, Stufe 2 = 30 T/Frist 10; Einstellung in der Objektansicht + API `/objekte/<pk>/mahn-einstellung/` |
+| Eigentümerwechsel (9.2, Begrüßung/Verabschiedung per `on_commit`) + Vorgang (9.3) | ✅ | Test 18; Fehler rollt Freigabe nicht zurück → FrontofficeAufgabe |
+| Eigentümerversammlung (9.4) | ✅ | **Anschreiben-Modell:** altes `einladung.html` unverändert, davor ein Briefbogen-Anschreiben (Firma als Unterzeichner) + Vollmacht-Seite; Rückfall aufs Alt-Layout ohne Briefbogen |
+| Seed (Standard-Briefbogen + Logo) + Mustervorlagen A.1–A.6 (ohne A.3 Zahlungserinnerung) | ✅ | Command `seed_korrespondenz`; alle Vorlagen **`entwurf`**, nichts aktiviert (juristische Prüfung Patrik offen) |
+| Doku | ✅ | `docs/korrespondenz_platzhalter.md`, `docs/korrespondenz_feld_mapping.md` |
+
+**Aktivierung/Deploy (bewusste Schritte, noch offen):** korrespondenz + versammlung zusammen committen/deployen (Abhängigkeit); Backend- **und** Worker-Image neu bauen (neue Dependency Jinja2 — sonst Crash-Loop); `seed_korrespondenz` einmal live ausführen; Mahn-Konfiguration je Objekt setzen; SEPA-Formular an die Begrüßungs-Anlage hängen; Mustervorlagen juristisch prüfen + freigeben; Schalter setzen. Vor Live: Mahnlauf-/Beleg-Zählabfrage.
+
+---
+
+*Zuletzt aktualisiert: 30.09.2026 (Modul Vorlagen & Korrespondenz — lokal fertig, noch nicht deployt)*
+*Nächste Priorität: Deploy-Vorbereitung Korrespondenz (Freigaben, Seed, Schalter) — siehe Abschnitt 11*

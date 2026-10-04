@@ -5,6 +5,7 @@ import { personenApi } from '../../api/personen'
 import { PersonForm } from './PersonForm'
 import { Button } from '../../components/ui/Button'
 import { PortalZugangKarte } from './PortalZugangKarte'
+import { SchreibenErstellenButton } from '../korrespondenz/schreiben/SchreibenErstellenDialog'
 
 export function PersonDetail() {
   const { id } = useParams<{ id: string }>()
@@ -41,12 +42,17 @@ export function PersonDetail() {
             {(person as unknown as Record<string, string>).personennummer || ''}
           </p>
         </div>
-        <Button
-          variant={editMode ? 'secondary' : 'primary'}
-          onClick={() => setEditMode(v => !v)}
-        >
-          {editMode ? 'Abbrechen' : 'Bearbeiten'}
-        </Button>
+        <div className="flex items-center gap-2">
+          {!editMode && (
+            <SchreibenErstellenButton person={{ id: person.id, name: person.name }} />
+          )}
+          <Button
+            variant={editMode ? 'secondary' : 'primary'}
+            onClick={() => setEditMode(v => !v)}
+          >
+            {editMode ? 'Abbrechen' : 'Bearbeiten'}
+          </Button>
+        </div>
       </div>
 
       {editMode ? (
