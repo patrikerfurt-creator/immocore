@@ -136,6 +136,7 @@ urlpatterns = [
     path(API_PREFIX, include('apps.mitarbeiter.urls')),
     path(API_PREFIX, include('apps.abrechnung_wp.urls')),
     path(API_PREFIX, include('apps.versammlung.urls')),
+    path(API_PREFIX, include('apps.korrespondenz.urls')),
     path(API_PREFIX, include('apps.portal.urls')),
     path(API_PREFIX + 'iban-check/', iban_check, name='iban-check'),
     path(API_PREFIX + 'me/', me_view, name='me'),

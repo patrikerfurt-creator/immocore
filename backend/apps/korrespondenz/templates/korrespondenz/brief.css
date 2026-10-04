@@ -1,0 +1,115 @@
+/* Briefbogen-CSS (Spec 5.2-5.4), WeasyPrint / CSS Paged Media.
+   Alle Maße in mm vom Blattrand; die Koordinaten der Seite-1-Elemente sind
+   relativ zum Satzspiegel-Ursprung (x 25 mm, y 17,5 mm) angegeben, daher steht
+   der Blatt-Wert jeweils im Kommentar. */
+
+@font-face { font-family: "Brief-Arial"; font-weight: normal; font-style: normal; src: url("{{ schrift_regular }}"); }
+@font-face { font-family: "Brief-Arial"; font-weight: bold;   font-style: normal; src: url("{{ schrift_bold }}"); }
+@font-face { font-family: "Brief-Arial"; font-weight: normal; font-style: italic; src: url("{{ schrift_italic }}"); }
+@font-face { font-family: "Brief-Arial"; font-weight: bold;   font-style: italic; src: url("{{ schrift_bolditalic }}"); }
+
+@page {
+  size: A4 portrait;
+  margin: 17.5mm 25mm {{ rand_unten_mm }}mm 25mm;
+  /* Folgeseiten: "Seite X von Y" rechts oben */
+  @top-right {
+    content: "Seite " counter(page) " von " counter(pages);
+    font-family: "Brief-Arial", Arial, sans-serif;
+    font-size: 9pt;
+    vertical-align: middle;
+    text-align: right;
+  }
+}
+@page :first {
+  @top-right { content: none; }
+}
+
+html {
+  font-family: "Brief-Arial", Arial, "Liberation Sans", Helvetica, sans-serif;
+  font-size: 11pt;
+  line-height: 1.15;
+  color: #000;
+}
+body { margin: 0; }
+p { margin: 0 0 12.65pt 0; }
+ol, ul { margin: 0 0 12.65pt 0; padding-left: 7mm; }
+li { margin: 0; }
+strong, b { font-weight: bold; }
+
+/* ---------- Seite 1: absolut positionierte Elemente ---------- */
+.seite1 { position: relative; height: 0; }
+.seite1 > * { position: absolute; margin: 0; }
+
+.logo      { left: 111mm; top: -12.5mm; width: 61mm; height: 41mm; }          /* x136 y5  61x41 */
+.logo img  { width: 61mm; height: 41mm; }
+.steuerzeichen { left: 0; top: 20.5mm; color: #ffffff; font-size: 11pt; }     /* y38, unsichtbar */
+.absender  { left: 0; top: 24.5mm; width: 100mm; font-size: 8pt; line-height: 1.2; }   /* x25 y42 */
+.absender div { white-space: nowrap; }
+.anschrift { left: 0; top: 45.2mm; width: 100mm; height: 27.3mm; font-size: 11pt; line-height: 3.9mm; }   /* x25 y62,7-90 */
+.anschrift div { white-space: nowrap; }
+
+.infoblock { left: 115mm; top: 31.5mm; width: 46mm; font-size: 8pt; line-height: 1.2; }   /* x140 y49 B46 */
+.infoblock .zeile { margin: 0; }
+.infoblock .abstand { height: 2mm; }
+.infoblock .linie { border-top: 0.5pt solid #000; margin: 1mm 0 1mm 0; }
+.infoblock .klein { font-size: 6pt; line-height: 1.2; }
+.infoblock .sz-tag { display: inline-block; width: 15mm; }
+
+/* ---------- Bezugszeichenzeile (y ~96) ---------- */
+.bezug { padding-top: 76.5mm; }
+.bezug table { width: 160mm; border-collapse: collapse; table-layout: fixed; }
+.bezug td { padding: 0; vertical-align: top; }
+.bezug .label { font-size: 11pt; line-height: 1.15; }
+.bezug .wert  { font-size: 9pt; line-height: 1.15; }
+
+/* ---------- Betreffblock, Anrede ---------- */
+.betreff { margin-top: 5.5mm; font-weight: bold; }
+.betreff div { margin: 0; }
+.anrede { margin-top: 12.65pt; margin-bottom: 12.65pt; }
+
+/* ---------- Tabellen aus dem Render-Service ---------- */
+table.tabelle { width: 100%; border-collapse: collapse; margin: 0 0 12.65pt 0; font-size: 10pt; }
+table.tabelle th, table.tabelle td { padding: 1mm 1.5mm; border-bottom: 0.4pt solid #666; }
+table.tabelle th { font-weight: bold; text-align: left; border-bottom: 0.8pt solid #000; }
+table.tabelle .rechts { text-align: right; }
+table.tabelle .links  { text-align: left; }
+
+/* ---------- Schluss, Anlagenhinweis ---------- */
+.schluss { page-break-inside: avoid; }
+.schluss p { margin: 0 0 12.65pt 0; }
+.anlagen-hinweis { margin-top: 6pt; }
+.anlagen-hinweis p { margin: 0; }
+
+/* ---------- Anlage-Seiten (ohne Briefkopf, Fußzeile bleibt) ---------- */
+.anlage-seite { }
+h1.anlage-titel {
+  font-size: 16pt; font-weight: bold; text-decoration: underline;
+  margin: 0 0 8mm 0; line-height: 1.15;
+}
+
+/* ---------- Auf jeder Seite: Falz-/Lochmarken, Fußzeile ---------- */
+.marke { position: fixed; left: -20mm; width: 5mm; border-top: 0.5pt solid #000; height: 0; }
+.marke.loch { width: 8mm; }
+.marke.falz1 { top: 87.5mm; }     /* Blatt-y 105 */
+.marke.loch  { top: 131mm; }      /* Blatt-y 148,5 */
+.marke.falz2 { top: 192.5mm; }    /* Blatt-y 210 */
+
+.fuss {
+  position: fixed; left: 0; right: 0; bottom: {{ fuss_unten_mm }}mm;
+  font-size: 8pt; line-height: 1.25;
+}
+.fuss div { margin: 0; }
+.fuss .pflicht { font-size: 6pt; line-height: 1.25; margin-top: 1mm; }
+.fuss.firma { font-size: 7pt; line-height: 1.3; }
+
+/* ---------- Nur Editor-Vorschau: Beispieldaten-Hinweis (links oben, neben dem Logo) + Wasserzeichen ---------- */
+.vorschau-hinweis {
+  position: fixed; top: -13.5mm; left: 0; width: 100mm; box-sizing: border-box;
+  padding: 1mm 2mm; border: 0.7pt solid #b00020; color: #b00020;
+  font-size: 8pt; font-weight: bold; line-height: 1.25;
+}
+.vorschau-wasserzeichen {
+  position: fixed; top: 105mm; left: 0; width: 160mm; text-align: center;
+  font-size: 96pt; font-weight: bold; color: rgba(176, 0, 32, 0.07);
+  transform: rotate(-35deg); z-index: -1;
+}

@@ -1,5 +1,5 @@
 import client from './client'
-import type { Objekt, ObjektList, Einheit, Eingang, Bankkonto, Verteilerschluessel, VerteilerschluesselWert } from '../types'
+import type { Objekt, ObjektList, Einheit, Eingang, Bankkonto, Verteilerschluessel, VerteilerschluesselWert, MahnEinstellung } from '../types'
 
 export const objekteApi = {
   list: () => client.get<ObjektList[]>('/objekte/').then(r => r.data),
@@ -7,6 +7,12 @@ export const objekteApi = {
   create: (data: Partial<Objekt>) => client.post<Objekt>('/objekte/', data).then(r => r.data),
   update: (id: string, data: Partial<Objekt>) => client.patch<Objekt>(`/objekte/${id}/`, data).then(r => r.data),
   delete: (id: string) => client.delete(`/objekte/${id}/`),
+
+  // Mahn-Konfiguration (404 = noch nicht konfiguriert)
+  getMahnEinstellung: (objektId: string) =>
+    client.get<MahnEinstellung>(`/objekte/${objektId}/mahn-einstellung/`).then(r => r.data),
+  putMahnEinstellung: (objektId: string, data: MahnEinstellung) =>
+    client.put<MahnEinstellung>(`/objekte/${objektId}/mahn-einstellung/`, data).then(r => r.data),
 
   // Einheiten
   listEinheiten: (params?: Record<string, string>) =>

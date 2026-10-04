@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { objekteApi } from '../../api/objekte'
 import { personenApi } from '../../api/personen'
 import { useObjektStore } from '../../stores/objekt'
+import { SchreibenErstellenDialog } from '../korrespondenz/schreiben/SchreibenErstellenDialog'
 
 type ImportAktion = 'importieren' | 'ablehnen'
 type VorschauRow = {
@@ -56,6 +57,9 @@ export function EinheitenPage() {
   const [editEinheitId, setEditEinheitId] = useState<string | null>(null)
   const [editPersonId, setEditPersonId] = useState<string>('')
   const [historieEinheit, setHistorieEinheit] = useState<{ id: string; einheit_nr: string } | null>(null)
+  const [schreibenFuer, setSchreibenFuer] = useState<{
+    einheitId: string; personId: string; personName: string; evId: string
+  } | null>(null)
 
   const { data: einheiten = [], isLoading: loadingE } = useQuery({
     queryKey: ['einheiten', selectedObjektId],
@@ -527,6 +531,22 @@ export function EinheitenPage() {
                                 >
                                   ✏
                                 </button>
+                                {evByEinheit.get(e.id) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const ev = evByEinheit.get(e.id)!
+                                      setSchreibenFuer({
+                                        einheitId: e.id, personId: ev.person, personName: ev.person_name, evId: ev.id,
+                                      })
+                                    }}
+                                    className="opacity-0 group-hover:opacity-100 focus:opacity-100 text-gray-400 hover:text-primary-600 text-xs transition-opacity"
+                                    title="Schreiben erstellen"
+                                    aria-label={`Schreiben erstellen für Einheit ${e.einheit_nr}`}
+                                  >
+                                    ✉
+                                  </button>
+                                )}
                               </div>
                             )}
                           </td>
@@ -563,6 +583,16 @@ export function EinheitenPage() {
               einheitId={historieEinheit.id}
               einheitNr={historieEinheit.einheit_nr}
               onClose={() => setHistorieEinheit(null)}
+            />
+          )}
+
+          {schreibenFuer && (
+            <SchreibenErstellenDialog
+              person={{ id: schreibenFuer.personId, name: schreibenFuer.personName }}
+              einheitId={schreibenFuer.einheitId}
+              objektId={selectedObjektId}
+              eigentumsverhaeltnisId={schreibenFuer.evId}
+              onClose={() => setSchreibenFuer(null)}
             />
           )}
         </>

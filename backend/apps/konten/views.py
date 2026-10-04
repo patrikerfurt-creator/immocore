@@ -326,114 +326,12 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
         Vorzeichen aus Eigentümersicht: negativer Saldo = Rückstand,
         positiver Saldo = Guthaben.
         """
-        from apps.buchhaltung.models import Buchung, HausgeldSollstellung
+        from .services.personenkonto_service import baue_kontoauszug
 
-        pk_obj = self.get_object()
-        ev = pk_obj.vertrag
-        wj_id = request.query_params.get('wirtschaftsjahr')
-
-        # --- Soll-Seite: Sollstellungen aus Nebenbuch (inkl. Storni) ---
-        ss_qs = (
-            HausgeldSollstellung.objects
-            .filter(eigentumsverhaeltnis=ev)
-            .select_related('sollstellungslauf')
-            .order_by('periode', 'erstellt_am')
-        )
-        if wj_id:
-            from apps.objekte.models import Wirtschaftsjahr
-            try:
-                wj = Wirtschaftsjahr.objects.get(pk=wj_id)
-                ss_qs = ss_qs.filter(periode__year=wj.jahr)
-            except Wirtschaftsjahr.DoesNotExist:
-                pass
-
-        # --- Haben-Seite: Zahlungseingänge (Buchungen) ---
-        haben_qs = (
-            Buchung.objects
-            .filter(personenkonto=pk_obj, soll_konto__isnull=False, parent_buchung__isnull=True)
-            .exclude(status='storniert')
-        )
-        if wj_id:
-            haben_qs = haben_qs.filter(wirtschaftsjahr_id=wj_id)
-        haben_qs = haben_qs.order_by('buchungsdatum', 'erstellt_am')
-
-        # Einträge zusammenführen und chronologisch sortieren
-        eintraege = []
-        for ss in ss_qs:
-            typ_label = {'hausgeld': 'Hausgeld', 'sonderumlage': 'Sonderumlage', 'abrechnungsergebnis': 'Abrechnung'}.get(ss.sollstellungs_typ, ss.sollstellungs_typ)
-            ist_storniert = ss.storniert_am is not None
-            eintraege.append({
-                '_datum': ss.periode,
-                '_sort2': ss.erstellt_am,
-                'id': str(ss.id),
-                'typ': 'sollstellung',
-                'opos_nr': ss.opos_nr,
-                'bu_nr': ss.opos_nr,
-                'buchungsdatum': str(ss.periode),
-                'buchungstext': f"{typ_label} {ss.periode.strftime('%m/%Y')}",
-                'soll': float(ss.soll_betrag) if ss.soll_betrag > 0 else None,
-                'haben': float(abs(ss.soll_betrag)) if ss.soll_betrag < 0 else None,
-                'hat_detail': False,
-                'status': 'storniert' if ist_storniert else ss.status_cached,
-                'ist_betrag': float(ss.ist_betrag),
-                'storniert': ist_storniert,
-                'storniert_am': ss.storniert_am.date().isoformat() if ist_storniert else None,
-                'storniert_grund': ss.storniert_grund or None,
-            })
-        for b in haben_qs:
-            eintraege.append({
-                '_datum': b.buchungsdatum,
-                '_sort2': b.erstellt_am,
-                'id': str(b.id),
-                'typ': 'buchung',
-                'opos_nr': None,
-                'bu_nr': b.belegnr or f'BU-{str(b.id)[:8].upper()}',
-                'buchungsdatum': str(b.buchungsdatum),
-                'buchungstext': b.buchungstext,
-                'soll': None,
-                'haben': float(b.betrag),
-                'hat_detail': b.teilbuchungen.exists(),
-                'status': None,
-                'ist_betrag': None,
-                'storniert': False,
-                'storniert_am': None,
-                'storniert_grund': None,
-            })
-
-        eintraege.sort(key=lambda x: (x['_datum'], x['_sort2'] or ''))
-
-        saldo = Decimal('0.00')
-        positionen = []
-        for e in eintraege:
-            # Stornierte Positionen werden angezeigt, wirken aber nicht auf den Saldo.
-            if e['storniert']:
-                soll_val = haben_val = Decimal('0')
-            else:
-                soll_val  = Decimal(str(e['soll']))  if e['soll']  is not None else Decimal('0')
-                haben_val = Decimal(str(e['haben'])) if e['haben'] is not None else Decimal('0')
-            saldo += haben_val - soll_val
-            e['saldo'] = float(saldo)
-            e.pop('_datum')
-            e.pop('_sort2')
-            positionen.append(e)
-
-        einheit_nr = ''
-        try:
-            einheit_nr = pk_obj.vertrag.einheit.einheit_nr
-        except Exception:
-            pass
-
-        return Response({
-            'personenkonto': {
-                'id': str(pk_obj.id),
-                'kontonummer': pk_obj.kontonummer,
-                'eigentuemer_name': pk_obj.eigentuemer.name,
-                'einheit_nr': einheit_nr,
-                'status': pk_obj.status,
-            },
-            'saldo_gesamt': float(saldo),
-            'positionen': positionen,
-        })
+        return Response(baue_kontoauszug(
+            self.get_object(),
+            wirtschaftsjahr_id=request.query_params.get('wirtschaftsjahr'),
+        ))
 
     @action(detail=True, methods=['get'], url_path='buchung-detail')
     def buchung_detail(self, request, pk=None):

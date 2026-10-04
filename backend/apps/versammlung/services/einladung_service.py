@@ -34,8 +34,10 @@ from django.utils.text import slugify
 
 from apps.dokumente.models import Dokument
 from apps.dokumente.services import beleg_service
+from apps.korrespondenz.services.anschrift_service import AnschriftZuLang
+from apps.korrespondenz.services.render_service import RenderFehler
 from apps.versammlung.models import EVVersandprotokoll
-from apps.versammlung.services import ev_service
+from apps.versammlung.services import einladung_anschreiben_service, ev_service
 
 logger = logging.getLogger(__name__)
 
@@ -214,12 +216,10 @@ def _haenge_anlagen_an(pdf_bytes: bytes, anlagen: list) -> bytes:
         ziel.close()
 
 
-def rendere_einladung(ev, *, empfaenger=None, anlagen=None) -> bytes:
-    """Rendert das Einladungs-PDF (ohne Persistierung).
+def _rendere_einladung_dokument(ev, empfaenger, anlagen) -> bytes:
+    """Die Einladung selbst: ``einladung.html`` mit Termin, Ort und Tagesordnung.
 
-    ``empfaenger`` (``EVTeilnehmer``) erzeugt die personalisierte Fassung für
-    den Postversand — mit Anschrift und Briefanrede. Ohne Empfänger entsteht
-    die neutrale Fassung, die im DMS liegt und per Portal/Mail geht.
+    Das Template ist unverändert; das Anschreiben wird davorgesetzt, nicht eingebaut.
     """
     kontext = {
         'ev': ev,
@@ -233,6 +233,61 @@ def rendere_einladung(ev, *, empfaenger=None, anlagen=None) -> bytes:
     }
     html = render_to_string('versammlung/einladung.html', kontext)
     return weasyprint.HTML(string=html).write_pdf()
+
+
+def _rendere_anschreiben(ev, empfaenger, anlagen):
+    """Anschreiben (mit Vollmacht-Seite) auf dem Briefbogen; ``None`` ohne Standard-Briefbogen.
+
+    Ohne aktiven Standard-Briefbogen (der Seed folgt mit Phase 7 der Korrespondenz)
+    geht nur die Einladung raus - mit Warnung im Log. Fehlt dem Briefbogen dagegen
+    eine Pflichtangabe (Anschrift des Empfängers, Bankkonto der WEG), wird NICHT
+    stillschweigend ohne Anschreiben versendet, sondern mit ``ValidationError``
+    abgebrochen - kein Brief mit Lücke.
+    """
+    briefbogen = einladung_anschreiben_service.standard_briefbogen()
+    if briefbogen is None:
+        logger.warning(
+            'EV-Einladung: kein aktiver Standard-Briefbogen - Versand ohne Anschreiben.'
+        )
+        return None
+    try:
+        return einladung_anschreiben_service.rendere_anschreiben_pdf(
+            ev, briefbogen, teilnehmer=empfaenger, anlagen=anlagen,
+        )
+    except (RenderFehler, AnschriftZuLang) as fehler:
+        raise ValidationError(f'Anschreiben nicht erzeugbar: {fehler}') from fehler
+
+
+def _fuege_pdfs_zusammen(*pdfs) -> bytes:
+    """Fügt PDFs in der übergebenen Reihenfolge zusammen (PyMuPDF); ``None`` wird übersprungen."""
+    teile = [pdf for pdf in pdfs if pdf]
+    if len(teile) == 1:
+        return teile[0]
+    pymupdf = _pymupdf()
+    ziel = pymupdf.open()
+    try:
+        for pdf in teile:
+            with pymupdf.open(stream=pdf, filetype='pdf') as quelle:
+                ziel.insert_pdf(quelle)
+        return ziel.tobytes(deflate=True)
+    finally:
+        ziel.close()
+
+
+def rendere_einladung(ev, *, empfaenger=None, anlagen=None) -> bytes:
+    """Rendert den Einladungs-Stapel (ohne Persistierung): Anschreiben, dann Einladung.
+
+    Reihenfolge: Anschreiben mit Vollmacht-Seite (Demme-Briefbogen) -> Einladung mit
+    Tagesordnung (``einladung.html``). Die frei angehängten Anlagen folgen danach
+    (``erzeuge_einladungs_pdf``); ``anlagen`` erscheint hier nur in den Verzeichnissen.
+
+    ``empfaenger`` (``EVTeilnehmer``) erzeugt die personalisierte Fassung für den
+    Postversand - mit Anschrift und Briefanrede. Ohne Empfänger entsteht die
+    neutrale Fassung, die im DMS liegt und per Portal/Mail geht.
+    """
+    anschreiben = _rendere_anschreiben(ev, empfaenger, anlagen)
+    einladung = _rendere_einladung_dokument(ev, empfaenger, anlagen)
+    return _fuege_pdfs_zusammen(anschreiben, einladung)
 
 
 @transaction.atomic

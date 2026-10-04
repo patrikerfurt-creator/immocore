@@ -7,3 +7,12 @@
     @apply text-gray-900 antialiased;
   }
 }
+
+/* Vorlagen-Editor (TipTap): Tailwind-Preflight entfernt Listen-/Absatzformat */
+.vorlagen-text p { margin: 0 0 0.6rem; }
+.vorlagen-text p:last-child { margin-bottom: 0; }
+.vorlagen-text ul { list-style: disc; padding-left: 1.4rem; margin: 0 0 0.6rem; }
+.vorlagen-text ol { list-style: decimal; padding-left: 1.4rem; margin: 0 0 0.6rem; }
+.vorlagen-text h1, .vorlagen-text h2, .vorlagen-text h3 { font-weight: 600; margin: 0 0 0.5rem; }
+.vorlagen-text .ProseMirror { outline: none; min-height: 5rem; }
+.vorlagen-text .ProseMirror-selectednode { outline: 2px solid #60a5fa; }

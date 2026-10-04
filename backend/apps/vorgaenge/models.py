@@ -202,6 +202,8 @@ class VorgangEreignis(models.Model):
         ('handwerker_abgeschlossen',    'Handwerker: Auftrag abgeschlossen'),
         ('handwerker_abgelaufen',       'Handwerker: Auftragsbestätigung abgelaufen'),
         ('mail_eingegangen',            'E-Mail eingegangen'),
+        ('schreiben_erstellt',          'Schreiben erstellt'),
+        ('schreiben_versendet',         'Schreiben versendet'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)

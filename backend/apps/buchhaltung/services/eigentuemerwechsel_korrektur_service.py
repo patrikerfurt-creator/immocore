@@ -138,6 +138,11 @@ def vorschau_committen(
 
     _erzeuge_frontoffice_aufgabe_neueigentuemer(vorgang)
 
+    # Begrüßungs-/Verabschiedungsschreiben (Modul Korrespondenz, Spec 9.2): nur per on_commit
+    # registriert - läuft nach dem Commit und kann diese Freigabe nie zurückrollen.
+    from apps.korrespondenz.services import eigentuemerwechsel_anbindung_service
+    eigentuemerwechsel_anbindung_service.plane_schreiben(vorgang)
+
     return vorgang
 
 

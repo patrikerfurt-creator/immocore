@@ -10,6 +10,7 @@ import { handwerkerApi } from '../../api/handwerker'
 import { Badge } from '../../components/ui/Badge'
 import { IbanInput } from '../../components/ui/IbanInput'
 import { useObjektStore } from '../../stores/objekt'
+import { MahnEinstellungSection } from './MahnEinstellungSection'
 import type { Objekt, Eingang, Bankkonto, AutoLaufStatus, ObjektDokument } from '../../types'
 import { ABTEILUNG_LABELS, DOKUMENT_TYP_CHOICES } from '../../types'
 
@@ -1383,6 +1384,9 @@ export function ObjektDetail() {
 
       {/* ── Freigabelimits ───────────────────────────────────────── */}
       <FreigabelimitsSection objektId={id!} grenzen={(data.zahlungsfreigabe_grenzen ?? []) as FreigabeStufe[]} />
+
+      {/* ── Mahnwesen (objektspezifische Mahn-Konfiguration) ──────── */}
+      <MahnEinstellungSection objektId={id!} />
 
       {/* ── Mitarbeiter-Zuordnung ─────────────────────────────────── */}
       <MitarbeiterZuordnungSection objektId={id!} />

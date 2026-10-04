@@ -1,0 +1,36 @@
+{% comment %}
+Vollmacht-Seite des EV-Anschreibens (Spec 9.4, Anhang A.1) - eine anlage_seite des
+Korrespondenz-Briefbogens: ohne Briefkopf, Fußzeile bleibt (brief_base.html trennt sie
+am Marker <section class="anlage-seite"). Personalisiert: Vollmachtgeber-Anschrift und
+Einheit(en); die neutrale Fassung hat stattdessen Schreiblinien.
+Nur Inline-Styles, damit die Seite unabhängig vom Briefbogen-CSS gleich aussieht.
+{% endcomment %}<section class="anlage-seite" style="break-before: page; page-break-before: always;">
+<h1 class="anlage-titel">Vertretungsvollmacht</h1>
+<p>Hiermit bevollmächtige ich</p>
+{% if anschrift_zeilen %}
+<p>{% for zeile in anschrift_zeilen %}{{ zeile }}{% if not forloop.last %}<br>{% endif %}{% endfor %}</p>
+{% else %}
+<p>______________________________<br>______________________________<br>______________________________</p>
+{% endif %}
+{% if einheiten %}
+<p>Wohnungseigentümergemeinschaft {{ objekt.bezeichnung }}, Einheit{{ einheiten|length|pluralize:",en" }} {{ einheiten|join:", " }}</p>
+{% else %}
+<p>Wohnungseigentümergemeinschaft {{ objekt.bezeichnung }}, Einheit ______________</p>
+{% endif %}
+<p>&#9744; Herrn/Frau _______________________________<br>oder<br>&#9744; die Verwalterin, {{ firma }}</p>
+<p>mich in anstehenden Eigentümerversammlungen, an denen ich nicht teilnehmen kann,
+zu vertreten und mein Stimmrecht auszuüben. Soweit ich zu den Tagesordnungspunkten
+keine gesonderte Weisung zur Ausübung des Stimmrechts erteile, soll mein Vertreter
+nach eigenem Ermessen mein Stimmrecht ausüben.</p>
+<table style="margin-top: 22mm; border-collapse: collapse;">
+  <tr>
+    <td style="padding: 0 8mm 0 0; vertical-align: top;">_______________________</td>
+    <td style="padding: 0; vertical-align: top;">__________________________</td>
+  </tr>
+  <tr>
+    <td style="padding: 0 8mm 0 0; vertical-align: top;">Ort, Datum</td>
+    <td style="padding: 0; vertical-align: top;">Unterschrift</td>
+  </tr>
+</table>
+{% if unser_zeichen %}<p style="margin-top: 14mm;">{{ unser_zeichen }}</p>{% endif %}
+</section>

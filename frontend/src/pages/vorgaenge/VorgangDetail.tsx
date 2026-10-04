@@ -13,6 +13,7 @@ import type {
   VorgangPrioritaet, VorgangStatus,
 } from '../../types'
 import { HWA_STATUS_LABEL, fehlerText as hwaFehlerText } from '../handwerker/shared'
+import { SchreibenErstellenButton } from '../korrespondenz/schreiben/SchreibenErstellenDialog'
 
 // Freundliche Fehlermeldung aus einer Axios-Fehlerantwort extrahieren
 // (Backend liefert bei 400 entweder {detail: ...} oder Feldfehler {feld: [...]}).
@@ -550,6 +551,14 @@ export function VorgangDetail() {
           <Badge value={vorgang.status} label={STATUS_LABEL[vorgang.status]} />
           <Badge value={vorgang.prioritaet} />
         </div>
+        <SchreibenErstellenButton
+          anlass="vorgang_antwort"
+          vorgangId={vorgang.id}
+          person={vorgang.person ? { id: vorgang.person, name: vorgang.person_name ?? 'Person' } : null}
+          einheitId={vorgang.einheit}
+          objektId={vorgang.objekt}
+          onErstellt={() => qc.invalidateQueries({ queryKey: ['vorgang', id] })}
+        />
       </div>
 
       <div className="bg-white rounded-lg border border-gray-200 p-5 space-y-4">

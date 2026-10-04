@@ -24,7 +24,7 @@ services:
       context: ./backend
     container_name: immocore_backend
     ports:
-      - "127.0.0.1:8001:8000"
+      - "8001:8000"
     env_file:
       - .env
     environment:
@@ -36,7 +36,8 @@ services:
       DB_HOST: db
       DB_PORT: "5432"
       REDIS_URL: redis://redis:6379/0
-      ALLOWED_HOSTS: "localhost,127.0.0.1,backend"
+      ALLOWED_HOSTS: "localhost,127.0.0.1,backend,192.168.164.181,192.168.137.1,192.168.161.126"
+      CORS_ALLOWED_ORIGINS: "http://192.168.164.181:3000,http://192.168.137.1:3000,http://192.168.161.126:3000"
     volumes:
       - ./backend:/app
       - backend_media:/app/media

@@ -124,6 +124,18 @@ class Person(models.Model):
         SEPAMandat, on_delete=models.SET_NULL, null=True, blank=True,
         related_name='personen'
     )
+    ZUSTELLWEG_CHOICES = [
+        ('post',  'Post'),
+        ('email', 'E-Mail'),
+    ]
+    zustellweg = models.CharField(
+        max_length=10, choices=ZUSTELLWEG_CHOICES, default='post',
+        verbose_name='Zustellweg',
+        help_text='Bevorzugter Zustellweg für Schreiben; E-Mail nur mit Zustimmung.',
+    )
+    zustellweg_zustimmung_am = models.DateTimeField(
+        null=True, blank=True, verbose_name='Zustimmung E-Mail-Zustellung am',
+    )
 
     _PAAR = {
         'Eheleute':      ('Frau',  'Herr'),

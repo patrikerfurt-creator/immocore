@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from rest_framework import serializers
 from apps.objekte.models import Wirtschaftsjahr, EinheitVerbrauch
 from apps.konten.models import KontoVerteilerSchluessel
@@ -5,7 +7,7 @@ from .models import (
     Buchungsart, Buchung, Buchungsstapel, OffenerPosten, KreditorOP,
     CamtImportEinstellung, CamtImportLog, ImportOrdnerEinstellung, Kontoumsatz,
     BankMatchRegel, BankErkennungsLog,
-    Mahnlauf, Mahnung, Mahnsperre,
+    Mahnlauf, Mahnung, Mahnsperre, MahnEinstellung,
     Forderungsfall, Basiszinssatz,
     RAPPosition, RAPAufloesung,
     BankImport, Jahresabrechnung, EinzelAbrechnung,
@@ -621,3 +623,14 @@ class SepaZahlungslaufSerializer(serializers.ModelSerializer):
             'dateiname', 'positionen', 'buchungs_fehler', 'uebersprungen',
             'erstellt_am', 'erstellt_von', 'erstellt_von_name',
         ]
+
+
+class MahnEinstellungSerializer(serializers.ModelSerializer):
+    """Objektspezifische Mahn-Konfiguration (Objekt kommt aus der URL, nicht aus dem Body)."""
+    mahngebuehr = serializers.DecimalField(max_digits=8, decimal_places=2, min_value=Decimal('0'))
+    anzahl_mahnstufen = serializers.IntegerField(min_value=1, max_value=2, default=2)
+    zinsen_erheben = serializers.BooleanField(default=False)
+
+    class Meta:
+        model = MahnEinstellung
+        fields = ['mahngebuehr', 'anzahl_mahnstufen', 'zinsen_erheben']

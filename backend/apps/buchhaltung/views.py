@@ -693,7 +693,10 @@ class MahnlaufViewSet(viewsets.ModelViewSet):
         objekt_id = request.data.get('objekt')
         if not objekt_id:
             return Response({'error': 'objekt erforderlich'}, status=status.HTTP_400_BAD_REQUEST)
-        vorschau = simuliere_mahnlauf(objekt_id)
+        try:
+            vorschau = simuliere_mahnlauf(objekt_id)
+        except ValueError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(vorschau)
 
     @action(detail=True, methods=['post'], url_path='ausfuehren')
