@@ -153,6 +153,10 @@ def _extract_text_with_ocr(filepath: str) -> str:
 def _normalize_text(text: str) -> str:
     if not text:
         return ''
+    # NUL (0x00) und weitere C0-Steuerzeichen (au\u00dfer Tab/Zeilenumbruch) entfernen:
+    # manche PDF-Textlayer liefern 0x00, das PostgreSQL in Textspalten ablehnt
+    # ("A string literal cannot contain NUL (0x00) characters.").
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', text)
     text = text.replace('\xa0', ' ').replace('\u00ad', '')
     text = re.sub(r'[ \t]+', ' ', text)
     text = re.sub(r'\n{3,}', '\n\n', text)
