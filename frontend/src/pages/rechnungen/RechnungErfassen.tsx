@@ -239,9 +239,9 @@ export default function RechnungErfassen() {
 
   /** „WKZ aus dieser Rechnung anlegen": erst den aktuellen Stand als Entwurf
    *  sichern (sonst gehen Korrekturen im Formular verloren), dann in den
-   *  WKZ-Wizard mit vorbelegten Werten. Die Vorlage wird dort zur Freigabe
-   *  eingereicht und erscheint unter „Rechnungsfreigabe"; die Rechnung selbst
-   *  verlässt den normalen Zahlweg. */
+   *  WKZ-Wizard mit vorbelegten Werten und PDF-Vorschau. Es wird nur das PDF
+   *  als Beleg geteilt — die Rechnung bleibt eine eigenständige Rechnung und
+   *  läuft unverändert ihren normalen Weg. */
   const wkzAnlegen = async () => {
     if (!id) return
     setBusy(true); setFehler(null)
