@@ -5,6 +5,7 @@ import { personenApi } from '../../api/personen'
 import { PersonForm } from './PersonForm'
 import { Button } from '../../components/ui/Button'
 import { PortalZugangKarte } from './PortalZugangKarte'
+import { ZustellbevollmaechtigterKarte } from './ZustellbevollmaechtigterKarte'
 import { SchreibenErstellenButton } from '../korrespondenz/schreiben/SchreibenErstellenDialog'
 
 export function PersonDetail() {
@@ -54,6 +55,14 @@ export function PersonDetail() {
           </Button>
         </div>
       </div>
+
+      {person.zustellungsbevollmaechtigter && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <span className="font-semibold">Zustellung an Bevollmächtigten:</span>{' '}
+          {person.zustellungsbevollmaechtigter_name || 'Bevollmächtigter'} — alle Schreiben
+          und Mails gehen an diese Person, nicht an {person.name}.
+        </div>
+      )}
 
       {editMode ? (
         <PersonForm person={person} />
@@ -122,6 +131,17 @@ export function PersonDetail() {
               Werte, das Backend liefert die Codes '100'…'400'. */}
           {(person as unknown as Record<string, string>).person_typ === '100'
             && id && <PortalZugangKarte personId={id} />}
+
+          {/* Zustellungsbevollmächtigter — nur für Eigentümer/Mieter (100/200).
+              Eine Typ-500-Person selbst bekommt keinen eigenen Bevollmächtigten. */}
+          {['100', '200'].includes((person as unknown as Record<string, string>).person_typ)
+            && id && (
+            <ZustellbevollmaechtigterKarte
+              personId={id}
+              aktuellId={person.zustellungsbevollmaechtigter}
+              aktuellName={person.zustellungsbevollmaechtigter_name}
+            />
+          )}
 
           {/* Verknüpfte Objekte */}
           <div className="md:col-span-2 rounded-lg border border-gray-200 p-5 space-y-3">

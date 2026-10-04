@@ -155,8 +155,11 @@ def _briefbogen_fuer(vorlage):
 
 def _baue_kontext(schreiben: Schreiben, briefbogen, heute: date) -> dict:
     version = schreiben.vorlage_version
+    # Zustellungsbevollmächtigter: Ist einer hinterlegt, trägt der Brief dessen
+    # Anschrift/Name/Anrede. Der Schreiben-Datensatz bleibt beim Eigentümer.
     return kontext_service.baue_kontext(
-        version.vorlage.anlass, person=schreiben.empfaenger, objekt=schreiben.objekt,
+        version.vorlage.anlass, person=schreiben.empfaenger.zustell_adressat(),
+        objekt=schreiben.objekt,
         einheit=schreiben.einheit, eigentumsverhaeltnis=schreiben.eigentumsverhaeltnis,
         mahnung=schreiben.mahnung, eigentuemerwechsel=schreiben.eigentuemerwechsel,
         vorgang=schreiben.vorgang, eingabewerte=schreiben.eingabewerte,
@@ -291,8 +294,9 @@ def erstelle_aus_version(
     objekt = _ermittle_objekt(
         objekt, einheit, eigentumsverhaeltnis, vorgang, mahnung, eigentuemerwechsel,
     )
+    # Kanalwahl (Post/E-Mail) richtet sich nach dem tatsächlichen Zusteller.
     entscheidung = kanal_service.kanal_aufloesen(
-        version.vorlage, empfaenger, kanal=kanal,
+        version.vorlage, empfaenger.zustell_adressat(), kanal=kanal,
         mahnstufe=mahnung.mahnstufe if mahnung is not None else None,
         letzte_stufe=kanal_service.letzte_stufe_von(mahnung) if mahnung is not None else None,
     )
@@ -453,7 +457,7 @@ def _sende_mail(schreiben: Schreiben) -> tuple:
     message_id = mail_versand_service.neue_message_id()
     try:
         mail_versand_service.sende_schreiben(
-            adresse=kanal_service.erste_email(schreiben.empfaenger),
+            adresse=kanal_service.erste_email(schreiben.empfaenger.zustell_adressat()),
             betreff=betreff,
             text=mail_versand_service.baue_text(
                 schreiben.vorlage_version.email_begleittext, betreff=betreff,
@@ -503,7 +507,7 @@ def versenden(schreiben: Schreiben, user=None, *, kanal: str = None) -> VersandE
 
     mahnstufe = schreiben.mahnung.mahnstufe if schreiben.mahnung_id else None
     entscheidung = kanal_service.kanal_aufloesen(
-        schreiben.vorlage_version.vorlage, schreiben.empfaenger,
+        schreiben.vorlage_version.vorlage, schreiben.empfaenger.zustell_adressat(),
         kanal=_wunschkanal(schreiben, kanal), mahnstufe=mahnstufe,
         letzte_stufe=kanal_service.letzte_stufe_von(schreiben.mahnung) if schreiben.mahnung_id else None,
     )

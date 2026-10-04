@@ -72,7 +72,7 @@ class PortalZugangViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        empfaenger = zugang_service.person_email(person)
+        empfaenger = zugang_service.zustell_email(person)
         if not empfaenger:
             return Response(
                 {'detail': 'Für diese Person ist keine E-Mail-Adresse hinterlegt.'},

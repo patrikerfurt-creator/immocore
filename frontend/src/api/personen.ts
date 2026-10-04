@@ -204,4 +204,8 @@ export const personenApi = {
     client.patch<SEPAMandat>(`/sepa-mandate/${id}/`, data).then(r => r.data),
   linkSepaMandat: (personId: string, mandatId: string | null) =>
     client.patch<Person>(`/personen/${personId}/`, { sepa_mandat: mandatId }).then(r => r.data),
+
+  // Zustellungsbevollmächtigter: null entfernt die Zuordnung wieder.
+  linkZustellbevollmaechtigter: (personId: string, zbId: string | null) =>
+    client.patch<Person>(`/personen/${personId}/`, { zustellungsbevollmaechtigter: zbId }).then(r => r.data),
 }

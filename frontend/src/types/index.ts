@@ -168,6 +168,7 @@ export interface PersonList {
   ist_firma: boolean
   email: string
   telefon: string
+  hat_zustellbevollmaechtigten?: boolean
 }
 
 export interface Person extends PersonList {
@@ -181,6 +182,8 @@ export interface Person extends PersonList {
   firmenname: string
   adresse: string
   ibans: string[]
+  zustellungsbevollmaechtigter?: string | null
+  zustellungsbevollmaechtigter_name?: string | null
 }
 
 export interface HausgeldHistorie {

@@ -347,20 +347,29 @@ def versandplan(ev) -> dict:
     mitgeliefert, aber als ``nicht_stimmberechtigt`` markiert.
     """
     eintraege = []
-    for teilnehmer in ev.teilnehmer.select_related('person').all():
+    for teilnehmer in ev.teilnehmer.select_related(
+        'person', 'person__zustellungsbevollmaechtigter'
+    ).all():
         person = teilnehmer.person
-        email = _erste_email(person)
-        portal = _hat_portalzugang(person)
+        # Zustellung geht an den Bevollmächtigten, falls einer hinterlegt ist.
+        zusteller = person.zustell_adressat()
+        email = _erste_email(zusteller)
+        portal = _hat_portalzugang(zusteller)
+
+        zb_hinweis = (
+            f'Zustellung an Bevollmächtigten: {zusteller.name}. '
+            if zusteller.pk != person.pk else ''
+        )
 
         if portal and email:
-            kanal, hinweis = 'portal', ''
+            kanal, hinweis = 'portal', zb_hinweis
         elif email:
-            kanal, hinweis = 'email', ''
+            kanal, hinweis = 'email', zb_hinweis
         else:
             kanal = 'epost'
-            hinweis = 'Keine E-Mail-Adresse hinterlegt — Postversand.'
-            if not (person.adresse or '').strip():
-                hinweis = (
+            hinweis = zb_hinweis + 'Keine E-Mail-Adresse hinterlegt — Postversand.'
+            if not (zusteller.adresse or '').strip():
+                hinweis = zb_hinweis + (
                     'Weder E-Mail-Adresse noch Anschrift hinterlegt — die '
                     'Einladung kann nicht zugestellt werden.'
                 )
@@ -370,7 +379,7 @@ def versandplan(ev) -> dict:
             'person_id': str(person.id),
             'name': person.name,
             'kanal': kanal,
-            'empfaenger': email or (person.adresse or '').replace('\n', ', '),
+            'empfaenger': email or (zusteller.adresse or '').replace('\n', ', '),
             'hat_email': bool(email),
             'hat_portalzugang': portal,
             'stimmkraft': teilnehmer.stimmkraft,
@@ -410,7 +419,7 @@ def epost_verzeichnis(ev) -> Path:
 
 def _schreibe_epost(ev, teilnehmer, ordner: Path) -> Path:
     """Schreibt die personalisierte PDF für einen Postempfänger."""
-    person = teilnehmer.person
+    person = teilnehmer.person.zustell_adressat()
     pdf_bytes = rendere_einladung(ev, empfaenger=teilnehmer)
     name = slugify(f'{person.nachname}-{person.vorname}') or slugify(person.name) or 'empfaenger'
     pfad = ordner / f'{name}_Einladung.pdf'
@@ -438,7 +447,7 @@ def _schreibe_epost_csv(ordner: Path, zeilen: list) -> Path:
 def _versende_mail(ev, teilnehmer, adresse: str, pdf_bytes: bytes, dateiname: str) -> None:
     kontext = {
         'ev': ev, 'objekt': ev.objekt,
-        'person': teilnehmer.person,
+        'person': teilnehmer.person.zustell_adressat(),
         'tagesordnung': list(ev.tagesordnung.order_by('nummer')),
         'ladungsfrist': pruefe_ladungsfrist(ev),
     }
@@ -495,7 +504,9 @@ def versende_einladungen(ev, versendet_von, plan: dict = None) -> dict:
     dateiname = ev.einladungs_pdf.dateiname
 
     teilnehmer_nach_id = {
-        str(t.id): t for t in ev.teilnehmer.select_related('person').all()
+        str(t.id): t for t in ev.teilnehmer.select_related(
+            'person', 'person__zustellungsbevollmaechtigter'
+        ).all()
     }
     epost_ordner = None
     epost_zeilen = []
@@ -508,6 +519,8 @@ def versende_einladungen(ev, versendet_von, plan: dict = None) -> dict:
     for eintrag in vorschlag['eintraege']:
         teilnehmer = teilnehmer_nach_id[eintrag['teilnehmer_id']]
         person = teilnehmer.person
+        # Postadresse/Name beim Postversand richten sich nach dem Zusteller.
+        zusteller = person.zustell_adressat()
         kanal = gewuenscht.get(eintrag['teilnehmer_id'], eintrag['kanal'])
         ergebnis['gesamt'] += 1
 
@@ -546,7 +559,7 @@ def versende_einladungen(ev, versendet_von, plan: dict = None) -> dict:
                 else:
                     _versende_mail(ev, teilnehmer, empfaenger, pdf_bytes, dateiname)
             elif kanal == 'epost':
-                if not (person.adresse or '').strip():
+                if not (zusteller.adresse or '').strip():
                     status = 'uebersprungen'
                     fehlertext = 'Keine Anschrift hinterlegt — Postversand nicht möglich.'
                 else:
@@ -555,9 +568,9 @@ def versende_einladungen(ev, versendet_von, plan: dict = None) -> dict:
                         epost_ordner.mkdir(parents=True, exist_ok=True)
                     pfad = _schreibe_epost(ev, teilnehmer, epost_ordner)
                     epost_pfad = str(pfad)
-                    empfaenger = (person.adresse or '').replace('\n', ', ')
+                    empfaenger = (zusteller.adresse or '').replace('\n', ', ')
                     epost_zeilen.append([
-                        person.name, empfaenger,
+                        zusteller.name, empfaenger,
                         ', '.join(teilnehmer.anteile.values_list(
                             'einheit_nr_snapshot', flat=True)),
                         pfad.name,

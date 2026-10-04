@@ -73,6 +73,17 @@ def person_email(person: Person) -> str:
     return (person.email or '').strip()
 
 
+def zustell_email(person: Person) -> str:
+    """Adresse, an die Portal-Mails tatsächlich gehen.
+
+    Ist ein Zustellungsbevollmächtigter hinterlegt, dessen Adresse — sonst die
+    der Person selbst. Bewusst getrennt von ``person_email`` (das die eigene
+    Identitäts-/Login-Adresse der Person liefert und von der Selbstverwaltung
+    der Stammdaten genutzt wird).
+    """
+    return person_email(person.zustell_adressat())
+
+
 def finde_zugang_per_email(email: str):
     """Aktiver Zugang zu einer E-Mail-Adresse, sonst ``None``.
 
@@ -91,9 +102,18 @@ def finde_zugang_per_email(email: str):
         return None
 
     for zugang in (
-        PortalZugang.objects.select_related('person').filter(aktiv=True)
+        PortalZugang.objects
+        .select_related('person', 'person__zustellungsbevollmaechtigter')
+        .filter(aktiv=True)
     ):
-        if person_email(zugang.person).lower() == gesucht:
+        # Sowohl die eigene Adresse des Eigentümers als auch die des
+        # Zustellungsbevollmächtigten führen auf dessen Zugang — so kann sich
+        # auch der Bevollmächtigte den Magic-Link anfordern (der Link selbst
+        # geht dann über ``zustell_email`` an den Bevollmächtigten).
+        if gesucht in (
+            person_email(zugang.person).lower(),
+            zustell_email(zugang.person).lower(),
+        ):
             return zugang
     return None
 

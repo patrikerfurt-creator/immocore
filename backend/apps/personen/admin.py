@@ -25,10 +25,12 @@ class SEPAMandatAdmin(admin.ModelAdmin):
 @admin.register(Person)
 class PersonAdmin(admin.ModelAdmin):
     form = PersonAdminForm
-    list_display = ['name', 'person_typ', 'email', 'telefon', 'ist_firma']
+    list_display = ['name', 'person_typ', 'email', 'telefon', 'ist_firma',
+                    'zustellungsbevollmaechtigter']
     list_filter = ['person_typ', 'ist_firma']
     search_fields = ['vorname', 'nachname', 'firmenname', 'email']
     ordering = ['nachname', 'vorname', 'firmenname']
+    autocomplete_fields = ['zustellungsbevollmaechtigter']
 
 
 @admin.register(EigentumsVerhaeltnis)

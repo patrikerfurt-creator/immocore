@@ -14,6 +14,7 @@ const PERSON_TYP_OPTIONEN = [
   { value: '200', label: 'Mieter' },
   { value: '300', label: 'Kreditor' },
   { value: '400', label: 'Sonstiges' },
+  { value: '500', label: 'Zustellungsbevollmächtigter' },
 ]
 
 interface Props {

@@ -93,7 +93,20 @@ def ermittle_empfaenger(objekt, empfaenger_filter, stichtag=None) -> list:
     auswahl = im_objekt.filter(aktiv)
     if filter_['einheit_typ']:
         auswahl = auswahl.filter(einheit__einheit_typ__in=filter_['einheit_typ'])
-    zugestimmt = Q(person__zustellweg='email', person__zustellweg_zustimmung_am__isnull=False)
+    # Email-Zustimmung richtet sich nach dem tatsächlichen Zusteller: ist ein
+    # Zustellungsbevollmächtigter hinterlegt, zählt dessen Zustellweg/Zustimmung,
+    # sonst der des Eigentümers selbst.
+    zugestimmt_ohne_zb = Q(
+        person__zustellungsbevollmaechtigter__isnull=True,
+        person__zustellweg='email',
+        person__zustellweg_zustimmung_am__isnull=False,
+    )
+    zugestimmt_mit_zb = Q(
+        person__zustellungsbevollmaechtigter__isnull=False,
+        person__zustellungsbevollmaechtigter__zustellweg='email',
+        person__zustellungsbevollmaechtigter__zustellweg_zustimmung_am__isnull=False,
+    )
+    zugestimmt = zugestimmt_ohne_zb | zugestimmt_mit_zb
     if filter_['email_zustimmung'] == 'mit':
         auswahl = auswahl.filter(zugestimmt)
     elif filter_['email_zustimmung'] == 'ohne':

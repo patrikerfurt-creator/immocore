@@ -20,7 +20,7 @@ from .serializers import (
 )
 
 ANREDE_WERTE = {'Herr', 'Frau', 'Eheleute', 'Herren', 'Damen', 'Herr und Frau', 'Firma', ''}
-PERSON_TYP_WERTE = {'100', '200', '300', '400'}
+PERSON_TYP_WERTE = {'100', '200', '300', '400', '500'}
 
 @dataclass
 class PersonenImportZeilenergebnis:
@@ -64,7 +64,7 @@ class PersonViewSet(viewsets.ModelViewSet):
     ordering = ['personennummer']
 
     def get_queryset(self):
-        qs = Person.objects.select_related('sepa_mandat')
+        qs = Person.objects.select_related('sepa_mandat', 'zustellungsbevollmaechtigter')
         typ = self.request.query_params.get('typ')
         if typ:
             qs = qs.filter(person_typ=typ)
@@ -83,7 +83,7 @@ class PersonViewSet(viewsets.ModelViewSet):
         response = HttpResponse(content_type='text/csv; charset=utf-8-sig')
         response['Content-Disposition'] = 'attachment; filename="IMMOCORE_Personen_Vorlage.csv"'
         writer = csv.writer(response, delimiter=';')
-        writer.writerow(['# person_typ: 100=Eigentümer | 200=Mieter | 300=Kreditor | 400=Sonstiges'])
+        writer.writerow(['# person_typ: 100=Eigentümer | 200=Mieter | 300=Kreditor | 400=Sonstiges | 500=Zustellungsbevollmächtigter'])
         writer.writerow(['# Anrede-Werte: Herr | Frau | Eheleute | Herren | Damen | Herr und Frau | Firma'])
         writer.writerow([
             'person_typ', 'ist_firma', 'Firma',

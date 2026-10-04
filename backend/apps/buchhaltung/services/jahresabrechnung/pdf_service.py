@@ -242,9 +242,15 @@ def render_einzelabrechnung_pdf(ea: EinzelAbrechnung, entwurf: bool = True) -> b
 
     tage = (wj.ende_datum - wj.beginn_datum).days + 1
 
-    # Empfänger-Adressblock
+    # Empfänger-Adressblock: Ist ein Zustellungsbevollmächtigter hinterlegt, geht
+    # der Fensterumschlag an ihn. Die Abrechnung selbst bleibt die des Eigentümers
+    # (``person_name`` unten). ``person`` = Eigentümer, ``zusteller`` = Empfänger.
     person = ea.eigentuemer
-    empf_name = person.firmenname if person.ist_firma else f"{person.vorname} {person.nachname}".strip()
+    zusteller = person.zustell_adressat()
+    empf_name = (
+        zusteller.firmenname if zusteller.ist_firma
+        else f"{zusteller.vorname} {zusteller.nachname}".strip()
+    )
     personenkonto = getattr(ea.eigentumsverhaeltnis, 'personenkonto', None)
     eigentuemer_nr = (
         f"{objekt.objektnummer}+{personenkonto.kontonummer}" if personenkonto else objekt.objektnummer
@@ -313,10 +319,10 @@ def render_einzelabrechnung_pdf(ea: EinzelAbrechnung, entwurf: bool = True) -> b
         'zeitraum_lang': f"{wj.beginn_datum.strftime('%d.%m.%Y')} – {wj.ende_datum.strftime('%d.%m.%Y')}",
         'person_name': str(ea.eigentuemer),
         'zeitanteil': f"{tage}/{tage}",
-        # Empfänger
-        'empf_anrede': person.anrede,
+        # Empfänger (ggf. Zustellungsbevollmächtigter)
+        'empf_anrede': zusteller.anrede,
         'empf_name': empf_name,
-        'empf_adresse_zeilen': [z for z in (person.adresse or '').splitlines() if z.strip()],
+        'empf_adresse_zeilen': [z for z in (zusteller.adresse or '').splitlines() if z.strip()],
         'eigentuemer_nr': eigentuemer_nr,
         # Einheit
         'einheit_nr': ea.einheit.einheit_nr,

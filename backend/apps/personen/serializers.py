@@ -11,19 +11,43 @@ class SEPAMandatSerializer(serializers.ModelSerializer):
 
 class PersonSerializer(serializers.ModelSerializer):
     name = serializers.CharField(read_only=True)
+    zustellungsbevollmaechtigter_name = serializers.CharField(
+        source='zustellungsbevollmaechtigter.name', read_only=True, default=None
+    )
 
     class Meta:
         model = Person
         fields = '__all__'
         read_only_fields = ['id']
 
+    def validate_zustellungsbevollmaechtigter(self, wert):
+        if wert is None:
+            return wert
+        if self.instance is not None and wert.pk == self.instance.pk:
+            raise serializers.ValidationError(
+                'Eine Person kann nicht ihr eigener Zustellungsbevollmächtigter sein.'
+            )
+        if wert.person_typ != '500':
+            raise serializers.ValidationError(
+                'Der Zustellungsbevollmächtigte muss vom Typ '
+                '"Zustellungsbevollmächtigter" (500) sein.'
+            )
+        return wert
+
 
 class PersonListSerializer(serializers.ModelSerializer):
     name = serializers.CharField(read_only=True)
+    hat_zustellbevollmaechtigten = serializers.SerializerMethodField()
 
     class Meta:
         model = Person
-        fields = ['id', 'personennummer', 'name', 'person_typ', 'ist_firma', 'email', 'telefon']
+        fields = [
+            'id', 'personennummer', 'name', 'person_typ', 'ist_firma',
+            'email', 'telefon', 'hat_zustellbevollmaechtigten',
+        ]
+
+    def get_hat_zustellbevollmaechtigten(self, obj) -> bool:
+        return obj.zustellungsbevollmaechtigter_id is not None
 
 
 class HausgeldHistorieSerializer(serializers.ModelSerializer):

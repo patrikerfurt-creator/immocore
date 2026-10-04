@@ -2,6 +2,7 @@ from decimal import Decimal
 from uuid import uuid4
 from datetime import date
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
 from apps.objekte.models import Einheit
@@ -63,6 +64,7 @@ class Person(models.Model):
         ('200', 'Mieter'),
         ('300', 'Kreditor'),
         ('400', 'Sonstiges'),
+        ('500', 'Zustellungsbevollmächtigter'),
     ]
 
     ANREDE_CHOICES = [
@@ -135,6 +137,14 @@ class Person(models.Model):
     )
     zustellweg_zustimmung_am = models.DateTimeField(
         null=True, blank=True, verbose_name='Zustimmung E-Mail-Zustellung am',
+    )
+    zustellungsbevollmaechtigter = models.ForeignKey(
+        'self', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='vertretene_personen',
+        limit_choices_to={'person_typ': '500'},
+        verbose_name='Zustellungsbevollmächtigter',
+        help_text='Wenn gesetzt, gehen alle Schreiben, Mails und PDFs nur noch '
+                  'an diese Person (Typ Zustellungsbevollmächtigter).',
     )
 
     _PAAR = {
@@ -264,6 +274,38 @@ class Person(models.Model):
 
     def __str__(self):
         return self.name or f"Person {self.id}"
+
+    def zustell_adressat(self) -> 'Person':
+        """Die Person, an die tatsächlich zugestellt wird.
+
+        Ist ein Zustellungsbevollmächtigter hinterlegt, übernimmt dieser
+        komplett (Anschrift, Name, Briefanrede, Mail, Zustellweg). Sonst die
+        Person selbst. Bewusst nur **ein** Hop: ein Bevollmächtigter hat selbst
+        keinen Bevollmächtigten (siehe ``clean``), damit es keine Ketten gibt.
+        """
+        return self.zustellungsbevollmaechtigter or self
+
+    def clean(self):
+        super().clean()
+        zb = self.zustellungsbevollmaechtigter
+        if zb is not None:
+            if zb.pk == self.pk:
+                raise ValidationError({
+                    'zustellungsbevollmaechtigter':
+                        'Eine Person kann nicht ihr eigener Zustellungsbevollmächtigter sein.',
+                })
+            if zb.person_typ != '500':
+                raise ValidationError({
+                    'zustellungsbevollmaechtigter':
+                        'Der Zustellungsbevollmächtigte muss vom Typ '
+                        '"Zustellungsbevollmächtigter" (500) sein.',
+                })
+            if self.person_typ == '500':
+                raise ValidationError({
+                    'zustellungsbevollmaechtigter':
+                        'Ein Zustellungsbevollmächtigter kann selbst keinen '
+                        'Zustellungsbevollmächtigten haben.',
+                })
 
 
 class EigentumsVerhaeltnis(models.Model):

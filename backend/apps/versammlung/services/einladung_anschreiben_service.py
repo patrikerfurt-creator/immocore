@@ -122,7 +122,9 @@ def baue_kontext(ev, briefbogen, teilnehmer=None) -> dict:
     Ohne Teilnehmer entsteht die neutrale Fassung. Es wird bewusst KEIN Unterzeichner
     übergeben: das Anschreiben ergeht im Namen der Firma (``nur_firma``).
     """
-    person = teilnehmer.person if teilnehmer is not None else None
+    # Zustellungsbevollmächtigter: Ist einer hinterlegt, trägt das Anschreiben
+    # dessen Anschrift/Name/Anrede. Stimmrecht/Teilnehmer bleiben beim Eigentümer.
+    person = teilnehmer.person.zustell_adressat() if teilnehmer is not None else None
     if person is not None:
         _pruefe_anschrift(person)
     kontext = kontext_service.baue_kontext(

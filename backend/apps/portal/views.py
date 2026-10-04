@@ -70,7 +70,11 @@ class MagicLinkAnfordernView(APIView):
         if zugang is not None:
             token = zugang_service.erzeuge_magic_link(zugang)
             try:
-                mail_service.versende_magic_link(token, email)
+                # Zustellung an den Bevollmächtigten, falls einer hinterlegt ist —
+                # nicht zwingend an die eingegebene Adresse.
+                mail_service.versende_magic_link(
+                    token, zugang_service.zustell_email(zugang.person)
+                )
             except Exception:
                 # Auch ein Versandfehler darf die Antwort nicht verändern —
                 # sonst wäre sie wieder ein Existenz-Orakel. Der Fehler
