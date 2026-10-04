@@ -105,58 +105,18 @@ def erstelle_vorlage(data: dict, splits_data: list[dict], user) -> 'Wiederkehren
     for split in vorlage.splits.all():
         validiere_split_kontonummer(split.kontonummer, vorlage.objekt)
 
-    # Aus Beleg angelegt: der Belegbezug wird nur gespeichert. Die Rechnung
-    # bleibt im Rechnungseingang, bis die Buchhaltung die Erfassung abschließt
-    # ('Geprüft → zur Freigabe'); erst dann verlässt sie den normalen Zahlweg
-    # (siehe route_zur_freigabe → uebergib_rechnung_an_wkz).
+    # Aus Beleg angelegt: es wird nur der PDF-/DMS-Belegbezug gespeichert.
+    # Entkopplung (2026-10): Die Rechnung bleibt eine eigenständige Rechnung und
+    # läuft unabhängig von der Vorlage ihren normalen Weg (Schlussrechnung und
+    # Abschläge sind zwei getrennte Forderungen auf derselben PDF).
     if vorlage.rechnung_id:
         logger.info(
-            "WKZ Vorlage %s aus Rechnung %s angelegt — Rechnung bleibt bis zum "
-            "Abschluss der Erfassung im Rechnungseingang",
+            "WKZ Vorlage %s aus Rechnung %s angelegt (nur PDF-Beleg geteilt)",
             vorlage.id, vorlage.rechnung_id,
         )
 
     logger.info("WKZ Vorlage %s angelegt von %s", vorlage.id, user)
     return vorlage
-
-
-def _rechnung_als_wkz_beleg_markieren(rechnung):
-    """Nimmt die Rechnung aus dem normalen Zahlweg (status='wkz_beleg') und löst
-    einen bereits angelegten Rechnungs-Kreditor-OP (Phase 1, unbezahlt,
-    Buchung im Entwurf) auf, damit die Zahlung nicht doppelt läuft."""
-    from apps.buchhaltung.models import KreditorOP, Buchung
-
-    kop = KreditorOP.objects.filter(rechnung=rechnung).first()
-    phase1 = kop.buchung if (kop and kop.status in ('offen', 'teilbezahlt')) else None
-    if kop and kop.status in ('offen', 'teilbezahlt'):
-        kop.delete()
-
-    upd = ['status']
-    rechnung.status = 'wkz_beleg'
-    if phase1 is not None:
-        for feld in ('op_buchung', 'aufwand_buchung', 'buchung'):
-            if hasattr(rechnung, f'{feld}_id') and getattr(rechnung, f'{feld}_id') == phase1.id:
-                setattr(rechnung, f'{feld}_id', None)
-                upd.append(f'{feld}_id')
-    rechnung.save(update_fields=upd)
-
-    if phase1 is not None and phase1.status == 'entwurf':
-        Buchung.objects.filter(parent_buchung=phase1).delete()
-        phase1.delete()
-
-
-@transaction.atomic
-def uebergib_rechnung_an_wkz(rechnung, user=None):
-    """Abschluss der Erfassung einer Rechnung, zu der eine WKZ-Vorlage besteht:
-    die Zahlung läuft über die WKZ (mit eigener Freigabe), die Rechnung verlässt
-    den normalen Zahlweg (status='wkz_beleg'). Wird aus route_zur_freigabe
-    aufgerufen — nicht schon beim Anlegen der Vorlage."""
-    _rechnung_als_wkz_beleg_markieren(rechnung)
-    logger.info(
-        "Rechnung %s nach Abschluss der Erfassung an die WKZ übergeben (durch %s)",
-        rechnung.id, user,
-    )
-    return rechnung
 
 
 @transaction.atomic

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { wkzApi, type WKZVorlageCreate } from '../../../api/wkz'
@@ -75,6 +75,26 @@ export default function VorlageWizard() {
 
   const [fehler, setFehler] = useState('')
 
+  // PDF-Vorschau der Quell-Rechnung (geteilter Beleg) laden — nur wenn aus
+  // einer Rechnung heraus angelegt. Blob-URL beim Verlassen freigeben.
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null)
+  const pdfUrlRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!paramRechnungId) return
+    let cancelled = false
+    import('../../../api/rechnungen')
+      .then(m => m.rechnungenApi.getPdfBlobUrl(paramRechnungId))
+      .then(url => {
+        if (cancelled) { URL.revokeObjectURL(url); return }
+        if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current)
+        pdfUrlRef.current = url
+        setPdfUrl(url)
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [paramRechnungId])
+  useEffect(() => () => { if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current) }, [])
+
   // Kreditoren laden (für Dropdown)
   const { data: kreditoren = [] } = useQuery({
     queryKey: ['kreditoren-liste'],
@@ -87,9 +107,9 @@ export default function VorlageWizard() {
   const mutation = useMutation({
     mutationFn: async (data: WKZVorlageCreate) => {
       const vorlage = await wkzApi.vorlageAnlegen(objektId!, data)
-      // Aus einem Beleg angelegt: die Zahlung läuft künftig über die Vorlage,
-      // deshalb geht sie sofort in die Freigabe (Stufe 2, „Rechnungsfreigabe").
-      // Bei Grenze 'auto' aktiviert der Service direkt.
+      // Aus einem Beleg angelegt: die neue Vorlage geht in ihre eigene Freigabe
+      // (Stufe 2, „Rechnungsfreigabe"); bei Grenze 'auto' aktiviert der Service
+      // direkt. Die Quell-Rechnung bleibt davon unberührt (nur PDF geteilt).
       if (paramRechnungId) {
         try {
           return await wkzApi.vorlageEinreichen(vorlage.id)
@@ -159,8 +179,8 @@ export default function VorlageWizard() {
     return <p className="text-gray-500 p-4">Bitte ein Objekt auswählen.</p>
   }
 
-  return (
-    <div className="p-4 max-w-2xl mx-auto space-y-6">
+  const formular = (
+    <div className="space-y-6">
       <div className="flex items-center gap-4">
         <button
           onClick={() => navigate(-1)}
@@ -173,11 +193,11 @@ export default function VorlageWizard() {
 
       {paramRechnungId && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 text-sm text-blue-800">
-          <span className="font-medium">Aus Rechnung übernommen</span> — Kreditor, Bezeichnung und Betrag sind vorausgefüllt.
-          Der DMS-Bezug zur Originalrechnung wird automatisch gespeichert.
-          Die Vorlage wird nach dem Anlegen zur Freigabe eingereicht und erscheint unter
-          <span className="font-medium"> Rechnungsfreigabe</span>. Die Rechnung selbst bleibt im
-          Rechnungseingang, bis ihre Erfassung dort abgeschlossen ist.
+          <span className="font-medium">Aus Rechnung übernommen</span> — Kreditor, Bezeichnung und Betrag sind vorausgefüllt,
+          das PDF siehst du links als Beleg. Es wird nur der PDF-/DMS-Bezug geteilt;
+          die <span className="font-medium">Rechnung bleibt eine eigenständige Rechnung</span> und läuft unabhängig
+          ihren normalen Weg. Die Vorlage geht nach dem Anlegen in ihre eigene Freigabe unter
+          <span className="font-medium"> Rechnungsfreigabe</span>.
         </div>
       )}
 
@@ -508,4 +528,26 @@ export default function VorlageWizard() {
       </div>
     </div>
   )
+
+  if (pdfUrl) {
+    return (
+      <div className="p-4">
+        <div className="flex gap-4 items-start">
+          <div className="hidden lg:block lg:w-1/2 lg:sticky lg:top-4">
+            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+              Beleg · PDF der Quell-Rechnung
+            </div>
+            <iframe
+              src={pdfUrl}
+              title="Beleg-PDF"
+              className="w-full h-[85vh] border rounded-lg bg-white"
+            />
+          </div>
+          <div className="flex-1 min-w-0 max-w-2xl">{formular}</div>
+        </div>
+      </div>
+    )
+  }
+
+  return <div className="p-4 max-w-2xl mx-auto">{formular}</div>
 }
