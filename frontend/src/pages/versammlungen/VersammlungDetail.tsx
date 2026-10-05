@@ -109,33 +109,44 @@ function TerminierungPanel({ ev }: { ev: EVDetail }) {
 
 // ── Task 2 ────────────────────────────────────────────────────────────────
 
-function TopFormular({ ev, onFertig }: { ev: EVDetail; onFertig: () => void }) {
+// Legt einen TOP an (``top`` leer) oder ändert einen bestehenden (``top``
+// gesetzt). Der Speichern-Button aktualisiert beide Tagesordnungs-Queries, erst
+// danach ist die Liste wieder auf Stand und ein weiterer TOP kann folgen.
+function TopFormular({
+  ev, top, onFertig,
+}: { ev: EVDetail; top?: Tagesordnungspunkt; onFertig: () => void }) {
   const queryClient = useQueryClient()
-  const [titel, setTitel] = useState('')
-  const [erlaeuterung, setErlaeuterung] = useState('')
-  const [vorlage, setVorlage] = useState('')
-  const [modus, setModus] = useState<EVAbstimmungsmodus>('einfache_mehrheit')
-  const [schwelle, setSchwelle] = useState('66.67')
-  const [triggertVorgang, setTriggertVorgang] = useState(false)
-  const [triggertWp, setTriggertWp] = useState(false)
+  const istBearbeitung = Boolean(top)
+  const [titel, setTitel] = useState(top?.titel ?? '')
+  const [erlaeuterung, setErlaeuterung] = useState(top?.erlaeuterung ?? '')
+  const [vorlage, setVorlage] = useState(top?.beschlussvorlage ?? '')
+  const [modus, setModus] = useState<EVAbstimmungsmodus>(top?.abstimmungsmodus ?? 'einfache_mehrheit')
+  const [schwelle, setSchwelle] = useState(top?.mehrheit_schwelle ?? '66.67')
+  const [triggertVorgang, setTriggertVorgang] = useState(top?.triggert_vorgang ?? false)
+  const [triggertWp, setTriggertWp] = useState(top?.triggert_wirtschaftsplan ?? false)
   const [fehler, setFehler] = useState('')
 
-  const anlegen = useMutation({
-    mutationFn: () => versammlungApi.topAnlegen({
-      ev: ev.id,
-      titel,
-      erlaeuterung,
-      beschlussvorlage: vorlage,
-      abstimmungsmodus: modus,
-      mehrheit_schwelle: modus === 'qualifizierte_mehrheit' ? schwelle : null,
-      triggert_vorgang: triggertVorgang,
-      triggert_wirtschaftsplan: triggertWp,
-    }),
+  const feldwerte = () => ({
+    titel,
+    erlaeuterung,
+    beschlussvorlage: vorlage,
+    abstimmungsmodus: modus,
+    mehrheit_schwelle: modus === 'qualifizierte_mehrheit' ? schwelle : null,
+    triggert_vorgang: triggertVorgang,
+    triggert_wirtschaftsplan: triggertWp,
+  })
+
+  const speichern = useMutation({
+    mutationFn: () =>
+      istBearbeitung
+        ? versammlungApi.topAendern(top!.id, feldwerte())
+        : versammlungApi.topAnlegen({ ev: ev.id, ...feldwerte() }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['versammlung', ev.id] })
+      queryClient.invalidateQueries({ queryKey: ['versammlung-tagesordnung', ev.id] })
       onFertig()
     },
-    onError: (e: any) => setFehler(fehlertext(e, 'TOP konnte nicht angelegt werden.')),
+    onError: (e: any) => setFehler(fehlertext(e, 'TOP konnte nicht gespeichert werden.')),
   })
 
   return (
@@ -193,8 +204,8 @@ function TopFormular({ ev, onFertig }: { ev: EVDetail; onFertig: () => void }) {
       </div>
       {fehler && <p className="text-sm text-red-600">{fehler}</p>}
       <div className="flex gap-2">
-        <Button onClick={() => anlegen.mutate()} disabled={!titel || anlegen.isPending}>
-          TOP hinzufügen
+        <Button onClick={() => speichern.mutate()} disabled={!titel || speichern.isPending}>
+          TOP speichern
         </Button>
         <Button variant="secondary" onClick={onFertig}>Abbrechen</Button>
       </div>
@@ -248,6 +259,8 @@ function TopStimmgrundlageAuswahl({
 function TagesordnungPanel({ ev }: { ev: EVDetail }) {
   const queryClient = useQueryClient()
   const [formOffen, setFormOffen] = useState(false)
+  // Welcher TOP gerade im Änderungs-Formular offen ist (null = keiner).
+  const [editTopId, setEditTopId] = useState<string | null>(null)
   const [fehler, setFehler] = useState('')
 
   const { data } = useQuery({
@@ -265,16 +278,30 @@ function TagesordnungPanel({ ev }: { ev: EVDetail }) {
     onError: (e: any) => setFehler(fehlertext(e, 'Löschen fehlgeschlagen.')),
   })
 
-  const gesperrt = ['einladungen_versendet', 'ausgecheckt', 'durchgefuehrt',
+  const nachVersand = ['einladungen_versendet', 'ausgecheckt', 'durchgefuehrt',
     'beschluesse_verarbeitet', 'archiviert'].includes(ev.status)
+  const task2Erledigt = ev.task_status?.task2?.erledigt ?? false
+  // Die Tagesordnung ist nur bearbeitbar (anlegen / ändern / löschen), solange
+  // Task 2 nicht als erledigt markiert ist UND die Einladung noch nicht
+  // versendet / die EV noch nicht ausgecheckt ist. Zum nachträglichen Ändern
+  // muss Task 2 zurückgesetzt werden.
+  const bearbeitbar = !nachVersand && !task2Erledigt
 
   return (
     <div className="space-y-4">
-      {gesperrt && (
+      {nachVersand && (
         <p className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
           Die Einladung ist versendet — die Tagesordnung ist damit
           festgeschrieben (§ 23 Abs. 2 WEG). Nur Erläuterungen sind noch
           änderbar.
+        </p>
+      )}
+
+      {!nachVersand && task2Erledigt && (
+        <p className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          Task 2 (Tagesordnung) ist als erledigt markiert — die
+          Tagesordnungspunkte sind gesperrt. Zum Ändern den Task oben
+          zurücksetzen.
         </p>
       )}
 
@@ -288,6 +315,14 @@ function TagesordnungPanel({ ev }: { ev: EVDetail }) {
 
       <div className="space-y-3">
         {(data?.tagesordnung ?? []).map((top: Tagesordnungspunkt) => (
+          editTopId === top.id && bearbeitbar ? (
+            <TopFormular
+              key={top.id}
+              ev={ev}
+              top={top}
+              onFertig={() => setEditTopId(null)}
+            />
+          ) : (
           <div key={top.id} className="rounded border border-gray-200 p-3">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -307,7 +342,7 @@ function TagesordnungPanel({ ev }: { ev: EVDetail }) {
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-500">
                   <span>{top.abstimmungsmodus_display}</span>
                   {top.mehrheit_schwelle && <span>· {top.mehrheit_schwelle} %</span>}
-                  <TopStimmgrundlageAuswahl ev={ev} top={top} gesperrt={gesperrt} />
+                  <TopStimmgrundlageAuswahl ev={ev} top={top} gesperrt={!bearbeitbar} />
                   {top.triggert_vorgang && <Badge value="vorschlag" label="Folge-Vorgang" />}
                   {top.triggert_wirtschaftsplan && <Badge value="vorschlag" label="WP-Beschluss" />}
                   {top.abstimmungsergebnis !== 'offen' && (
@@ -318,23 +353,32 @@ function TagesordnungPanel({ ev }: { ev: EVDetail }) {
                   )}
                 </div>
               </div>
-              {!gesperrt && (
-                <Button
-                  variant="ghost" size="sm"
-                  onClick={() => loeschen.mutate(top.id)}
-                >
-                  Löschen
-                </Button>
+              {bearbeitbar && (
+                <div className="flex shrink-0 gap-1">
+                  <Button
+                    variant="ghost" size="sm"
+                    onClick={() => { setFormOffen(false); setEditTopId(top.id) }}
+                  >
+                    Ändern
+                  </Button>
+                  <Button
+                    variant="ghost" size="sm"
+                    onClick={() => loeschen.mutate(top.id)}
+                  >
+                    Löschen
+                  </Button>
+                </div>
               )}
             </div>
           </div>
+          )
         ))}
         {(data?.tagesordnung ?? []).length === 0 && (
           <p className="text-sm text-gray-500">Noch kein Tagesordnungspunkt erfasst.</p>
         )}
       </div>
 
-      {!gesperrt && (formOffen
+      {bearbeitbar && editTopId === null && (formOffen
         ? <TopFormular ev={ev} onFertig={() => setFormOffen(false)} />
         : <Button onClick={() => setFormOffen(true)}>TOP hinzufügen</Button>)}
     </div>
