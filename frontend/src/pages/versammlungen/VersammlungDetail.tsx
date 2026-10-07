@@ -10,12 +10,13 @@ import type {
   EVAbstimmungsmodus, EVDetail, EVVersandkanal, Tagesordnungspunkt,
 } from '../../types'
 
+// Abstimmungsmodi ohne 'kein_beschluss' — "nur Information" läuft im Formular
+// über einen eigenen Haken, nicht über diese Auswahl.
 const MODUS_OPTIONEN: { value: EVAbstimmungsmodus; label: string }[] = [
   { value: 'einfache_mehrheit', label: 'Einfache Mehrheit (Ja > Nein)' },
   { value: 'qualifizierte_mehrheit', label: 'Qualifizierte Mehrheit (Schwelle laut TE)' },
   { value: 'einstimmigkeit', label: 'Einstimmigkeit (alle abgegebenen Stimmen)' },
   { value: 'allstimmigkeit', label: 'Allstimmigkeit (alle Eigentümer)' },
-  { value: 'kein_beschluss', label: 'Ohne Beschluss (Bericht/Information)' },
 ]
 
 const KANAL_OPTIONEN: { value: EVVersandkanal; label: string }[] = [
@@ -117,30 +118,53 @@ function TopFormular({
 }: { ev: EVDetail; top?: Tagesordnungspunkt; onFertig: () => void }) {
   const queryClient = useQueryClient()
   const istBearbeitung = Boolean(top)
+  // Ein Gliederungspunkt (hat bereits Unterpunkte) wird nicht abgestimmt — bei
+  // seiner Bearbeitung sind nur Titel und Erläuterung offen.
+  const istGliederung = top?.hat_unterpunkte ?? false
   const [titel, setTitel] = useState(top?.titel ?? '')
   const [erlaeuterung, setErlaeuterung] = useState(top?.erlaeuterung ?? '')
   const [vorlage, setVorlage] = useState(top?.beschlussvorlage ?? '')
-  const [modus, setModus] = useState<EVAbstimmungsmodus>(top?.abstimmungsmodus ?? 'einfache_mehrheit')
+  // "Nur Information" = abstimmungsmodus 'kein_beschluss' (ohne Unterpunkte).
+  const [nurInfo, setNurInfo] = useState(
+    top ? top.abstimmungsmodus === 'kein_beschluss' && !top.hat_unterpunkte : false,
+  )
+  const [modus, setModus] = useState<EVAbstimmungsmodus>(
+    top && top.abstimmungsmodus !== 'kein_beschluss' ? top.abstimmungsmodus : 'einfache_mehrheit',
+  )
   const [schwelle, setSchwelle] = useState(top?.mehrheit_schwelle ?? '66.67')
   const [triggertVorgang, setTriggertVorgang] = useState(top?.triggert_vorgang ?? false)
   const [triggertWp, setTriggertWp] = useState(top?.triggert_wirtschaftsplan ?? false)
+  // Übergeordneter TOP (nur beim Anlegen wählbar). Mögliche Eltern: Haupt-TOPs
+  // ohne Ergebnis — nur sie lassen sich noch in einen Gliederungspunkt wandeln.
+  const [elternId, setElternId] = useState('')
+  const moeglicheEltern = ev.tagesordnung.filter(
+    t => t.eltern === null && t.abstimmungsergebnis === 'offen',
+  )
   const [fehler, setFehler] = useState('')
 
-  const feldwerte = () => ({
-    titel,
-    erlaeuterung,
-    beschlussvorlage: vorlage,
-    abstimmungsmodus: modus,
-    mehrheit_schwelle: modus === 'qualifizierte_mehrheit' ? schwelle : null,
-    triggert_vorgang: triggertVorgang,
-    triggert_wirtschaftsplan: triggertWp,
-  })
+  const feldwerte = () => {
+    if (istGliederung) {
+      // Gliederungspunkt: nur Titel/Erläuterung, Modus bleibt 'kein_beschluss'.
+      return { titel, erlaeuterung }
+    }
+    return {
+      titel,
+      erlaeuterung,
+      beschlussvorlage: nurInfo ? '' : vorlage,
+      abstimmungsmodus: (nurInfo ? 'kein_beschluss' : modus) as EVAbstimmungsmodus,
+      mehrheit_schwelle: !nurInfo && modus === 'qualifizierte_mehrheit' ? schwelle : null,
+      triggert_vorgang: nurInfo ? false : triggertVorgang,
+      triggert_wirtschaftsplan: nurInfo ? false : triggertWp,
+    }
+  }
 
   const speichern = useMutation({
     mutationFn: () =>
       istBearbeitung
         ? versammlungApi.topAendern(top!.id, feldwerte())
-        : versammlungApi.topAnlegen({ ev: ev.id, ...feldwerte() }),
+        : versammlungApi.topAnlegen({
+            ev: ev.id, ...feldwerte(), eltern: elternId || null,
+          }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['versammlung', ev.id] })
       queryClient.invalidateQueries({ queryKey: ['versammlung-tagesordnung', ev.id] })
@@ -152,6 +176,34 @@ function TopFormular({
   return (
     <div className="space-y-3 rounded border border-gray-200 bg-gray-50 p-4">
       <Input label="Titel" value={titel} onChange={e => setTitel(e.target.value)} />
+
+      {!istBearbeitung && moeglicheEltern.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <label className="text-sm font-medium text-gray-700">Unterpunkt von (optional)</label>
+          <select
+            className="rounded border border-gray-300 px-3 py-2 text-sm"
+            value={elternId}
+            onChange={e => setElternId(e.target.value)}
+          >
+            <option value="">— eigenständiger Haupt-TOP —</option>
+            {moeglicheEltern.map(t => (
+              <option key={t.id} value={t.id}>
+                Unter TOP {t.nummer_anzeige}: {t.titel}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-gray-500">
+            Als Unterpunkt (z.B. TOP 3.1) angelegt — der gewählte TOP wird dann
+            zum Gliederungspunkt; über ihn selbst wird nicht mehr abgestimmt.
+          </p>
+        </div>
+      )}
+      {istBearbeitung && top?.eltern && (
+        <p className="text-xs text-gray-500">
+          Unterpunkt — Nummer {top.nummer_anzeige}.
+        </p>
+      )}
+
       <div className="flex flex-col gap-1">
         <label className="text-sm font-medium text-gray-700">Erläuterung (optional)</label>
         <textarea
@@ -159,49 +211,73 @@ function TopFormular({
           value={erlaeuterung} onChange={e => setErlaeuterung(e.target.value)}
         />
       </div>
-      <div className="flex flex-col gap-1">
-        <label className="text-sm font-medium text-gray-700">
-          Beschlussvorlage {modus !== 'kein_beschluss' && <span className="text-red-600">*</span>}
-        </label>
-        <textarea
-          className="rounded border border-gray-300 px-3 py-2 text-sm" rows={3}
-          placeholder="Der Wortlaut, über den abgestimmt wird."
-          value={vorlage} onChange={e => setVorlage(e.target.value)}
-        />
-      </div>
-      <div className="grid gap-3 md:grid-cols-2">
-        <div className="flex flex-col gap-1">
-          <label className="text-sm font-medium text-gray-700">Erforderliche Mehrheit</label>
-          <select
-            className="rounded border border-gray-300 px-3 py-2 text-sm"
-            value={modus}
-            onChange={e => setModus(e.target.value as EVAbstimmungsmodus)}
-          >
-            {MODUS_OPTIONEN.map(o => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
-        </div>
-        {modus === 'qualifizierte_mehrheit' && (
-          <Input
-            label="Schwelle in % der abgegebenen Stimmen"
-            value={schwelle}
-            onChange={e => setSchwelle(e.target.value)}
-          />
-        )}
-      </div>
-      <div className="flex flex-wrap gap-4 text-sm">
-        <label className="flex items-center gap-2">
-          <input type="checkbox" checked={triggertVorgang}
-            onChange={e => setTriggertVorgang(e.target.checked)} />
-          Bei Annahme Folge-Vorgang anlegen
-        </label>
-        <label className="flex items-center gap-2">
-          <input type="checkbox" checked={triggertWp}
-            onChange={e => setTriggertWp(e.target.checked)} />
-          Bei Annahme Wirtschaftsplan-Beschluss vormerken
-        </label>
-      </div>
+
+      {istGliederung ? (
+        <p className="rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-600">
+          Dieser TOP hat Unterpunkte (Gliederungspunkt) — die Beschlussfassung
+          erfolgt auf den Unterpunkten. Hier sind nur Titel und Erläuterung
+          änderbar.
+        </p>
+      ) : (
+        <>
+          <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
+            <input
+              type="checkbox" checked={nurInfo}
+              onChange={e => setNurInfo(e.target.checked)}
+            />
+            Nur Information / Bericht — keine Abstimmung (z.B. Bericht der Verwaltung)
+          </label>
+
+          {!nurInfo && (
+            <>
+              <div className="flex flex-col gap-1">
+                <label className="text-sm font-medium text-gray-700">
+                  Beschlussvorlage <span className="text-red-600">*</span>
+                </label>
+                <textarea
+                  className="rounded border border-gray-300 px-3 py-2 text-sm" rows={3}
+                  placeholder="Der Wortlaut, über den abgestimmt wird."
+                  value={vorlage} onChange={e => setVorlage(e.target.value)}
+                />
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="flex flex-col gap-1">
+                  <label className="text-sm font-medium text-gray-700">Erforderliche Mehrheit</label>
+                  <select
+                    className="rounded border border-gray-300 px-3 py-2 text-sm"
+                    value={modus}
+                    onChange={e => setModus(e.target.value as EVAbstimmungsmodus)}
+                  >
+                    {MODUS_OPTIONEN.map(o => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                </div>
+                {modus === 'qualifizierte_mehrheit' && (
+                  <Input
+                    label="Schwelle in % der abgegebenen Stimmen"
+                    value={schwelle}
+                    onChange={e => setSchwelle(e.target.value)}
+                  />
+                )}
+              </div>
+              <div className="flex flex-wrap gap-4 text-sm">
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={triggertVorgang}
+                    onChange={e => setTriggertVorgang(e.target.checked)} />
+                  Bei Annahme Folge-Vorgang anlegen
+                </label>
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={triggertWp}
+                    onChange={e => setTriggertWp(e.target.checked)} />
+                  Bei Annahme Wirtschaftsplan-Beschluss vormerken
+                </label>
+              </div>
+            </>
+          )}
+        </>
+      )}
+
       {fehler && <p className="text-sm text-red-600">{fehler}</p>}
       <div className="flex gap-2">
         <Button onClick={() => speichern.mutate()} disabled={!titel || speichern.isPending}>
@@ -323,35 +399,48 @@ function TagesordnungPanel({ ev }: { ev: EVDetail }) {
               onFertig={() => setEditTopId(null)}
             />
           ) : (
-          <div key={top.id} className="rounded border border-gray-200 p-3">
+          <div
+            key={top.id}
+            className={`rounded border border-gray-200 p-3${
+              top.eltern ? ' ml-6 border-l-4 border-l-gray-300' : ''
+            }`}
+          >
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="font-medium text-gray-900">
-                  TOP {top.nummer}: {top.titel}
+                  TOP {top.nummer_anzeige}: {top.titel}
                 </div>
                 {top.erlaeuterung && (
                   <p className="mt-1 whitespace-pre-line text-sm text-gray-600">
                     {top.erlaeuterung}
                   </p>
                 )}
-                {top.beschlussvorlage && (
-                  <p className="mt-2 border-l-2 border-primary-500 pl-2 whitespace-pre-line text-sm">
-                    {top.beschlussvorlage}
+                {top.hat_unterpunkte ? (
+                  <p className="mt-2 text-xs italic text-gray-500">
+                    Gliederungspunkt — die Abstimmung erfolgt auf den Unterpunkten.
                   </p>
+                ) : (
+                  <>
+                    {top.beschlussvorlage && (
+                      <p className="mt-2 border-l-2 border-primary-500 pl-2 whitespace-pre-line text-sm">
+                        {top.beschlussvorlage}
+                      </p>
+                    )}
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                      <span>{top.abstimmungsmodus_display}</span>
+                      {top.mehrheit_schwelle && <span>· {top.mehrheit_schwelle} %</span>}
+                      <TopStimmgrundlageAuswahl ev={ev} top={top} gesperrt={!bearbeitbar} />
+                      {top.triggert_vorgang && <Badge value="vorschlag" label="Folge-Vorgang" />}
+                      {top.triggert_wirtschaftsplan && <Badge value="vorschlag" label="WP-Beschluss" />}
+                      {top.abstimmungsergebnis !== 'offen' && (
+                        <Badge
+                          value={top.abstimmungsergebnis === 'angenommen' ? 'angenommen' : 'abgelehnt'}
+                          label={top.abstimmungsergebnis_display}
+                        />
+                      )}
+                    </div>
+                  </>
                 )}
-                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-500">
-                  <span>{top.abstimmungsmodus_display}</span>
-                  {top.mehrheit_schwelle && <span>· {top.mehrheit_schwelle} %</span>}
-                  <TopStimmgrundlageAuswahl ev={ev} top={top} gesperrt={!bearbeitbar} />
-                  {top.triggert_vorgang && <Badge value="vorschlag" label="Folge-Vorgang" />}
-                  {top.triggert_wirtschaftsplan && <Badge value="vorschlag" label="WP-Beschluss" />}
-                  {top.abstimmungsergebnis !== 'offen' && (
-                    <Badge
-                      value={top.abstimmungsergebnis === 'angenommen' ? 'angenommen' : 'abgelehnt'}
-                      label={top.abstimmungsergebnis_display}
-                    />
-                  )}
-                </div>
               </div>
               {bearbeitbar && (
                 <div className="flex shrink-0 gap-1">
@@ -904,7 +993,7 @@ function CheckoutPanel({ ev }: { ev: EVDetail }) {
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="font-medium text-gray-900">
                   Beschluss {b.nummer}
-                  {b.top_nummer !== null && ` (TOP ${b.top_nummer})`}
+                  {b.top_nummer_anzeige !== null && ` (TOP ${b.top_nummer_anzeige})`}
                 </div>
                 <div className="flex items-center gap-2">
                   {b.anfechtung_status !== 'keine' && (

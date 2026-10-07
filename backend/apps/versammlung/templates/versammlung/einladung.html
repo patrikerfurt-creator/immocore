@@ -83,6 +83,11 @@
     border-bottom: 1px dotted #bbb;
   }
   .top:last-child { border-bottom: none; }
+  .top.unterpunkt {
+    margin-left: 18pt;
+    padding-bottom: 6pt;
+    border-bottom: 1px dotted #ddd;
+  }
   .top-titel { font-weight: bold; font-size: 10.5pt; color: #1a3c5e; }
   .top-block { margin-top: 4pt; }
   .top-label {
@@ -178,8 +183,8 @@
 <h2>Tagesordnung</h2>
 
 {% for top in tagesordnung %}
-  <div class="top">
-    <div class="top-titel">TOP {{ top.nummer }}: {{ top.titel }}</div>
+  <div class="top{% if top.eltern_id %} unterpunkt{% endif %}">
+    <div class="top-titel">TOP {{ top.nummer_anzeige }}: {{ top.titel }}</div>
 
     {% if top.erlaeuterung %}
       <div class="top-block">
@@ -188,7 +193,9 @@
       </div>
     {% endif %}
 
-    {% if top.abstimmungsmodus == 'kein_beschluss' %}
+    {% if top.hat_unterpunkte %}
+      <div class="modus">Gliederungspunkt — die Beschlussfassung erfolgt in den Unterpunkten.</div>
+    {% elif top.abstimmungsmodus == 'kein_beschluss' %}
       <div class="modus">Ohne Beschlussfassung — Bericht bzw. Information.</div>
     {% else %}
       <div class="top-block">

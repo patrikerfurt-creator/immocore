@@ -182,6 +182,104 @@ class TopLoeschenTest(TestCase):
         self.assertEqual(nummern, [1, 2, 3, 4])
 
 
+class UnterpunkteTest(TestCase):
+    """TOP-Hierarchie: Unterpunkte (3.1, 3.2) und Gliederungspunkte."""
+
+    def setUp(self):
+        self.user = f.user()
+        self.ev = ev_service.erstelle_ev(objekt=f.objekt(), erstellt_von=self.user)
+
+    def _top(self, titel, **kwargs):
+        return tagesordnung_service.top_anlegen(
+            ev=self.ev, titel=titel, erstellt_von=self.user,
+            beschlussvorlage=kwargs.pop('beschlussvorlage', 'Es wird beschlossen.'),
+            **kwargs,
+        )
+
+    def test_unterpunkt_bekommt_eigene_nummer_und_anzeige(self):
+        self._top('TOP 1')
+        drei = self._top('Sanierungen')
+        u1 = self._top('Dach', eltern=drei)
+        u2 = self._top('Fassade', eltern=drei)
+        self.assertEqual((u1.nummer, u1.nummer_anzeige), (1, '2.1'))
+        self.assertEqual((u2.nummer, u2.nummer_anzeige), (2, '2.2'))
+
+    def test_eltern_wird_zum_gliederungspunkt(self):
+        drei = self._top('Sanierungen')
+        self.assertEqual(drei.abstimmungsmodus, 'einfache_mehrheit')
+        self._top('Dach', eltern=drei)
+        drei.refresh_from_db()
+        self.assertEqual(drei.abstimmungsmodus, 'kein_beschluss')
+        self.assertTrue(drei.hat_unterpunkte)
+
+    def test_gliederungspunkt_kann_nicht_abstimmen(self):
+        drei = self._top('Sanierungen')
+        self._top('Dach', eltern=drei)
+        drei.refresh_from_db()
+        with self.assertRaises(ValidationError):
+            tagesordnung_service.top_aktualisieren(
+                drei, self.user, abstimmungsmodus='einfache_mehrheit',
+            )
+
+    def test_nur_eine_ebene(self):
+        drei = self._top('Sanierungen')
+        unter = self._top('Dach', eltern=drei)
+        with self.assertRaises(ValidationError):
+            self._top('Dachziegel', eltern=unter)
+
+    def test_eltern_mit_ergebnis_kann_keine_unterpunkte_bekommen(self):
+        drei = self._top('Sanierungen')
+        drei.abstimmungsergebnis = 'angenommen'
+        drei.save(update_fields=['abstimmungsergebnis'])
+        with self.assertRaises(ValidationError):
+            self._top('Dach', eltern=drei)
+
+    def test_neu_nummerieren_je_ebene(self):
+        eins = self._top('TOP 1')
+        drei = self._top('Sanierungen')
+        self._top('Dach', eltern=drei)
+        u2 = self._top('Fassade', eltern=drei)
+        self._top('Keller', eltern=drei)
+        # Mittleren Unterpunkt löschen → Unterpunkt-Ebene schließt die Lücke,
+        # Haupt-Ebene bleibt unberührt.
+        tagesordnung_service.top_loeschen(u2, self.user)
+        unter = list(drei.unterpunkte.order_by('nummer').values_list('nummer', 'titel'))
+        self.assertEqual(unter, [(1, 'Dach'), (2, 'Keller')])
+        haupt = list(self.ev.tagesordnung.filter(eltern__isnull=True)
+                     .order_by('nummer').values_list('nummer', flat=True))
+        self.assertEqual(haupt, [1, 2])
+        self.assertEqual(eins.titel, 'TOP 1')
+
+    def test_geordnete_tagesordnung_ist_baum(self):
+        self._top('TOP 1')
+        drei = self._top('Sanierungen')
+        self._top('Dach', eltern=drei)
+        self._top('Fassade', eltern=drei)
+        self._top('TOP 3')
+        reihenfolge = [
+            t.nummer_anzeige
+            for t in tagesordnung_service.geordnete_tagesordnung(self.ev)
+        ]
+        self.assertEqual(reihenfolge, ['1', '2', '2.1', '2.2', '3'])
+
+    def test_loeschen_gliederungspunkt_entfernt_unterpunkte(self):
+        drei = self._top('Sanierungen')
+        self._top('Dach', eltern=drei)
+        self._top('Fassade', eltern=drei)
+        tagesordnung_service.top_loeschen(drei, self.user)
+        self.assertEqual(self.ev.tagesordnung.count(), 0)
+
+    def test_vollstaendigkeit_prueft_unterpunkt_ebene(self):
+        drei = self._top('Sanierungen')
+        self._top('Dach', eltern=drei)
+        u2 = self._top('Fassade', eltern=drei)
+        # Lücke in der Unterpunkt-Ebene erzwingen.
+        u2.nummer = 4
+        u2.save(update_fields=['nummer'])
+        probleme = tagesordnung_service.pruefe_vollstaendigkeit(self.ev)
+        self.assertTrue(any('Unterpunkt-Nummerierung' in p for p in probleme))
+
+
 class VollstaendigkeitTest(TestCase):
     def setUp(self):
         self.user = f.user()

@@ -1566,7 +1566,15 @@ export interface EVStimmgrundlageRef {
 export interface Tagesordnungspunkt {
   id: string
   ev: string
+  /** Haupt-TOP, unter dem dieser Punkt als Unterpunkt (z.B. 3.1) hängt;
+   *  null = Haupt-TOP. Wird nur beim Anlegen gesetzt. */
+  eltern: string | null
+  /** Position innerhalb der eigenen Ebene (Haupt-TOPs bzw. Unterpunkte). */
   nummer: number
+  /** Anzeige-Nummer: "3" für einen Haupt-TOP, "3.1" für einen Unterpunkt. */
+  nummer_anzeige: string
+  /** true = Gliederungspunkt mit Unterpunkten; über ihn wird nicht abgestimmt. */
+  hat_unterpunkte: boolean
   titel: string
   erlaeuterung: string
   beschlussvorlage: string
@@ -1588,6 +1596,9 @@ export interface TagesordnungspunktCreatePayload {
   ev: string
   titel: string
   nummer?: number | null
+  /** Haupt-TOP, unter dem der Punkt als Unterpunkt (z.B. 3.1) angelegt wird.
+   *  Der übergeordnete TOP wird dadurch zum Gliederungspunkt. */
+  eltern?: string | null
   erlaeuterung?: string
   beschlussvorlage?: string
   abstimmungsmodus?: EVAbstimmungsmodus
@@ -1864,6 +1875,8 @@ export interface EVBeschluss {
   ev: string | null
   top: string | null
   top_nummer: number | null
+  /** Anzeige-Nummer des TOP ("3" bzw. "3.1"); null, wenn kein TOP verknüpft. */
+  top_nummer_anzeige: string | null
   top_titel: string | null
   beschluss_datum: string
   ort: string

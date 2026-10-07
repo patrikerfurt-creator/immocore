@@ -59,11 +59,16 @@ class TagesordnungspunktSerializer(serializers.ModelSerializer):
         source='stimmgrundlage', queryset=EVStimmgrundlage.objects.all(),
         required=False, allow_null=True, write_only=True,
     )
+    # Anzeige-Nummer ("3" bzw. "3.1") und Gliederungs-Kennzeichen (hat
+    # Unterpunkte → wird nicht abgestimmt). eltern verweist auf den Haupt-TOP.
+    nummer_anzeige = serializers.CharField(read_only=True)
+    hat_unterpunkte = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = Tagesordnungspunkt
         fields = [
-            'id', 'ev', 'nummer', 'titel', 'erlaeuterung', 'beschlussvorlage',
+            'id', 'ev', 'eltern', 'nummer', 'nummer_anzeige', 'hat_unterpunkte',
+            'titel', 'erlaeuterung', 'beschlussvorlage',
             'abstimmungsmodus', 'abstimmungsmodus_display', 'mehrheit_schwelle',
             'stimmgrundlage', 'stimmgrundlage_id',
             'abstimmung_ja', 'abstimmung_nein', 'abstimmung_enthaltung',
@@ -71,9 +76,10 @@ class TagesordnungspunktSerializer(serializers.ModelSerializer):
             'ergebnis_bemerkung', 'triggert_vorgang', 'triggert_wirtschaftsplan',
         ]
         # Ergebnis-Felder werden erst in Phase D über den
-        # Durchführungs-Service gesetzt, nie direkt per API.
+        # Durchführungs-Service gesetzt, nie direkt per API. eltern wird nur
+        # beim Anlegen gesetzt (kein Umhängen bestehender TOPs über PATCH).
         read_only_fields = [
-            'id', 'ev', 'abstimmung_ja', 'abstimmung_nein',
+            'id', 'ev', 'eltern', 'abstimmung_ja', 'abstimmung_nein',
             'abstimmung_enthaltung', 'abstimmungsergebnis',
         ]
 
@@ -94,6 +100,13 @@ class TagesordnungspunktCreateSerializer(serializers.Serializer):
     )
     titel = serializers.CharField(max_length=255)
     nummer = serializers.IntegerField(required=False, allow_null=True)
+    eltern = serializers.PrimaryKeyRelatedField(
+        queryset=Tagesordnungspunkt.objects.all(), required=False, allow_null=True,
+        help_text='Optional — gesetzt legt den Punkt als Unterpunkt dieses '
+                  'Haupt-TOP an (z.B. TOP 3.1). Der übergeordnete TOP wird '
+                  'dadurch zum Gliederungspunkt (über ihn wird nicht mehr '
+                  'abgestimmt).',
+    )
     erlaeuterung = serializers.CharField(required=False, allow_blank=True, default='')
     beschlussvorlage = serializers.CharField(required=False, allow_blank=True, default='')
     abstimmungsmodus = serializers.ChoiceField(
@@ -226,7 +239,7 @@ class EigentuemerversammlungDetailSerializer(serializers.ModelSerializer):
         source='get_stimmprinzip_display', read_only=True,
     )
     stimm_verteilerschluessel_text = serializers.SerializerMethodField()
-    tagesordnung = TagesordnungspunktSerializer(many=True, read_only=True)
+    tagesordnung = serializers.SerializerMethodField()
     stimmgrundlagen = EVStimmgrundlageSerializer(many=True, read_only=True)
     task_status = serializers.SerializerMethodField()
     ladungsfrist = serializers.SerializerMethodField()
@@ -257,6 +270,14 @@ class EigentuemerversammlungDetailSerializer(serializers.ModelSerializer):
     def get_stimm_verteilerschluessel_text(self, obj):
         vs = obj.stimm_verteilerschluessel
         return f'{vs.schluessel} {vs.bezeichnung}' if vs else None
+
+    def get_tagesordnung(self, obj):
+        # Baum-Reihenfolge (Haupt-TOP gefolgt von seinen Unterpunkten) statt
+        # der bloßen Nummern-Sortierung des Meta.ordering.
+        from apps.versammlung.services import tagesordnung_service
+
+        tops = tagesordnung_service.geordnete_tagesordnung(obj)
+        return TagesordnungspunktSerializer(tops, many=True).data
 
     def get_task_status(self, obj):
         return ev_service.task_status(obj)
@@ -438,6 +459,9 @@ class BeschlussSerializer(serializers.ModelSerializer):
         source='objekt.bezeichnung', read_only=True,
     )
     top_nummer = serializers.IntegerField(source='top.nummer', read_only=True, default=None)
+    top_nummer_anzeige = serializers.CharField(
+        source='top.nummer_anzeige', read_only=True, default=None,
+    )
     top_titel = serializers.CharField(source='top.titel', read_only=True, default=None)
     anfechtung_status_display = serializers.CharField(
         source='get_anfechtung_status_display', read_only=True,
@@ -454,7 +478,7 @@ class BeschlussSerializer(serializers.ModelSerializer):
         model = Beschluss
         fields = [
             'id', 'objekt', 'objekt_bezeichnung', 'nummer', 'ev',
-            'top', 'top_nummer', 'top_titel',
+            'top', 'top_nummer', 'top_nummer_anzeige', 'top_titel',
             'beschluss_datum', 'ort', 'wortlaut',
             'ergebnis_ja', 'ergebnis_nein', 'ergebnis_enthaltung',
             'dokument', 'dokument_dateiname', 'vorgang', 'vorgang_nummer',

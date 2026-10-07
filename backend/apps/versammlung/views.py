@@ -219,7 +219,7 @@ class EigentuemerversammlungViewSet(mixins.ListModelMixin,
         ev = self.get_object()
         return Response({
             'tagesordnung': TagesordnungspunktSerializer(
-                ev.tagesordnung.order_by('nummer'), many=True,
+                tagesordnung_service.geordnete_tagesordnung(ev), many=True,
             ).data,
             'probleme': tagesordnung_service.pruefe_vollstaendigkeit(ev),
         })

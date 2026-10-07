@@ -367,7 +367,21 @@ class Tagesordnungspunkt(models.Model):
     ev = models.ForeignKey(
         Eigentuemerversammlung, on_delete=models.CASCADE, related_name='tagesordnung',
     )
-    nummer = models.IntegerField(help_text='Fortlaufend ab 1.')
+    eltern = models.ForeignKey(
+        'self', on_delete=models.CASCADE, null=True, blank=True,
+        related_name='unterpunkte',
+        verbose_name='Übergeordneter TOP',
+        help_text='Gesetzt, wenn dieser Punkt ein Unterpunkt ist (z.B. TOP '
+                  '3.1 unter TOP 3). Nur eine Ebene: ein Unterpunkt kann '
+                  'nicht weiter unterteilt werden. Ein TOP mit Unterpunkten '
+                  'ist ein Gliederungspunkt — über ihn wird NICHT abgestimmt, '
+                  'die Abstimmung erfolgt auf seinen Unterpunkten.',
+    )
+    nummer = models.IntegerField(
+        help_text='Fortlaufend ab 1 je Ebene — Haupt-TOPs und die '
+                  'Unterpunkte eines TOP werden getrennt gezählt. Die '
+                  'Anzeige ("3.1") liefert die Property nummer_anzeige.',
+    )
     titel = models.CharField(max_length=255)
     erlaeuterung = models.TextField(
         blank=True, default='',
@@ -434,11 +448,56 @@ class Tagesordnungspunkt(models.Model):
         verbose_name_plural = 'Tagesordnungspunkte'
         ordering            = ['ev', 'nummer']
         constraints = [
-            models.UniqueConstraint(fields=['ev', 'nummer'], name='uniq_top_nummer_je_ev'),
+            # Eindeutig je Ebene (ev + eltern): Haupt-TOPs und die
+            # Unterpunkte eines TOP zählen jeweils ab 1. nulls_distinct=False
+            # (Django 5 / PostgreSQL 16), damit die Eindeutigkeit auch für
+            # die Haupt-TOPs greift, bei denen eltern NULL ist — sonst wären
+            # zwei Haupt-TOPs mit Nummer 1 erlaubt.
+            models.UniqueConstraint(
+                fields=['ev', 'eltern', 'nummer'],
+                name='uniq_top_nummer_je_ev_ebene',
+                nulls_distinct=False,
+            ),
         ]
+
+    @property
+    def nummer_anzeige(self) -> str:
+        """Anzeige-Nummer: "3" für einen Haupt-TOP, "3.1" für einen Unterpunkt."""
+        if self.eltern_id:
+            return f'{self.eltern.nummer}.{self.nummer}'
+        return str(self.nummer)
+
+    @property
+    def hat_unterpunkte(self) -> bool:
+        """True, wenn dieser TOP ein Gliederungspunkt mit Unterpunkten ist."""
+        return self.unterpunkte.exists()
 
     def clean(self):
         super().clean()
+        if self.eltern_id:
+            if self.eltern_id == self.pk:
+                raise ValidationError({
+                    'eltern': 'Ein TOP kann sich nicht selbst untergeordnet werden.',
+                })
+            if self.ev_id and self.eltern.ev_id != self.ev_id:
+                raise ValidationError({
+                    'eltern': 'Der übergeordnete TOP gehört zu einer anderen '
+                              'Versammlung.',
+                })
+            if self.eltern.eltern_id is not None:
+                raise ValidationError({
+                    'eltern': 'Unterpunkte lassen sich nicht weiter unterteilen '
+                              '— es ist nur eine Ebene vorgesehen (z.B. TOP 3.1).',
+                })
+        # Ein Gliederungspunkt (hat Unterpunkte) wird nicht abgestimmt — die
+        # Abstimmung erfolgt auf den Unterpunkten.
+        if (self.pk and self.abstimmungsmodus != 'kein_beschluss'
+                and self.unterpunkte.exists()):
+            raise ValidationError({
+                'abstimmungsmodus': 'Über einen TOP mit Unterpunkten wird nicht '
+                                    'abgestimmt — die Abstimmung erfolgt auf den '
+                                    'Unterpunkten (z.B. TOP 3.1).',
+            })
         if self.abstimmungsmodus != 'kein_beschluss' and not (self.beschlussvorlage or '').strip():
             raise ValidationError({
                 'beschlussvorlage': 'Beschlussvorlage erforderlich — über einen '
@@ -461,7 +520,7 @@ class Tagesordnungspunkt(models.Model):
             })
 
     def __str__(self):
-        return f"TOP {self.nummer}: {self.titel}"
+        return f"TOP {self.nummer_anzeige}: {self.titel}"
 
 
 class EVTeilnehmer(models.Model):

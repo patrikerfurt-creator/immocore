@@ -37,7 +37,9 @@ from apps.dokumente.services import beleg_service
 from apps.korrespondenz.services.anschrift_service import AnschriftZuLang
 from apps.korrespondenz.services.render_service import RenderFehler
 from apps.versammlung.models import EVVersandprotokoll
-from apps.versammlung.services import einladung_anschreiben_service, ev_service
+from apps.versammlung.services import (
+    einladung_anschreiben_service, ev_service, tagesordnung_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +226,7 @@ def _rendere_einladung_dokument(ev, empfaenger, anlagen) -> bytes:
     kontext = {
         'ev': ev,
         'objekt': ev.objekt,
-        'tagesordnung': list(ev.tagesordnung.order_by('nummer')),
+        'tagesordnung': tagesordnung_service.geordnete_tagesordnung(ev),
         'ladungsfrist': pruefe_ladungsfrist(ev),
         'empfaenger': empfaenger,
         'person': empfaenger.person if empfaenger else None,
@@ -448,7 +450,7 @@ def _versende_mail(ev, teilnehmer, adresse: str, pdf_bytes: bytes, dateiname: st
     kontext = {
         'ev': ev, 'objekt': ev.objekt,
         'person': teilnehmer.person.zustell_adressat(),
-        'tagesordnung': list(ev.tagesordnung.order_by('nummer')),
+        'tagesordnung': tagesordnung_service.geordnete_tagesordnung(ev),
         'ladungsfrist': pruefe_ladungsfrist(ev),
     }
     text_body = render_to_string('email/ev_einladung.txt', kontext)

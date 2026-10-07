@@ -175,7 +175,7 @@ export function BeschlussSammlung() {
                 <div className="text-xs text-gray-500">
                   {new Date(b.beschluss_datum).toLocaleDateString('de-DE')}
                   {b.ort && ` · ${b.ort}`}
-                  {b.top_nummer !== null && ` · TOP ${b.top_nummer}: ${b.top_titel}`}
+                  {b.top_nummer_anzeige !== null && ` · TOP ${b.top_nummer_anzeige}: ${b.top_titel}`}
                 </div>
               </div>
               <div className="flex items-center gap-2">

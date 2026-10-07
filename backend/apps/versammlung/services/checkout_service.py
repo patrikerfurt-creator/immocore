@@ -51,12 +51,12 @@ def checkout(ev, erstellt_von):
         ev.tagesordnung
         .exclude(abstimmungsmodus='kein_beschluss')
         .filter(stimmgrundlage__isnull=True)
-        .values_list('nummer', flat=True)
+        .select_related('eltern')
     )
     if ohne_grundlage:
         raise ValidationError(
             'Checkout nicht möglich — folgenden TOP fehlt eine Stimmgrundlage: '
-            + ', '.join(f'TOP {n}' for n in ohne_grundlage)
+            + ', '.join(f'TOP {t.nummer_anzeige}' for t in ohne_grundlage)
         )
 
     # Ohne ermittelte Teilnehmer gäbe es vor Ort niemanden abzustimmen — und das

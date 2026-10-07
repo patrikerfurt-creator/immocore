@@ -144,7 +144,7 @@ def bewerte_ergebnis(top, ja: Decimal, nein: Decimal, enthaltung: Decimal,
 
     if modus == 'kein_beschluss':
         raise ValidationError(
-            f'TOP {top.nummer} ist ohne Beschlussfassung angelegt — dafür kann '
+            f'TOP {top.nummer_anzeige} ist ohne Beschlussfassung angelegt — dafür kann '
             'kein Abstimmungsergebnis erfasst werden.'
         )
     if modus == 'einfache_mehrheit':
@@ -220,7 +220,7 @@ def erfasse_abstimmung(top, erfasst_von, *, ja, nein, enthaltung=0, bemerkung=No
         ev, 'abstimmung_korrigiert' if war_erfasst else 'abstimmung_erfasst',
         erfasst_von, top=top,
         text=(
-            f'TOP {top.nummer} ({top.get_abstimmungsmodus_display()}): '
+            f'TOP {top.nummer_anzeige} ({top.get_abstimmungsmodus_display()}): '
             f'Ja {ja}, Nein {nein}, Enthaltung {enthaltung} → {ergebnis.upper()}'
         ),
         alter_wert=alt if war_erfasst else '',
@@ -306,7 +306,7 @@ def _uebernehme_tool_ergebnis(top, erfasst_von, ergebnis: dict,
         top.ev, 'abstimmung_korrigiert' if war_erfasst else 'abstimmung_erfasst',
         erfasst_von, top=top,
         text=(
-            f'TOP {top.nummer} ({top.get_abstimmungsmodus_display()}): '
+            f'TOP {top.nummer_anzeige} ({top.get_abstimmungsmodus_display()}): '
             f'Ja {ja}, Nein {nein}, Enthaltung {enthaltung} → '
             f'{entscheidung.upper()} (vom Abstimmtool übernommen){abweichung}'
         ),
@@ -391,13 +391,16 @@ def pruefe_ergebnisse_vollstaendig(ev) -> list:
     ``schliesse_durchfuehrung_ab`` (alter Task4/5-Ablauf über den Status
     ``durchgefuehrt``) wurde entfernt — der einzige Weg zu einer
     abgeschlossenen Abstimmung ist seither ``checkout_service.abschluss``.
+
+    Rückgabe: Anzeige-Nummern (z.B. "3.1") der betroffenen TOPs.
     """
-    return list(
+    offen = (
         ev.tagesordnung
         .exclude(abstimmungsmodus='kein_beschluss')
         .filter(abstimmungsergebnis='offen')
-        .values_list('nummer', flat=True)
+        .select_related('eltern')
     )
+    return [top.nummer_anzeige for top in offen]
 
 
 @transaction.atomic
@@ -421,7 +424,7 @@ def setze_ergebnis_status(top, erfasst_von, ergebnis: str, bemerkung=''):
 
     ev_service.vermerke_ereignis(
         top.ev, 'abstimmung_erfasst', erfasst_von, top=top,
-        text=f'TOP {top.nummer} als {ergebnis} gekennzeichnet. {bemerkung}'.strip(),
+        text=f'TOP {top.nummer_anzeige} als {ergebnis} gekennzeichnet. {bemerkung}'.strip(),
         alter_wert=alt, neuer_wert=ergebnis,
     )
     return top

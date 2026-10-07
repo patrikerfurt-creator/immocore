@@ -458,7 +458,7 @@ class PruefeErgebnisseVollstaendigTest(_Basis):
         top = self._top(titel='Mit Beschluss')
         self.assertEqual(
             durchfuehrung_service.pruefe_ergebnisse_vollstaendig(self.ev),
-            [top.nummer],
+            [top.nummer_anzeige],
         )
 
     def test_kein_beschluss_zaehlt_nicht_als_offen(self):

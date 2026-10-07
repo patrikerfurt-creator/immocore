@@ -92,6 +92,11 @@
     border-bottom: 1px dotted #bbb;
   }
   .top:last-child { border-bottom: none; }
+  .top.unterpunkt {
+    margin-left: 18pt;
+    padding-bottom: 6pt;
+    border-bottom: 1px dotted #ddd;
+  }
   .top-titel { font-weight: bold; font-size: 10.5pt; color: #1a3c5e; }
   .top-label {
     font-size: 8pt;
@@ -219,15 +224,17 @@
 <h2>Tagesordnung und Beschlüsse</h2>
 
 {% for top in tagesordnung %}
-  <div class="top">
-    <div class="top-titel">TOP {{ top.nummer }}: {{ top.titel }}</div>
+  <div class="top{% if top.eltern_id %} unterpunkt{% endif %}">
+    <div class="top-titel">TOP {{ top.nummer_anzeige }}: {{ top.titel }}</div>
 
     {% if top.erlaeuterung %}
       <div class="top-label">Erläuterung</div>
       <div>{{ top.erlaeuterung|linebreaksbr }}</div>
     {% endif %}
 
-    {% if top.abstimmungsmodus == 'kein_beschluss' %}
+    {% if top.hat_unterpunkte %}
+      <div class="ergebnis neutral">Gliederungspunkt — die Beschlussfassung erfolgt in den Unterpunkten.</div>
+    {% elif top.abstimmungsmodus == 'kein_beschluss' %}
       <div class="ergebnis neutral">Ohne Beschlussfassung — Bericht bzw. Information.</div>
     {% else %}
       <div class="top-label">Beschlusstext</div>
@@ -280,7 +287,7 @@
       {% for beschluss in beschluesse %}
         <tr>
           <td class="num">{{ beschluss.nummer }}</td>
-          <td>{% if beschluss.top %}TOP {{ beschluss.top.nummer }}{% else %}—{% endif %}</td>
+          <td>{% if beschluss.top %}TOP {{ beschluss.top.nummer_anzeige }}{% else %}—{% endif %}</td>
           <td>{{ beschluss.wortlaut|truncatechars:70 }}</td>
           <td class="num">{{ beschluss.ergebnis_ja|floatformat:"-4" }}</td>
           <td class="num">{{ beschluss.ergebnis_nein|floatformat:"-4" }}</td>
