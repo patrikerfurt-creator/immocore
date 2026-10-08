@@ -83,32 +83,6 @@ function TerminierungPanel({ ev }: { ev: EVDetail }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-1">
-        <label className="text-sm font-medium text-gray-700">Ort (aus Katalog)</label>
-        <select
-          className="rounded border border-gray-300 px-3 py-2 text-sm"
-          value={versammlungsortId}
-          onChange={e => {
-            const id = e.target.value
-            setVersammlungsortId(id)
-            const vo = (versammlungsorte ?? []).find(v => v.id === id)
-            if (vo) setOrt(ortAusKatalog(vo))
-          }}
-        >
-          <option value="">— kein Katalogeintrag —</option>
-          {(versammlungsorte ?? [])
-            .filter(vo => vo.aktiv || vo.id === versammlungsortId)
-            .map(vo => (
-              <option key={vo.id} value={vo.id}>
-                {ortAusKatalog(vo)}
-              </option>
-            ))}
-        </select>
-        <p className="text-xs text-gray-500">
-          Auswahl übernimmt den Ort ins Textfeld unten — dort bleibt er
-          maßgeblich und frei anpassbar.
-        </p>
-      </div>
       <div className="grid gap-4 md:grid-cols-2">
         <div className="flex flex-col gap-1">
           <label className="text-sm font-medium text-gray-700">Termin</label>
@@ -119,12 +93,36 @@ function TerminierungPanel({ ev }: { ev: EVDetail }) {
             onChange={e => setTermin(e.target.value)}
           />
         </div>
-        <Input
-          label="Ort"
-          placeholder="z.B. Gemeinschaftsraum EG"
-          value={ort}
-          onChange={e => setOrt(e.target.value)}
-        />
+        <div className="flex flex-col gap-1">
+          <label className="text-sm font-medium text-gray-700">Ort</label>
+          <select
+            className="rounded border border-gray-300 px-3 py-2 text-sm"
+            value={versammlungsortId}
+            onChange={e => {
+              const id = e.target.value
+              setVersammlungsortId(id)
+              const vo = (versammlungsorte ?? []).find(v => v.id === id)
+              setOrt(vo ? ortAusKatalog(vo) : '')
+            }}
+          >
+            <option value="">— bitte wählen —</option>
+            {(versammlungsorte ?? [])
+              .filter(vo => vo.aktiv || vo.id === versammlungsortId)
+              .map(vo => (
+                <option key={vo.id} value={vo.id}>
+                  {ortAusKatalog(vo)}
+                </option>
+              ))}
+          </select>
+          {ort && (
+            <p className="text-xs text-gray-500">
+              Gespeicherter Ort: <span className="font-medium text-gray-700">{ort}</span>
+            </p>
+          )}
+          <p className="text-xs text-gray-500">
+            Orte werden im Katalog <em>Kataloge → Versammlungsorte</em> gepflegt.
+          </p>
+        </div>
       </div>
       <div className="flex flex-col gap-1">
         <label className="text-sm font-medium text-gray-700">Notizen zur Raumbuchung</label>
