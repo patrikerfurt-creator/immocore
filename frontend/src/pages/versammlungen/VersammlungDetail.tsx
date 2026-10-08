@@ -6,6 +6,7 @@ import { versammlungApi, versammlungDurchfuehrungApi, versammlungsortApi, ortAus
 import { Badge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import { Input } from '../../components/ui/Input'
+import { StimmgrundlagenErgaenzenPanel } from './StimmgrundlagenErgaenzenPanel'
 import type {
   EVAbstimmungsmodus, EVDetail, EVVersandkanal, Tagesordnungspunkt,
 } from '../../types'
@@ -370,6 +371,7 @@ function TagesordnungPanel({ ev }: { ev: EVDetail }) {
   const [formOffen, setFormOffen] = useState(false)
   // Welcher TOP gerade im Änderungs-Formular offen ist (null = keiner).
   const [editTopId, setEditTopId] = useState<string | null>(null)
+  const [stimmgrundlageOffen, setStimmgrundlageOffen] = useState(false)
   const [fehler, setFehler] = useState('')
 
   const { data } = useQuery({
@@ -419,6 +421,35 @@ function TagesordnungPanel({ ev }: { ev: EVDetail }) {
           {data!.probleme.map(p => <li key={p}>{p}</li>)}
         </ul>
       )}
+
+      {/* Stimmgrundlagen der Versammlung — vor Versand ergänzbar, danach
+          festgeschrieben. Je TOP wird darunter aus diesen Grundlagen gewählt. */}
+      <div className="rounded border border-gray-200 px-3 py-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm text-gray-700">
+            Stimmgrundlagen:{' '}
+            <span className="text-gray-900">
+              {ev.stimmgrundlagen.map(g => g.bezeichnung_anzeige).join(', ') || '—'}
+            </span>
+          </p>
+          {!nachVersand && (
+            <Button variant="secondary" onClick={() => setStimmgrundlageOffen(o => !o)}>
+              {stimmgrundlageOffen ? 'Abbrechen' : '+ Stimmgrundlage hinzufügen'}
+            </Button>
+          )}
+        </div>
+        {!nachVersand && stimmgrundlageOffen && (
+          <div className="mt-3">
+            <StimmgrundlagenErgaenzenPanel
+              ev={ev}
+              onFertig={() => {
+                setStimmgrundlageOffen(false)
+                queryClient.invalidateQueries({ queryKey: ['versammlung', ev.id] })
+              }}
+            />
+          </div>
+        )}
+      </div>
 
       {fehler && <p className="text-sm text-red-600">{fehler}</p>}
 
