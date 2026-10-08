@@ -67,6 +67,8 @@ export const objekteApi = {
   // Verteilerschlüssel (Flächen / MEA)
   verteilerschluessel: (params?: Record<string, string>) =>
     client.get<Verteilerschluessel[]>('/verteilerschluessel/', { params }).then(r => r.data),
+  createVerteilerschluessel: (data: Partial<Verteilerschluessel>) =>
+    client.post<Verteilerschluessel>('/verteilerschluessel/', data).then(r => r.data),
   wertSetzen: (schluesselId: string, einheitId: string, wert: string, wirtschaftsjahr = 0) =>
     client.post<VerteilerschluesselWert>(
       `/verteilerschluessel/${schluesselId}/wert-setzen/`,

@@ -51,6 +51,12 @@ class VerteilerschluesselWertSerializer(serializers.ModelSerializer):
 class VerteilerschluesselSerializer(serializers.ModelSerializer):
     werte = serializers.SerializerMethodField()
     summe = serializers.SerializerMethodField()
+    # Optionale Stammdaten dürfen beim Anlegen leer bleiben: einheit (z. B. bei
+    # Kopf-Schlüsseln) und vs_typ sind nicht für jeden Schlüssel gesetzt. Das
+    # Modell hat default='' bzw. null=True, DRF würde ohne diese Felder aber
+    # allow_blank=False erzwingen und leere Eingaben mit 400 ablehnen.
+    einheit = serializers.CharField(required=False, allow_blank=True, default='')
+    schluessel_typ = serializers.CharField(required=False, allow_blank=True, default='')
 
     # Verbrauchs-VS: Werte liegen in EinheitVerbrauch, nicht in VerteilerschluesselWert
     VERBRAUCH_CODES = ('140', '141', '142', '143', '144', '145')

@@ -208,6 +208,11 @@ export function VerteilerschluesselPage() {
   const [zielWj, setZielWj] = useState('')
   const [kopierenResult, setKopierenResult] = useState<string | null>(null)
 
+  const leeresFormular = { bezeichnung: '', schluessel: '', vs_typ: '', einheit: '', reihenfolge: '' }
+  const [anlegenOffen, setAnlegenOffen] = useState(false)
+  const [neuVs, setNeuVs] = useState(leeresFormular)
+  const [anlegenFehler, setAnlegenFehler] = useState<string | null>(null)
+
   const { data: wirtschaftsjahre = [] } = useQuery({
     queryKey: ['wirtschaftsjahre', objektId],
     queryFn: () => objekteApi.wirtschaftsjahre(objektId!),
@@ -248,6 +253,34 @@ export function VerteilerschluesselPage() {
     },
   })
 
+  const anlegenMut = useMutation({
+    mutationFn: () =>
+      objekteApi.createVerteilerschluessel({
+        objekt: objektId!,
+        bezeichnung: neuVs.bezeichnung.trim(),
+        schluessel: neuVs.schluessel.trim(),
+        vs_typ: (neuVs.vs_typ || null) as Verteilerschluessel['vs_typ'],
+        einheit: neuVs.einheit.trim(),
+        reihenfolge: neuVs.reihenfolge ? Number(neuVs.reihenfolge) : 1,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['verteilerschluessel', objektId] })
+      setAnlegenOffen(false)
+      setNeuVs(leeresFormular)
+      setAnlegenFehler(null)
+    },
+    onError: (err: any) => {
+      // unique_together (objekt, bezeichnung) o.ä. als Klartext zeigen
+      const data = err?.response?.data
+      const text =
+        data?.non_field_errors?.[0] ||
+        data?.bezeichnung?.[0] ||
+        (typeof data === 'object' && data ? Object.values(data)[0] : null) ||
+        'Anlegen fehlgeschlagen.'
+      setAnlegenFehler(String(text))
+    },
+  })
+
   if (!objektId) {
     return (
       <div>
@@ -285,7 +318,18 @@ export function VerteilerschluesselPage() {
         <div className="flex items-center gap-2">
           <span className="text-sm text-gray-500">{vsList.length} Schlüssel</span>
           <button
-            onClick={() => { setKopierenOffen(o => !o); setKopierenResult(null) }}
+            onClick={() => {
+              setAnlegenOffen(o => !o)
+              setAnlegenFehler(null)
+              setNeuVs(leeresFormular)
+              setKopierenOffen(false)
+            }}
+            className="px-3 py-1.5 bg-primary-600 text-white text-sm rounded hover:bg-primary-700"
+          >
+            + Neuer Verteilerschlüssel
+          </button>
+          <button
+            onClick={() => { setKopierenOffen(o => !o); setKopierenResult(null); setAnlegenOffen(false) }}
             className="px-3 py-1.5 border border-gray-300 text-sm rounded hover:bg-gray-50"
           >
             Ins nächste Jahr kopieren
@@ -314,6 +358,91 @@ export function VerteilerschluesselPage() {
       {selectedWj > 0 && !kopierenOffen && (
         <div className="mb-4 bg-yellow-50 border border-yellow-200 text-yellow-800 rounded px-4 py-2 text-sm">
           Anzeige der Werte für <strong>WJ {selectedWj}</strong>. Einheiten mit 0 Werten haben noch keine WJ-spezifischen Einträge — ggf. aus Zeitlos kopieren.
+        </div>
+      )}
+
+      {/* Anlegen-Panel */}
+      {anlegenOffen && (
+        <div className="mb-4 bg-white border border-gray-300 rounded-lg p-4 text-sm">
+          <p className="font-medium text-gray-800 mb-3">Neuen Verteilerschlüssel anlegen</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+            <label className="flex flex-col gap-1">
+              <span className="text-gray-600">Bezeichnung *</span>
+              <input
+                type="text"
+                value={neuVs.bezeichnung}
+                onChange={e => setNeuVs(v => ({ ...v, bezeichnung: e.target.value }))}
+                className="border border-gray-300 rounded px-2 py-1.5"
+                placeholder="z. B. Heizkosten nach Fläche"
+                maxLength={80}
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-gray-600">Schlüssel-Code</span>
+              <input
+                type="text"
+                value={neuVs.schluessel}
+                onChange={e => setNeuVs(v => ({ ...v, schluessel: e.target.value }))}
+                className="border border-gray-300 rounded px-2 py-1.5 font-mono"
+                placeholder="z. B. 030"
+                maxLength={3}
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-gray-600">Typ</span>
+              <select
+                value={neuVs.vs_typ}
+                onChange={e => setNeuVs(v => ({ ...v, vs_typ: e.target.value }))}
+                className="border border-gray-300 rounded px-2 py-1.5 bg-white"
+              >
+                <option value="">— ohne —</option>
+                {Object.entries(vsTypLabel).map(([val, label]) => (
+                  <option key={val} value={val}>{label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-gray-600">Einheit (z. B. m², MEA)</span>
+              <input
+                type="text"
+                value={neuVs.einheit}
+                onChange={e => setNeuVs(v => ({ ...v, einheit: e.target.value }))}
+                className="border border-gray-300 rounded px-2 py-1.5"
+                placeholder="optional"
+                maxLength={20}
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-gray-600">Reihenfolge</span>
+              <input
+                type="number"
+                min={1}
+                value={neuVs.reihenfolge}
+                onChange={e => setNeuVs(v => ({ ...v, reihenfolge: e.target.value }))}
+                className="border border-gray-300 rounded px-2 py-1.5 w-28"
+                placeholder="1"
+              />
+            </label>
+          </div>
+          {anlegenFehler && <p className="mb-3 text-red-600">{anlegenFehler}</p>}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => anlegenMut.mutate()}
+              disabled={anlegenMut.isPending || !neuVs.bezeichnung.trim()}
+              className="px-4 py-1.5 bg-primary-600 text-white rounded hover:bg-primary-700 disabled:opacity-50"
+            >
+              {anlegenMut.isPending ? 'Anlegen…' : 'Anlegen'}
+            </button>
+            <button
+              onClick={() => { setAnlegenOffen(false); setAnlegenFehler(null) }}
+              className="px-3 py-1.5 border border-gray-300 rounded hover:bg-gray-50"
+            >
+              Abbrechen
+            </button>
+            <span className="text-gray-400 text-xs">
+              Werte je Einheit werden anschließend im Schlüssel-Detail erfasst.
+            </span>
+          </div>
         </div>
       )}
 
