@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
 import { dokumenteApi } from '../../api/dokumente'
-import { versammlungApi, versammlungDurchfuehrungApi } from '../../api/versammlung'
+import { versammlungApi, versammlungDurchfuehrungApi, versammlungsortApi, ortAusKatalog } from '../../api/versammlung'
 import { Badge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import { Input } from '../../components/ui/Input'
@@ -50,19 +50,28 @@ function TerminierungPanel({ ev }: { ev: EVDetail }) {
   const queryClient = useQueryClient()
   const [termin, setTermin] = useState(isoZuLokal(ev.termin))
   const [ort, setOrt] = useState(ev.ort)
+  const [versammlungsortId, setVersammlungsortId] = useState(ev.versammlungsort ?? '')
   const [notizen, setNotizen] = useState(ev.raum_buchung_notizen)
   const [fehler, setFehler] = useState('')
 
   useEffect(() => {
     setTermin(isoZuLokal(ev.termin))
     setOrt(ev.ort)
+    setVersammlungsortId(ev.versammlungsort ?? '')
     setNotizen(ev.raum_buchung_notizen)
-  }, [ev.id, ev.termin, ev.ort, ev.raum_buchung_notizen])
+  }, [ev.id, ev.termin, ev.ort, ev.versammlungsort, ev.raum_buchung_notizen])
+
+  const { data: versammlungsorte } = useQuery({
+    queryKey: ['versammlungsorte'],
+    queryFn: () => versammlungsortApi.list(),
+    staleTime: 60_000,
+  })
 
   const speichern = useMutation({
     mutationFn: () => versammlungApi.update(ev.id, {
       termin: termin ? new Date(termin).toISOString() : null,
       ort,
+      versammlungsort: versammlungsortId || null,
       raum_buchung_notizen: notizen,
     } as Partial<EVDetail>),
     onSuccess: () => {
@@ -74,6 +83,32 @@ function TerminierungPanel({ ev }: { ev: EVDetail }) {
 
   return (
     <div className="space-y-4">
+      <div className="flex flex-col gap-1">
+        <label className="text-sm font-medium text-gray-700">Ort (aus Katalog)</label>
+        <select
+          className="rounded border border-gray-300 px-3 py-2 text-sm"
+          value={versammlungsortId}
+          onChange={e => {
+            const id = e.target.value
+            setVersammlungsortId(id)
+            const vo = (versammlungsorte ?? []).find(v => v.id === id)
+            if (vo) setOrt(ortAusKatalog(vo))
+          }}
+        >
+          <option value="">— kein Katalogeintrag —</option>
+          {(versammlungsorte ?? [])
+            .filter(vo => vo.aktiv || vo.id === versammlungsortId)
+            .map(vo => (
+              <option key={vo.id} value={vo.id}>
+                {ortAusKatalog(vo)}
+              </option>
+            ))}
+        </select>
+        <p className="text-xs text-gray-500">
+          Auswahl übernimmt den Ort ins Textfeld unten — dort bleibt er
+          maßgeblich und frei anpassbar.
+        </p>
+      </div>
       <div className="grid gap-4 md:grid-cols-2">
         <div className="flex flex-col gap-1">
           <label className="text-sm font-medium text-gray-700">Termin</label>

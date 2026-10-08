@@ -128,6 +128,16 @@ export const versammlungApi = {
       .then(r => r.data),
 }
 
+// Baut aus einem Katalogeintrag den maßgeblichen Ort-Text (GoBD-Snapshot), der
+// in das Feld ``ort`` übernommen wird — der Katalog dient nur der Vorbelegung.
+export function ortAusKatalog(vo: Versammlungsort): string {
+  const plzOrt = [vo.plz, vo.ort_text].filter(Boolean).join(' ').trim()
+  return [vo.bezeichnung, vo.strasse, plzOrt, vo.zusatz]
+    .map(t => t.trim())
+    .filter(Boolean)
+    .join(', ')
+}
+
 export const versammlungsortApi = {
   list: () => client.get<Versammlungsort[]>('/versammlungsorte/').then(r => r.data),
   get: (id: string) =>

@@ -2,8 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import { objekteApi } from '../../api/objekte'
-import { versammlungApi, versammlungsortApi } from '../../api/versammlung'
-import type { Versammlungsort } from '../../types'
+import { versammlungApi, versammlungsortApi, ortAusKatalog } from '../../api/versammlung'
 import { Badge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import { Input } from '../../components/ui/Input'
@@ -145,16 +144,6 @@ const STIMMPRINZIP_OPTIONEN: { value: EVStimmprinzip; label: string }[] = [
   { value: 'kopf', label: 'Kopfprinzip — eine Stimme je Eigentümer' },
   { value: 'verteilerschluessel', label: 'Nach Verteilerschlüssel (laut Teilungserklärung)' },
 ]
-
-// Baut aus einem Katalogeintrag den maßgeblichen Ort-Text (GoBD-Snapshot), der
-// in das Feld ``ort`` übernommen wird — der Katalog dient nur der Vorbelegung.
-function ortAusKatalog(vo: Versammlungsort): string {
-  const plzOrt = [vo.plz, vo.ort_text].filter(Boolean).join(' ').trim()
-  return [vo.bezeichnung, vo.strasse, plzOrt, vo.zusatz]
-    .map(t => t.trim())
-    .filter(Boolean)
-    .join(', ')
-}
 
 function terminText(termin: string | null) {
   if (!termin) return '—'
