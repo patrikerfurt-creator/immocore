@@ -122,6 +122,8 @@ class EigentuemerversammlungViewSet(mixins.ListModelMixin,
                 stimm_verteilerschluessel=daten.get('stimm_verteilerschluessel'),
                 stimm_wirtschaftsjahr=daten['stimm_wirtschaftsjahr'],
                 einladungstext=daten.get('einladungstext'),
+                ort=daten.get('ort', ''),
+                versammlungsort=daten.get('versammlungsort'),
             )
         except DjangoValidationError as exc:
             return _fehler(exc)

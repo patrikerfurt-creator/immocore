@@ -103,17 +103,23 @@ def vermerke_ereignis(ev, typ, erstellt_von=None, *, text='', alter_wert='',
 def erstelle_ev(*, objekt, erstellt_von, arbeitsname='', art='ordentlich',
                 stimmprinzip='kopf', stimm_verteilerschluessel=None,
                 stimm_wirtschaftsjahr=0,
-                einladungstext=None) -> Eigentuemerversammlung:
+                einladungstext=None, ort='', versammlungsort=None) -> Eigentuemerversammlung:
     """Legt einen neuen EV-Prozess an (Status ``entwurf``, alle Tasks offen).
 
     ``einladungstext`` wird mit ``EINLADUNGSTEXT_VORLAGE`` vorbelegt, damit
     Task 3 nicht auf einem leeren Feld startet; der Text ist danach frei
     editierbar.
+
+    ``versammlungsort`` ist die Katalog-FK (Vorbelegung), ``ort`` das
+    maßgebliche GoBD-Textfeld (Snapshot). Beide sind optional — der Ort lässt
+    sich auch später in Task 1 (Terminierung) setzen.
     """
     ev = Eigentuemerversammlung(
         objekt=objekt,
         arbeitsname=arbeitsname,
         art=art,
+        ort=ort or '',
+        versammlungsort=versammlungsort,
         stimmprinzip=stimmprinzip,
         stimm_verteilerschluessel=stimm_verteilerschluessel,
         stimm_wirtschaftsjahr=stimm_wirtschaftsjahr,

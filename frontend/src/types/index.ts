@@ -1701,6 +1701,8 @@ export interface EVCreatePayload {
   stimmprinzip?: EVStimmprinzip
   stimm_verteilerschluessel?: string | null
   stimm_wirtschaftsjahr?: number
+  ort?: string
+  versammlungsort?: string | null
 }
 
 export interface EVTeilnehmerAnteil {

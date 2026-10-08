@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import { objekteApi } from '../../api/objekte'
-import { versammlungApi } from '../../api/versammlung'
+import { versammlungApi, versammlungsortApi } from '../../api/versammlung'
+import type { Versammlungsort } from '../../types'
 import { Badge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import { Input } from '../../components/ui/Input'
@@ -145,6 +146,16 @@ const STIMMPRINZIP_OPTIONEN: { value: EVStimmprinzip; label: string }[] = [
   { value: 'verteilerschluessel', label: 'Nach Verteilerschlüssel (laut Teilungserklärung)' },
 ]
 
+// Baut aus einem Katalogeintrag den maßgeblichen Ort-Text (GoBD-Snapshot), der
+// in das Feld ``ort`` übernommen wird — der Katalog dient nur der Vorbelegung.
+function ortAusKatalog(vo: Versammlungsort): string {
+  const plzOrt = [vo.plz, vo.ort_text].filter(Boolean).join(' ').trim()
+  return [vo.bezeichnung, vo.strasse, plzOrt, vo.zusatz]
+    .map(t => t.trim())
+    .filter(Boolean)
+    .join(', ')
+}
+
 function terminText(termin: string | null) {
   if (!termin) return '—'
   return new Date(termin).toLocaleString('de-DE', {
@@ -168,10 +179,17 @@ export function VersammlungenListe() {
   const [neuArt, setNeuArt] = useState<EVArt>('ordentlich')
   const [neuStimmprinzip, setNeuStimmprinzip] = useState<EVStimmprinzip>('kopf')
   const [neuVs, setNeuVs] = useState('')
+  const [neuVersammlungsort, setNeuVersammlungsort] = useState('')
 
   const { data: objekte } = useQuery({
     queryKey: ['objekte'],
     queryFn: () => objekteApi.list(),
+    staleTime: 60_000,
+  })
+
+  const { data: versammlungsorte } = useQuery({
+    queryKey: ['versammlungsorte'],
+    queryFn: () => versammlungsortApi.list(),
     staleTime: 60_000,
   })
 
@@ -194,16 +212,22 @@ export function VersammlungenListe() {
   })
 
   const anlegen = useMutation({
-    mutationFn: () => versammlungApi.create({
-      objekt: neuObjekt,
-      arbeitsname: neuArbeitsname,
-      art: neuArt,
-      stimmprinzip: neuStimmprinzip,
-      stimm_verteilerschluessel:
-        neuStimmprinzip === 'verteilerschluessel' ? neuVs : null,
-    }),
+    mutationFn: () => {
+      const vo = (versammlungsorte ?? []).find(v => v.id === neuVersammlungsort)
+      return versammlungApi.create({
+        objekt: neuObjekt,
+        arbeitsname: neuArbeitsname,
+        art: neuArt,
+        stimmprinzip: neuStimmprinzip,
+        stimm_verteilerschluessel:
+          neuStimmprinzip === 'verteilerschluessel' ? neuVs : null,
+        versammlungsort: vo ? vo.id : null,
+        ort: vo ? ortAusKatalog(vo) : '',
+      })
+    },
     onSuccess: (ev: EVDetail) => {
       setNeuArbeitsname('')
+      setNeuVersammlungsort('')
       setFehler('')
       // Formular bleibt offen — es folgt die optionale Ergänzung weiterer
       // Stimmgrundlagen (Spec v1.1 Kap. 2), erst danach wird geschlossen.
@@ -266,6 +290,27 @@ export function VersammlungenListe() {
               value={neuArbeitsname}
               onChange={e => setNeuArbeitsname(e.target.value)}
             />
+            <div className="flex flex-col gap-1">
+              <label className="text-sm font-medium text-gray-700">Ort (aus Katalog)</label>
+              <select
+                className="rounded border border-gray-300 px-3 py-2 text-sm"
+                value={neuVersammlungsort}
+                onChange={e => setNeuVersammlungsort(e.target.value)}
+              >
+                <option value="">— später festlegen —</option>
+                {(versammlungsorte ?? [])
+                  .filter(vo => vo.aktiv)
+                  .map(vo => (
+                    <option key={vo.id} value={vo.id}>
+                      {ortAusKatalog(vo)}
+                    </option>
+                  ))}
+              </select>
+              <p className="text-xs text-gray-500">
+                Aus dem Katalog der Versammlungsorte. Der gewählte Eintrag wird
+                als Ort übernommen und lässt sich in Task 1 noch anpassen.
+              </p>
+            </div>
             <div className="flex flex-col gap-1">
               <label className="text-sm font-medium text-gray-700">Art</label>
               <select

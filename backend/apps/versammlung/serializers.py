@@ -300,6 +300,13 @@ class EigentuemerversammlungCreateSerializer(serializers.Serializer):
     arbeitsname = serializers.CharField(
         max_length=200, required=False, allow_blank=True, default='',
     )
+    ort = serializers.CharField(max_length=255, required=False, allow_blank=True, default='')
+    versammlungsort = serializers.PrimaryKeyRelatedField(
+        queryset=Versammlungsort.objects.all(), required=False, allow_null=True,
+        help_text='Katalogeintrag zur Vorbelegung — "ort" bleibt das '
+                  'maßgebliche GoBD-Textfeld (Snapshot) und wird vom Frontend '
+                  'aus dem gewählten Katalogeintrag befüllt.',
+    )
     art = serializers.ChoiceField(
         choices=Eigentuemerversammlung.ART_CHOICES, default='ordentlich',
     )
