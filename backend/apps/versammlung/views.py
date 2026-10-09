@@ -725,7 +725,8 @@ class BeschlussViewSet(mixins.ListModelMixin,
         if jahr := params.get('jahr'):
             if str(jahr).isdigit():
                 qs = qs.filter(beschluss_datum__year=int(jahr))
-        return qs.order_by('objekt', '-nummer')
+        # Aufsteigend je Objekt: Beschluss Nr. 1 oben (Sammlungs-Ansicht).
+        return qs.order_by('objekt', 'nummer')
 
     @action(detail=True, methods=['post'])
     def anfechtung(self, request, pk=None):

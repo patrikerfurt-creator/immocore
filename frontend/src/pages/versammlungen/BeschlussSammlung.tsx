@@ -215,7 +215,15 @@ export function BeschlussSammlung() {
   const [objektFilter, setObjektFilter] = useState(searchParams.get('objekt') ?? '')
   const [anfechtungFilter, setAnfechtungFilter] = useState('')
   const [offenesFormular, setOffenesFormular] = useState<string | null>(null)
+  const [offeneBeschluesse, setOffeneBeschluesse] = useState<Set<string>>(new Set())
   const [nachtragOffen, setNachtragOffen] = useState(false)
+
+  const toggleBeschluss = (id: string) => setOffeneBeschluesse(prev => {
+    const next = new Set(prev)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    return next
+  })
 
   const { data: objekte } = useQuery({
     queryKey: ['objekte'],
@@ -299,89 +307,108 @@ export function BeschlussSammlung() {
         <p className="text-sm text-gray-500">Keine Beschlüsse vorhanden.</p>
       )}
 
-      <div className="space-y-3">
-        {(beschluesse ?? []).map(b => (
-          <div key={b.id} className="rounded border border-gray-200 bg-white p-4">
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <div>
-                <div className="font-medium text-gray-900">
-                  Beschluss {b.nummer} — {b.objekt_bezeichnung}
-                </div>
-                <div className="text-xs text-gray-500">
-                  {new Date(b.beschluss_datum).toLocaleDateString('de-DE')}
-                  {b.ort && ` · ${b.ort}`}
-                  {b.top_nummer_anzeige !== null && ` · TOP ${b.top_nummer_anzeige}`}
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Badge value={b.ergebnis} label={b.ergebnis_display} />
-                <Badge
-                  value={badgeWert(b.anfechtung_status)}
-                  label={b.anfechtung_status_display}
-                />
-                {b.dokument && (
-                  <Button variant="secondary" size="sm"
-                    onClick={() => dokumenteApi.openDatei(b.dokument!)}>
-                    PDF
-                  </Button>
+      <div className="space-y-2">
+        {(beschluesse ?? []).map(b => {
+          const offen = offeneBeschluesse.has(b.id)
+          return (
+            <div key={b.id} className="rounded border border-gray-200 bg-white">
+              {/* Kompakte Zeile: nur Beschlussnummer + TOP-Überschrift */}
+              <button
+                type="button"
+                onClick={() => toggleBeschluss(b.id)}
+                aria-expanded={offen}
+                className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-gray-50"
+              >
+                <span className="shrink-0 text-xs text-gray-400">{offen ? '▼' : '▶'}</span>
+                <span className="shrink-0 font-medium text-gray-900">
+                  Beschluss {b.nummer}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-sm text-gray-700">
+                  {b.ueberschrift || <span className="italic text-gray-400">ohne Überschrift</span>}
+                </span>
+                {b.anfechtung_status !== 'keine' && (
+                  <Badge
+                    value={badgeWert(b.anfechtung_status)}
+                    label={b.anfechtung_status_display}
+                  />
                 )}
-                <Button
-                  variant="ghost" size="sm"
-                  onClick={() => setOffenesFormular(
-                    offenesFormular === b.id ? null : b.id,
+              </button>
+
+              {/* Detail: klappt erst beim Klick auf */}
+              {offen && (
+                <div className="space-y-3 border-t border-gray-100 px-4 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-xs text-gray-500">
+                      {b.objekt_bezeichnung}
+                      {' · '}{new Date(b.beschluss_datum).toLocaleDateString('de-DE')}
+                      {b.ort && ` · ${b.ort}`}
+                      {b.top_nummer_anzeige !== null && ` · TOP ${b.top_nummer_anzeige}`}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge value={b.ergebnis} label={b.ergebnis_display} />
+                      {b.dokument && (
+                        <Button variant="secondary" size="sm"
+                          onClick={() => dokumenteApi.openDatei(b.dokument!)}>
+                          PDF
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost" size="sm"
+                        onClick={() => setOffenesFormular(
+                          offenesFormular === b.id ? null : b.id,
+                        )}
+                      >
+                        Anfechtung
+                      </Button>
+                    </div>
+                  </div>
+
+                  <p className="border-l-2 border-primary-500 pl-3 whitespace-pre-line text-sm">
+                    {b.wortlaut}
+                  </p>
+
+                  {(b.ev || b.vorgang_nummer) && (
+                    <div className="text-xs text-gray-500">
+                      {b.ev && (
+                        <Link to={`/versammlungen/${b.ev}`} className="text-primary-600 hover:underline">
+                          zur Versammlung
+                        </Link>
+                      )}
+                      {b.ev && b.vorgang_nummer && ' · '}
+                      {b.vorgang_nummer && (
+                        <Link to={`/vorgaenge/${b.vorgang}`} className="text-primary-600 hover:underline">
+                          {b.vorgang_nummer}
+                        </Link>
+                      )}
+                    </div>
                   )}
-                >
-                  Anfechtung
-                </Button>
-              </div>
-            </div>
 
-            <div className="mt-2 border-l-2 border-primary-500 pl-3">
-              {b.ueberschrift && (
-                <div className="text-sm font-semibold text-gray-900">{b.ueberschrift}</div>
+                  <div className="text-xs text-gray-400">
+                    Erfasst
+                    {b.erstellt_von_name && ` von ${b.erstellt_von_name}`}
+                    {b.erstellt_am && ` am ${new Date(b.erstellt_am).toLocaleDateString('de-DE')}`}
+                    {!b.ev && ' · Nachtrag (keine Versammlung im System)'}
+                  </div>
+
+                  {b.anfechtung_notiz && (
+                    <p className="text-xs text-amber-700">{b.anfechtung_notiz}</p>
+                  )}
+                  {b.aufgehoben_am && (
+                    <p className="text-xs text-red-700">
+                      Gerichtlich aufgehoben am{' '}
+                      {new Date(b.aufgehoben_am).toLocaleDateString('de-DE')}
+                      {b.gerichtlicher_hinweis && ` — ${b.gerichtlicher_hinweis}`}
+                    </p>
+                  )}
+
+                  {offenesFormular === b.id && (
+                    <AnfechtungForm beschluss={b} onFertig={aktualisieren} />
+                  )}
+                </div>
               )}
-              <p className="whitespace-pre-line text-sm">{b.wortlaut}</p>
             </div>
-
-            {(b.ev || b.vorgang_nummer) && (
-              <div className="mt-2 text-xs text-gray-500">
-                {b.ev && (
-                  <Link to={`/versammlungen/${b.ev}`} className="text-primary-600 hover:underline">
-                    zur Versammlung
-                  </Link>
-                )}
-                {b.ev && b.vorgang_nummer && ' · '}
-                {b.vorgang_nummer && (
-                  <Link to={`/vorgaenge/${b.vorgang}`} className="text-primary-600 hover:underline">
-                    {b.vorgang_nummer}
-                  </Link>
-                )}
-              </div>
-            )}
-
-            <div className="mt-1 text-xs text-gray-400">
-              Erfasst
-              {b.erstellt_von_name && ` von ${b.erstellt_von_name}`}
-              {b.erstellt_am && ` am ${new Date(b.erstellt_am).toLocaleDateString('de-DE')}`}
-              {!b.ev && ' · Nachtrag (keine Versammlung im System)'}
-            </div>
-
-            {b.anfechtung_notiz && (
-              <p className="mt-2 text-xs text-amber-700">{b.anfechtung_notiz}</p>
-            )}
-            {b.aufgehoben_am && (
-              <p className="mt-1 text-xs text-red-700">
-                Gerichtlich aufgehoben am{' '}
-                {new Date(b.aufgehoben_am).toLocaleDateString('de-DE')}
-                {b.gerichtlicher_hinweis && ` — ${b.gerichtlicher_hinweis}`}
-              </p>
-            )}
-
-            {offenesFormular === b.id && (
-              <AnfechtungForm beschluss={b} onFertig={aktualisieren} />
-            )}
-          </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )
