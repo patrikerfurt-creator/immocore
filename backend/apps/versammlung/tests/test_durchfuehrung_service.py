@@ -338,6 +338,31 @@ class EinzelstimmenTest(_Basis):
         self.assertEqual(top.abstimmungsergebnis, 'angenommen')
         self.assertEqual(top.stimmen.count(), 3)
 
+    def test_beschlusstext_wird_uebernommen(self):
+        # Im Abstimmtool final formulierter Beschlusstext wird ohne Nachfrage
+        # in top.beschlussvorlage übernommen (API-Vertrag v1.4+).
+        self._anwesend('Alpha', 'Beta', 'Gamma')
+        top = self._top()
+        durchfuehrung_service.erfasse_einzelstimmen(
+            top, self.user,
+            {str(self.teilnehmer['Alpha'].id): 'ja'},
+            beschlusstext='Der GEÄNDERTE Wortlaut aus der Versammlung.',
+        )
+        top.refresh_from_db()
+        self.assertEqual(top.beschlussvorlage,
+                         'Der GEÄNDERTE Wortlaut aus der Versammlung.')
+
+    def test_ohne_beschlusstext_bleibt_vorlage(self):
+        # Wird kein beschlusstext gesendet (None), bleibt die Vorlage unberührt.
+        self._anwesend('Alpha')
+        top = self._top()
+        vorher = top.beschlussvorlage
+        durchfuehrung_service.erfasse_einzelstimmen(
+            top, self.user, {str(self.teilnehmer['Alpha'].id): 'ja'},
+        )
+        top.refresh_from_db()
+        self.assertEqual(top.beschlussvorlage, vorher)
+
     def test_abwesende_werden_abgewiesen(self):
         self._anwesend('Alpha')
         top = self._top()

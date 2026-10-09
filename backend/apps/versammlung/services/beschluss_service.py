@@ -168,6 +168,20 @@ def erzeuge_folgevorgaenge(beschluss, erstellt_von) -> list:
     return erzeugte
 
 
+def _tagesordnung_sortschluessel(top):
+    """Sortierschlüssel für die hierarchische Tagesordnungs-Reihenfolge.
+
+    ``"3.1"`` → ``(3, 1)``, ``"2"`` → ``(2,)``, ``"10"`` → ``(10,)``. Je Ebene
+    numerisch, damit ``"10"`` nach ``"2"`` einsortiert (nicht davor, wie es ein
+    reiner String-Vergleich täte) und ein Unterpunkt direkt hinter seinem
+    Eltern-TOP steht (``(3,)`` < ``(3, 1)``).
+    """
+    return tuple(
+        int(teil) if teil.isdigit() else 0
+        for teil in str(top.nummer_anzeige).split('.')
+    )
+
+
 @transaction.atomic
 def uebernimm_in_sammlung(ev, erstellt_von) -> dict:
     """Abgestimmte TOPs in die Beschluss-Sammlung übernehmen.
@@ -201,10 +215,17 @@ def uebernimm_in_sammlung(ev, erstellt_von) -> dict:
     # Auch abgelehnte Anträge (Negativbeschlüsse) kommen in die Sammlung — nach
     # BGH ist auch die Ablehnung ein Beschluss. Nur 'kein_beschluss'/'offen'/
     # 'vertagt'/'entfallen' bleiben außen vor.
-    zu_uebernehmen = list(
+    #
+    # Reihenfolge der Beschlussnummern = Tagesordnungs-Reihenfolge (API-Vertrag
+    # v1.4, Abschnitt 4.6): hierarchisch nach nummer_anzeige (1, 2, 3.1, 3.2,
+    # …), NICHT nach der internen Datensatz-/Anlagereihenfolge. nummer_anzeige
+    # ist eine Property, daher in Python sortieren (select_related('eltern')
+    # vermeidet N+1 beim Lesen von eltern.nummer).
+    zu_uebernehmen = sorted(
         ev.tagesordnung
         .filter(abstimmungsergebnis__in=['angenommen', 'abgelehnt'])
-        .order_by('nummer')
+        .select_related('eltern'),
+        key=_tagesordnung_sortschluessel,
     )
     ergebnis = {
         'beschluesse': 0, 'uebersprungen': 0, 'vorgaenge': 0,

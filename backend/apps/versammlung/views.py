@@ -587,6 +587,7 @@ class TagesordnungspunktViewSet(mixins.ListModelMixin,
             durchfuehrung_service.erfasse_einzelstimmen(
                 top, request.user, serializer.validated_data['voten'],
                 ergebnis=serializer.validated_data.get('ergebnis'),
+                beschlusstext=serializer.validated_data.get('beschlusstext'),
             )
         except DjangoValidationError as exc:
             return _fehler(exc)

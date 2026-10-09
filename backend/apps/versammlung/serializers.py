@@ -452,6 +452,10 @@ class EinzelstimmenSerializer(serializers.Serializer):
         child=serializers.ChoiceField(choices=EVStimme.VOTUM_CHOICES),
     )
     ergebnis = EinzelstimmenErgebnisSerializer(required=False)
+    # Optionaler, im Abstimmtool final formulierter Beschlusstext. Ist er
+    # gesetzt, übernimmt immocore ihn ohne Nachfrage in top.beschlussvorlage
+    # (das Tool ist die Autorität für den verkündeten Wortlaut).
+    beschlusstext = serializers.CharField(required=False, allow_blank=True)
 
 
 class ErgebnisStatusSerializer(serializers.Serializer):

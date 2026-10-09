@@ -424,3 +424,23 @@ class ErfasseManuellTest(TestCase):
     def test_leerer_wortlaut_abgewiesen(self):
         with self.assertRaises(ValidationError):
             self._erfassen(wortlaut='   ')
+
+
+class TagesordnungSortierungTest(TestCase):
+    """Beschlussnummern in Tagesordnungs-Reihenfolge (API-Vertrag v1.4, 4.6)."""
+
+    def test_sortschluessel_hierarchisch_numerisch(self):
+        # Genau der Dokument-Bug: Unterpunkte 3.1/3.2 müssen hinter TOP 2 und
+        # hinter TOP 3 stehen; "10" muss NACH "2" kommen (nicht davor wie beim
+        # reinen String-Vergleich).
+        from types import SimpleNamespace
+
+        from apps.versammlung.services.beschluss_service import (
+            _tagesordnung_sortschluessel,
+        )
+
+        tops = [SimpleNamespace(nummer_anzeige=n)
+                for n in ['10', '2', '3.2', '3.1', '3', '1']]
+        sortiert = [t.nummer_anzeige
+                    for t in sorted(tops, key=_tagesordnung_sortschluessel)]
+        self.assertEqual(sortiert, ['1', '2', '3', '3.1', '3.2', '10'])

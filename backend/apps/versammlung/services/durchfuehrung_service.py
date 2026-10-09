@@ -317,7 +317,8 @@ def _uebernehme_tool_ergebnis(top, erfasst_von, ergebnis: dict,
 
 
 @transaction.atomic
-def erfasse_einzelstimmen(top, erfasst_von, voten: dict, ergebnis: dict | None = None):
+def erfasse_einzelstimmen(top, erfasst_von, voten: dict, ergebnis: dict | None = None,
+                          beschlusstext: str | None = None):
     """Erfasst namentliche Einzelvoten als Nachweis und setzt das Ergebnis.
 
     ``voten``: ``{teilnehmer_id: 'ja'|'nein'|'enthaltung'}``. Nicht genannte
@@ -331,10 +332,22 @@ def erfasse_einzelstimmen(top, erfasst_von, voten: dict, ergebnis: dict | None =
     Autorität). Fehlt es, leitet immocore das Summenergebnis wie bisher über
     ``erfasse_abstimmung`` ab — dann aber gewichtet nach ``top.stimmgrundlage``.
 
+    ``beschlusstext`` (API-Vertrag v1.4+): der im Abstimmtool final formulierte
+    Beschlusswortlaut. Ist er gesetzt (not None), übernimmt immocore ihn OHNE
+    Nachfrage in ``top.beschlussvorlage`` — das Tool ist auch die Autorität für
+    den vor Ort verkündeten Wortlaut. So landet der in der Versammlung geänderte
+    Text später über ``uebernimm_in_sammlung`` als Beschluss-Wortlaut in der
+    Sammlung. ``None`` (Feld nicht gesendet) lässt den vorhandenen Text
+    unangetastet; ein leerer String ist eine bewusste Leerung.
+
     Vorhandene Einzelstimmen des TOP werden in beiden Fällen ersetzt.
     """
     ev = top.ev
     _pruefe_offen(ev)
+
+    if beschlusstext is not None and beschlusstext != top.beschlussvorlage:
+        top.beschlussvorlage = beschlusstext
+        top.save(update_fields=['beschlussvorlage'])
 
     teilnehmer_nach_id = {str(t.id): t for t in ev.teilnehmer.select_related('person')}
     unbekannt = set(map(str, voten)) - set(teilnehmer_nach_id)
