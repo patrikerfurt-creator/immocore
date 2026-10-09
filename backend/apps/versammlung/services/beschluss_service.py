@@ -30,7 +30,7 @@ from django.template.loader import render_to_string
 from django.utils import timezone
 
 from apps.dokumente.models import Dokument
-from apps.versammlung.models import Beschluss
+from apps.versammlung.models import Beschluss, BeschlussNummerZaehler
 from apps.versammlung.services import ev_service
 
 logger = logging.getLogger(__name__)
@@ -220,6 +220,7 @@ def uebernimm_in_sammlung(ev, erstellt_von) -> dict:
             objekt=ev.objekt, ev=ev, top=top,
             beschluss_datum=timezone.localtime(ev.termin).date(),
             ort=ev.ort,
+            ueberschrift=top.titel,
             wortlaut=top.beschlussvorlage,
             ergebnis=top.abstimmungsergebnis,
             ergebnis_ja=top.abstimmung_ja,
@@ -267,6 +268,104 @@ def uebernimm_in_sammlung(ev, erstellt_von) -> dict:
         ),
     )
     return ergebnis
+
+
+def _beschluss_dokument_aus_upload(datei, objekt, beschluss, erstellt_von) -> Dokument:
+    """Legt das hochgeladene Original-Protokoll als revisionssicheres DMS-Dokument an.
+
+    Gegenstück zu ``_beschluss_pdf``: statt ein PDF aus dem Wortlaut zu rendern,
+    wird bei der Nachpflege das eingescannte Original des Vorverwalters abgelegt.
+    """
+    dateiname = (
+        f'Beschluss_{beschluss.nummer:04d}_'
+        f'{beschluss.beschluss_datum:%Y-%m-%d}_Nachtrag.pdf'
+    )
+    return Dokument.objects.create(
+        datei=datei,
+        dateiname=getattr(datei, 'name', dateiname) or dateiname,
+        kategorie='EV-Beschluss',
+        dokument_typ='beschluss',
+        beschreibung=(
+            f'Beschluss {beschluss.nummer} vom '
+            f'{beschluss.beschluss_datum:%d.%m.%Y} (Nachtrag) — {objekt.bezeichnung}'
+        ),
+        # Owner-Regel B-Hybrid: ausschließlich objekt.
+        objekt=objekt,
+        hochgeladen_von=erstellt_von,
+        # § 24 Abs. 7 WEG / GoBD: Beschlüsse sind ab Anlage unveränderlich.
+        revisionssicher=True,
+        revisionssicher_seit=timezone.now(),
+    )
+
+
+@transaction.atomic
+def erfasse_manuell(*, objekt, beschluss_datum, wortlaut, ergebnis, erstellt_von,
+                    nummer=None, ort='', ueberschrift='', datei=None) -> Beschluss:
+    """Trägt einen Bestandsbeschluss von Hand in die Sammlung nach.
+
+    Ausschließlich für die Nachpflege bei Objektübernahme: Beschlüsse, die unter
+    dem Vorverwalter gefasst wurden, kommen so in die Sammlung, ohne dass es im
+    System eine Versammlung oder Tagesordnung dazu gibt (``ev``/``top`` bleiben
+    NULL). Es entstehen bewusst KEINE Folgeaufgaben oder Automationen — ein
+    Altbeschluss ist bereits umgesetzt; die Nachpflege ist reine Dokumentation.
+
+    Nummernvergabe: Ist ``nummer`` angegeben, wird die historische Nummer des
+    Vorverwalters übernommen und der Objekt-Zähler über
+    ``BeschlussNummerZaehler.hebe_mindestens_auf`` nachgezogen, damit künftige
+    EV-Beschlüsse lückenlos anschließen. Ohne ``nummer`` vergibt der Zähler die
+    nächste freie Nummer wie bei EV-Beschlüssen.
+
+    Unveränderlichkeit (§ 24 Abs. 7 WEG) gilt sofort: der Beschluss wird nach
+    Anlage nie geändert, Anfechtung läuft auch hier nur über
+    ``vermerke_anfechtung``.
+    """
+    if (objekt.objekt_typ or '').upper() != 'WEG':
+        raise ValidationError(
+            'Eine Beschluss-Sammlung wird nur für WEG-Objekte geführt '
+            f'(Objekt-Typ ist "{objekt.objekt_typ}").'
+        )
+    if ergebnis not in dict(Beschluss.ERGEBNIS_CHOICES):
+        raise ValidationError(f'Unbekanntes Ergebnis: {ergebnis}.')
+    if not str(wortlaut).strip():
+        raise ValidationError('Ein Beschluss braucht einen Wortlaut.')
+
+    if nummer is not None:
+        if nummer < 1:
+            raise ValidationError('Die Beschlussnummer muss positiv sein.')
+        if Beschluss.objects.filter(objekt=objekt, nummer=nummer).exists():
+            raise ValidationError(
+                f'Beschluss-Nummer {nummer} ist für dieses Objekt bereits vergeben.'
+            )
+
+    # Bei der Nachpflege von Altbeständen wird nur das Ergebnis (angenommen/
+    # abgelehnt) festgehalten, nicht die einzelnen Stimmzahlen — die liegen zum
+    # Übernahmezeitpunkt meist ohnehin nicht mehr vor. Die Stimmfelder bleiben
+    # auf ihrem Default 0; befüllt werden sie nur beim EV-Weg aus dem TOP.
+    beschluss = Beschluss(
+        objekt=objekt, ev=None, top=None,
+        nummer=nummer or BeschlussNummerZaehler.naechste_nummer(objekt),
+        beschluss_datum=beschluss_datum,
+        ort=ort or '',
+        ueberschrift=ueberschrift or '',
+        wortlaut=wortlaut,
+        ergebnis=ergebnis,
+        erstellt_von=erstellt_von,
+    )
+    beschluss.full_clean()
+    beschluss.save()
+
+    # Zähler erst nach erfolgreicher Anlage (und bestandener Kollisionsprüfung)
+    # nachziehen — bei automatischer Nummer hat naechste_nummer das schon erledigt.
+    if nummer is not None:
+        BeschlussNummerZaehler.hebe_mindestens_auf(objekt, nummer)
+
+    if datei is not None:
+        beschluss.dokument = _beschluss_dokument_aus_upload(
+            datei, objekt, beschluss, erstellt_von,
+        )
+        beschluss.save(update_fields=['dokument'])
+
+    return beschluss
 
 
 @transaction.atomic

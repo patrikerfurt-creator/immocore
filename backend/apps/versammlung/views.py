@@ -14,7 +14,7 @@ from django.db import transaction
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, MultiPartParser
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
 
 from apps.versammlung.models import (
@@ -23,6 +23,7 @@ from apps.versammlung.models import (
 )
 from apps.versammlung.serializers import (
     AbstimmungSerializer, AnfechtungSerializer, AnwesenheitSerializer,
+    BeschlussManuellSerializer,
     BeschlussSerializer, CheckoutZuruecknehmenSerializer, EVEreignisSerializer,
     EVStimmeSerializer, EVTeilnehmerSerializer, EVVersandprotokollSerializer,
     EigentuemerversammlungCreateSerializer,
@@ -745,3 +746,26 @@ class BeschlussViewSet(mixins.ListModelMixin,
             return _fehler(exc)
         beschluss.refresh_from_db()
         return Response(BeschlussSerializer(beschluss).data)
+
+    @action(detail=False, methods=['post'],
+            permission_classes=[IsAdminUser],
+            parser_classes=[MultiPartParser, FormParser])
+    def manuell(self, request):
+        """``POST /api/v1/beschluesse/manuell/`` — Nachpflege Altbestand (Admin).
+
+        Trägt einen Bestandsbeschluss von Hand nach (Objektübernahme vom
+        Vorverwalter): ohne EV/TOP, ohne Folgeaufgaben. Nur ``is_staff``, weil
+        hier am sonst unveränderlichen Schreibschutz der Sammlung vorbei ein
+        Eintrag erzeugt wird. Optional ``datei`` = eingescanntes Original-PDF.
+        """
+        serializer = BeschlussManuellSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            beschluss = beschluss_service.erfasse_manuell(
+                erstellt_von=request.user, **serializer.validated_data,
+            )
+        except DjangoValidationError as exc:
+            return _fehler(exc)
+        return Response(
+            BeschlussSerializer(beschluss).data, status=status.HTTP_201_CREATED,
+        )

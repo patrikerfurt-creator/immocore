@@ -192,4 +192,29 @@ export const beschlussApi = {
     gerichtlicher_hinweis?: string
   }) =>
     client.post<EVBeschluss>(`/beschluesse/${id}/anfechtung/`, daten).then(r => r.data),
+
+  // Nachpflege Altbestand (nur Admin/is_staff) — multipart wegen optionalem PDF.
+  manuellAnlegen: (daten: {
+    objekt: string
+    nummer?: string
+    beschluss_datum: string
+    ort?: string
+    ueberschrift?: string
+    wortlaut: string
+    ergebnis: 'angenommen' | 'abgelehnt'
+    datei?: File | null
+  }) => {
+    const formData = new FormData()
+    formData.append('objekt', daten.objekt)
+    if (daten.nummer) formData.append('nummer', daten.nummer)
+    formData.append('beschluss_datum', daten.beschluss_datum)
+    if (daten.ort) formData.append('ort', daten.ort)
+    if (daten.ueberschrift) formData.append('ueberschrift', daten.ueberschrift)
+    formData.append('wortlaut', daten.wortlaut)
+    formData.append('ergebnis', daten.ergebnis)
+    if (daten.datei) formData.append('datei', daten.datei)
+    return client.post<EVBeschluss>('/beschluesse/manuell/', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }).then(r => r.data)
+  },
 }

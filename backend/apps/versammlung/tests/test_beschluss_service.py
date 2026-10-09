@@ -111,6 +111,8 @@ class UebernahmeTest(_Basis):
         self.assertEqual(b_ja.ergebnis, 'angenommen')
         self.assertEqual(b_ja.ergebnis_ja, Decimal('3'))
         self.assertEqual(b_ja.ort, self.ev.ort)
+        # Überschrift wird aus dem TOP-Titel gesnappt.
+        self.assertEqual(b_ja.ueberschrift, angenommen.titel)
 
         b_nein = Beschluss.objects.get(top=abgelehnt)
         self.assertEqual(b_nein.ergebnis, 'abgelehnt')
@@ -329,3 +331,96 @@ class AnfechtungTest(_Basis):
         )
         self.beschluss.refresh_from_db()
         self.assertIsNone(self.beschluss.aufgehoben_am)
+
+
+@override_settings(MEDIA_ROOT=_MEDIA_TMP)
+class ErfasseManuellTest(TestCase):
+    """Nachpflege von Bestandsbeschlüssen (Objektübernahme vom Vorverwalter)."""
+
+    def setUp(self):
+        self.user = f.user()
+        self.objekt = f.objekt()
+
+    def _erfassen(self, **extra):
+        daten = dict(
+            objekt=self.objekt, beschluss_datum=date(2023, 6, 15),
+            wortlaut='Die Jahresabrechnung 2022 wird genehmigt.',
+            ergebnis='angenommen', erstellt_von=self.user,
+        )
+        daten.update(extra)
+        return beschluss_service.erfasse_manuell(**daten)
+
+    def test_ohne_ev_und_top(self):
+        beschluss = self._erfassen()
+        self.assertIsNone(beschluss.ev_id)
+        self.assertIsNone(beschluss.top_id)
+        self.assertEqual(beschluss.objekt, self.objekt)
+        self.assertEqual(beschluss.erstellt_von, self.user)
+
+    def test_automatische_nummer_wenn_keine_angegeben(self):
+        erster = self._erfassen()
+        zweiter = self._erfassen(wortlaut='Zweiter Beschluss.')
+        self.assertEqual(erster.nummer, 1)
+        self.assertEqual(zweiter.nummer, 2)
+
+    def test_historische_nummer_wird_uebernommen(self):
+        beschluss = self._erfassen(nummer=47)
+        self.assertEqual(beschluss.nummer, 47)
+
+    def test_zaehler_wird_nachgezogen(self):
+        # Nach Nachtrag von Nummer 47 muss der nächste automatische Beschluss
+        # bei 48 anschließen — lückenlos, keine Doppelvergabe.
+        self._erfassen(nummer=47)
+        folge = self._erfassen(wortlaut='Nächster Beschluss.')
+        self.assertEqual(folge.nummer, 48)
+
+    def test_nummern_kollision_wird_abgewiesen(self):
+        self._erfassen(nummer=5)
+        with self.assertRaises(ValidationError) as ctx:
+            self._erfassen(nummer=5, wortlaut='Kollision.')
+        self.assertIn('bereits vergeben', str(ctx.exception))
+
+    def test_keine_folgeaufgaben(self):
+        # Nachpflege löst keine Vorgänge aus, auch nicht bei 'angenommen'.
+        from apps.vorgaenge.models import Vorgang
+
+        self._erfassen()
+        self.assertEqual(Vorgang.objects.count(), 0)
+
+    def test_nur_weg_objekte(self):
+        zh = f.objekt(typ='ZH', bezeichnung='Test-Zinshaus')
+        with self.assertRaises(ValidationError) as ctx:
+            self._erfassen(objekt=zh)
+        self.assertIn('WEG', str(ctx.exception))
+
+    def test_abgelehnter_beschluss_wird_erfasst(self):
+        # Nur das Ergebnis zählt bei der Nachpflege, keine Stimmzahlen.
+        beschluss = self._erfassen(ergebnis='abgelehnt')
+        self.assertEqual(beschluss.ergebnis, 'abgelehnt')
+        self.assertEqual(beschluss.ergebnis_ja, Decimal('0'))
+        self.assertEqual(beschluss.ergebnis_nein, Decimal('0'))
+
+    def test_ueberschrift_wird_erfasst(self):
+        beschluss = self._erfassen(ueberschrift='Genehmigung Jahresabrechnung 2022')
+        self.assertEqual(beschluss.ueberschrift, 'Genehmigung Jahresabrechnung 2022')
+
+    def test_ueberschrift_optional(self):
+        beschluss = self._erfassen()
+        self.assertEqual(beschluss.ueberschrift, '')
+
+    def test_optionales_dokument_wird_angelegt(self):
+        from django.core.files.base import ContentFile
+
+        datei = ContentFile(b'%PDF-1.4 scan', name='protokoll_2022.pdf')
+        beschluss = self._erfassen(datei=datei)
+        self.assertIsNotNone(beschluss.dokument)
+        self.assertEqual(beschluss.dokument.dokument_typ, 'beschluss')
+        self.assertTrue(beschluss.dokument.revisionssicher)
+
+    def test_ohne_dokument_bleibt_leer(self):
+        beschluss = self._erfassen()
+        self.assertIsNone(beschluss.dokument_id)
+
+    def test_leerer_wortlaut_abgewiesen(self):
+        with self.assertRaises(ValidationError):
+            self._erfassen(wortlaut='   ')

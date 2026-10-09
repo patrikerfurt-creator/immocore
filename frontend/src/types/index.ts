@@ -1882,10 +1882,10 @@ export interface EVBeschluss {
   top_titel: string | null
   beschluss_datum: string
   ort: string
+  ueberschrift: string
   wortlaut: string
-  ergebnis_ja: string
-  ergebnis_nein: string
-  ergebnis_enthaltung: string
+  ergebnis: 'angenommen' | 'abgelehnt'
+  ergebnis_display: string
   dokument: string | null
   dokument_dateiname: string | null
   vorgang: string | null

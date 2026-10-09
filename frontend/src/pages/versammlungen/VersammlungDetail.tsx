@@ -1060,6 +1060,7 @@ function CheckoutPanel({ ev }: { ev: EVDetail }) {
                   {b.top_nummer_anzeige !== null && ` (TOP ${b.top_nummer_anzeige})`}
                 </div>
                 <div className="flex items-center gap-2">
+                  <Badge value={b.ergebnis} label={b.ergebnis_display} />
                   {b.anfechtung_status !== 'keine' && (
                     <Badge value="unklar" label={b.anfechtung_status_display} />
                   )}
@@ -1073,18 +1074,18 @@ function CheckoutPanel({ ev }: { ev: EVDetail }) {
                   )}
                 </div>
               </div>
+              {b.ueberschrift && (
+                <div className="mt-1 text-sm font-semibold text-gray-900">{b.ueberschrift}</div>
+              )}
               <p className="mt-1 whitespace-pre-line text-sm">{b.wortlaut}</p>
-              <div className="mt-2 text-xs text-gray-500">
-                Ja {b.ergebnis_ja} · Nein {b.ergebnis_nein} · Enthaltung{' '}
-                {b.ergebnis_enthaltung}
-                {b.vorgang_nummer && (
-                  <> · Folgeaufgabe{' '}
-                    <Link to={`/vorgaenge/${b.vorgang}`} className="text-primary-600 hover:underline">
-                      {b.vorgang_nummer}
-                    </Link>
-                  </>
-                )}
-              </div>
+              {b.vorgang_nummer && (
+                <div className="mt-2 text-xs text-gray-500">
+                  Folgeaufgabe{' '}
+                  <Link to={`/vorgaenge/${b.vorgang}`} className="text-primary-600 hover:underline">
+                    {b.vorgang_nummer}
+                  </Link>
+                </div>
+              )}
             </div>
           ))}
           <Link

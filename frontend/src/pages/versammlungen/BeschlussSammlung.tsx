@@ -91,12 +91,131 @@ function AnfechtungForm({ beschluss, onFertig }: {
   )
 }
 
+function NachtragForm({ objekte, objektVorgabe, onFertig }: {
+  objekte: { id: string; bezeichnung: string; objekt_typ?: string }[]
+  objektVorgabe: string
+  onFertig: () => void
+}) {
+  const [objekt, setObjekt] = useState(objektVorgabe)
+  const [nummer, setNummer] = useState('')
+  const [datum, setDatum] = useState('')
+  const [ort, setOrt] = useState('')
+  const [ueberschrift, setUeberschrift] = useState('')
+  const [wortlaut, setWortlaut] = useState('')
+  const [ergebnis, setErgebnis] = useState<'angenommen' | 'abgelehnt'>('angenommen')
+  const [datei, setDatei] = useState<File | null>(null)
+  const [fehler, setFehler] = useState('')
+
+  const speichern = useMutation({
+    mutationFn: () => beschlussApi.manuellAnlegen({
+      objekt, nummer: nummer.trim() || undefined,
+      beschluss_datum: datum, ort, ueberschrift, wortlaut, ergebnis,
+      datei,
+    }),
+    onSuccess: () => { setFehler(''); onFertig() },
+    onError: (e: any) => {
+      if (e?.response?.status === 403) {
+        setFehler('Kein Zugriff — das Nachtragen von Beschlüssen ist nur für '
+          + 'Administratoren (is_staff) möglich.')
+      } else {
+        const data = e?.response?.data
+        setFehler(data?.detail
+          ?? (typeof data === 'object' ? JSON.stringify(data) : 'Speichern fehlgeschlagen.'))
+      }
+    },
+  })
+
+  const absenden = () => {
+    if (!objekt) { setFehler('Bitte ein Objekt wählen.'); return }
+    if (!datum) { setFehler('Bitte das Beschlussdatum angeben.'); return }
+    if (!wortlaut.trim()) { setFehler('Bitte den Beschlusswortlaut eingeben.'); return }
+    speichern.mutate()
+  }
+
+  return (
+    <div className="space-y-3 rounded border border-primary-200 bg-primary-50/40 p-4">
+      <h2 className="font-semibold text-gray-800">Beschluss nachtragen (Bestand)</h2>
+      <p className="text-xs text-gray-600">
+        Für die Nachpflege bei Objektübernahme — Beschlüsse des Vorverwalters ohne
+        Versammlung im System. Nummer leer lassen für die nächste freie Nummer, oder
+        die historische Nummer des Vorverwalters eintragen.
+      </p>
+      <div className="grid gap-3 md:grid-cols-2">
+        <div className="flex flex-col gap-1">
+          <label className="text-sm font-medium text-gray-700">Objekt *</label>
+          <select
+            className="rounded border border-gray-300 px-3 py-2 text-sm"
+            value={objekt}
+            onChange={e => setObjekt(e.target.value)}
+          >
+            <option value="">— wählen —</option>
+            {objekte
+              .filter(o => o.objekt_typ?.toUpperCase() === 'WEG')
+              .map(o => <option key={o.id} value={o.id}>{o.bezeichnung}</option>)}
+          </select>
+        </div>
+        <Input label="Nummer (leer = nächste freie)" type="number" min={1}
+          value={nummer} onChange={e => setNummer(e.target.value)} />
+        <div className="flex flex-col gap-1">
+          <label className="text-sm font-medium text-gray-700">Beschlussdatum *</label>
+          <input type="date"
+            className="rounded border border-gray-300 px-3 py-2 text-sm"
+            value={datum} onChange={e => setDatum(e.target.value)} />
+        </div>
+        <Input label="Ort" value={ort} onChange={e => setOrt(e.target.value)} />
+      </div>
+      <Input label="Überschrift / TOP" value={ueberschrift}
+        onChange={e => setUeberschrift(e.target.value)} />
+      <div className="flex flex-col gap-1">
+        <label className="text-sm font-medium text-gray-700">Beschlusstext *</label>
+        <textarea
+          className="min-h-[80px] rounded border border-gray-300 px-3 py-2 text-sm"
+          value={wortlaut} onChange={e => setWortlaut(e.target.value)} />
+      </div>
+      <div className="grid gap-3 md:grid-cols-2">
+        <div className="flex flex-col gap-1">
+          <label className="text-sm font-medium text-gray-700">Ergebnis</label>
+          <select
+            className="rounded border border-gray-300 px-3 py-2 text-sm"
+            value={ergebnis}
+            onChange={e => setErgebnis(e.target.value as 'angenommen' | 'abgelehnt')}
+          >
+            <option value="angenommen">Angenommen</option>
+            <option value="abgelehnt">Abgelehnt</option>
+          </select>
+        </div>
+      </div>
+      <div className="flex flex-col gap-1">
+        <label className="text-sm font-medium text-gray-700">
+          Original-Protokoll (PDF, optional)
+        </label>
+        <input type="file" accept="application/pdf"
+          className="text-sm"
+          onChange={e => setDatei(e.target.files?.[0] ?? null)} />
+      </div>
+      {fehler && <p className="text-sm text-red-600">{fehler}</p>}
+      <div className="flex gap-2">
+        <Button size="sm" onClick={absenden} disabled={speichern.isPending}>
+          {speichern.isPending ? 'Speichert…' : 'Beschluss nachtragen'}
+        </Button>
+        <Button size="sm" variant="secondary" onClick={onFertig}>Abbrechen</Button>
+      </div>
+      <p className="text-xs text-gray-500">
+        Nach dem Anlegen ist der Beschluss unveränderlich (§ 24 Abs. 7 WEG);
+        ein eventuelles PDF wird revisionssicher im DMS abgelegt. Folgeaufgaben
+        werden bei der Nachpflege bewusst nicht erzeugt.
+      </p>
+    </div>
+  )
+}
+
 export function BeschlussSammlung() {
   const [searchParams] = useSearchParams()
   const queryClient = useQueryClient()
   const [objektFilter, setObjektFilter] = useState(searchParams.get('objekt') ?? '')
   const [anfechtungFilter, setAnfechtungFilter] = useState('')
   const [offenesFormular, setOffenesFormular] = useState<string | null>(null)
+  const [nachtragOffen, setNachtragOffen] = useState(false)
 
   const { data: objekte } = useQuery({
     queryKey: ['objekte'],
@@ -120,13 +239,29 @@ export function BeschlussSammlung() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold text-gray-900">Beschluss-Sammlung</h1>
-        <p className="text-sm text-gray-500">
-          Fortlaufend je Objekt nach § 24 Abs. 7 WEG. Einträge werden nie
-          gelöscht, der Wortlaut nie geändert.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h1 className="text-xl font-semibold text-gray-900">Beschluss-Sammlung</h1>
+          <p className="text-sm text-gray-500">
+            Fortlaufend je Objekt nach § 24 Abs. 7 WEG. Einträge werden nie
+            gelöscht, der Wortlaut nie geändert.
+          </p>
+        </div>
+        <Button variant="secondary" size="sm" onClick={() => setNachtragOffen(v => !v)}>
+          {nachtragOffen ? 'Schließen' : '+ Beschluss nachtragen'}
+        </Button>
       </div>
+
+      {nachtragOffen && (
+        <NachtragForm
+          objekte={objekte ?? []}
+          objektVorgabe={objektFilter}
+          onFertig={() => {
+            setNachtragOffen(false)
+            queryClient.invalidateQueries({ queryKey: ['beschluesse'] })
+          }}
+        />
+      )}
 
       <div className="flex flex-wrap gap-3">
         <div className="flex flex-col gap-1">
@@ -175,10 +310,11 @@ export function BeschlussSammlung() {
                 <div className="text-xs text-gray-500">
                   {new Date(b.beschluss_datum).toLocaleDateString('de-DE')}
                   {b.ort && ` · ${b.ort}`}
-                  {b.top_nummer_anzeige !== null && ` · TOP ${b.top_nummer_anzeige}: ${b.top_titel}`}
+                  {b.top_nummer_anzeige !== null && ` · TOP ${b.top_nummer_anzeige}`}
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                <Badge value={b.ergebnis} label={b.ergebnis_display} />
                 <Badge
                   value={badgeWert(b.anfechtung_status)}
                   label={b.anfechtung_status_display}
@@ -200,22 +336,34 @@ export function BeschlussSammlung() {
               </div>
             </div>
 
-            <p className="mt-2 border-l-2 border-primary-500 pl-3 whitespace-pre-line text-sm">
-              {b.wortlaut}
-            </p>
+            <div className="mt-2 border-l-2 border-primary-500 pl-3">
+              {b.ueberschrift && (
+                <div className="text-sm font-semibold text-gray-900">{b.ueberschrift}</div>
+              )}
+              <p className="whitespace-pre-line text-sm">{b.wortlaut}</p>
+            </div>
 
-            <div className="mt-2 text-xs text-gray-500">
-              Ja {b.ergebnis_ja} · Nein {b.ergebnis_nein} · Enthaltung {b.ergebnis_enthaltung}
-              {b.ev && (
-                <> · <Link to={`/versammlungen/${b.ev}`} className="text-primary-600 hover:underline">
-                  zur Versammlung
-                </Link></>
-              )}
-              {b.vorgang_nummer && (
-                <> · <Link to={`/vorgaenge/${b.vorgang}`} className="text-primary-600 hover:underline">
-                  {b.vorgang_nummer}
-                </Link></>
-              )}
+            {(b.ev || b.vorgang_nummer) && (
+              <div className="mt-2 text-xs text-gray-500">
+                {b.ev && (
+                  <Link to={`/versammlungen/${b.ev}`} className="text-primary-600 hover:underline">
+                    zur Versammlung
+                  </Link>
+                )}
+                {b.ev && b.vorgang_nummer && ' · '}
+                {b.vorgang_nummer && (
+                  <Link to={`/vorgaenge/${b.vorgang}`} className="text-primary-600 hover:underline">
+                    {b.vorgang_nummer}
+                  </Link>
+                )}
+              </div>
+            )}
+
+            <div className="mt-1 text-xs text-gray-400">
+              Erfasst
+              {b.erstellt_von_name && ` von ${b.erstellt_von_name}`}
+              {b.erstellt_am && ` am ${new Date(b.erstellt_am).toLocaleDateString('de-DE')}`}
+              {!b.ev && ' · Nachtrag (keine Versammlung im System)'}
             </div>
 
             {b.anfechtung_notiz && (

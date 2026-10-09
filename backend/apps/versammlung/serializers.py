@@ -473,6 +473,9 @@ class BeschlussSerializer(serializers.ModelSerializer):
     anfechtung_status_display = serializers.CharField(
         source='get_anfechtung_status_display', read_only=True,
     )
+    ergebnis_display = serializers.CharField(
+        source='get_ergebnis_display', read_only=True,
+    )
     dokument_dateiname = serializers.CharField(
         source='dokument.dateiname', read_only=True, default=None,
     )
@@ -486,8 +489,8 @@ class BeschlussSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'objekt', 'objekt_bezeichnung', 'nummer', 'ev',
             'top', 'top_nummer', 'top_nummer_anzeige', 'top_titel',
-            'beschluss_datum', 'ort', 'wortlaut',
-            'ergebnis_ja', 'ergebnis_nein', 'ergebnis_enthaltung',
+            'beschluss_datum', 'ort', 'ueberschrift', 'wortlaut',
+            'ergebnis', 'ergebnis_display',
             'dokument', 'dokument_dateiname', 'vorgang', 'vorgang_nummer',
             'anfechtung_status', 'anfechtung_status_display', 'anfechtung_notiz',
             'aufgehoben_am', 'gerichtlicher_hinweis',
@@ -499,6 +502,26 @@ class BeschlussSerializer(serializers.ModelSerializer):
 
     def get_erstellt_von_name(self, obj):
         return _user_name(obj.erstellt_von)
+
+
+class BeschlussManuellSerializer(serializers.Serializer):
+    """Eingabe für ``POST /beschluesse/manuell/`` — Nachpflege Altbestand.
+
+    Nur die Erfassungsfelder; die Anlage selbst erledigt
+    ``beschluss_service.erfasse_manuell``. ``nummer`` ist optional: leer =
+    nächste freie Nummer, gesetzt = historische Nummer des Vorverwalters
+    (Zähler wird nachgezogen). ``datei`` ist das optionale eingescannte
+    Original-Protokoll.
+    """
+
+    objekt = serializers.PrimaryKeyRelatedField(queryset=Objekt.objects.all())
+    nummer = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    beschluss_datum = serializers.DateField()
+    ort = serializers.CharField(required=False, allow_blank=True, default='')
+    ueberschrift = serializers.CharField(required=False, allow_blank=True, default='')
+    wortlaut = serializers.CharField()
+    ergebnis = serializers.ChoiceField(choices=Beschluss.ERGEBNIS_CHOICES)
+    datei = serializers.FileField(required=False, allow_null=True)
 
 
 class VersammlungsortSerializer(serializers.ModelSerializer):

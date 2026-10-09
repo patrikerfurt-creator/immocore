@@ -916,6 +916,23 @@ class BeschlussNummerZaehler(models.Model):
         zaehler.save(update_fields=['letzter_zaehler'])
         return zaehler.letzter_zaehler
 
+    @classmethod
+    @transaction.atomic
+    def hebe_mindestens_auf(cls, objekt, nummer: int) -> None:
+        """Zieht den Zähler bei der Nachpflege von Altbeständen nach.
+
+        Wird eine historische Beschlussnummer des Vorverwalters von Hand
+        eingetragen (``beschluss_service.erfasse_manuell``), muss der Zähler
+        mindestens auf diese Nummer stehen, damit künftige EV-Beschlüsse
+        lückenlos anschließen und keine Nummer doppelt vergeben wird.
+        """
+        zaehler, _ = cls.objects.select_for_update().get_or_create(
+            objekt=objekt, defaults={'letzter_zaehler': 0},
+        )
+        if nummer > zaehler.letzter_zaehler:
+            zaehler.letzter_zaehler = nummer
+            zaehler.save(update_fields=['letzter_zaehler'])
+
     def __str__(self):
         return f"{self.objekt_id}: {self.letzter_zaehler}"
 
@@ -961,8 +978,13 @@ class Beschluss(models.Model):
 
     beschluss_datum = models.DateField()
     ort = models.CharField(max_length=255, blank=True, default='')
+    ueberschrift = models.CharField(
+        max_length=255, blank=True, default='',
+        help_text='Überschrift des Beschlusses — bei EV-Beschlüssen der '
+                  'TOP-Titel (Snapshot), bei Nachträgen frei erfasst.',
+    )
     wortlaut = models.TextField(
-        help_text='Wortlaut des Beschlusses — unveränderlich (§ 24 Abs. 7 WEG).',
+        help_text='Wortlaut/Beschlusstext — unveränderlich (§ 24 Abs. 7 WEG).',
     )
     ergebnis            = models.CharField(
         max_length=12, choices=ERGEBNIS_CHOICES, default='angenommen',
