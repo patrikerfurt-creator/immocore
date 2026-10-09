@@ -26,7 +26,7 @@ from django.utils import timezone
 
 from apps.dokumente.models import Dokument
 from apps.versammlung.services import (
-    beschluss_service, durchfuehrung_service, ev_service, tagesordnung_service,
+    beschluss_service, ev_service, tagesordnung_service,
 )
 
 # Größenlimit für das vom Abstimmtool hochgeladene Protokoll-PDF (Spec v1.1
@@ -114,12 +114,23 @@ def checkout_zuruecknehmen(ev, erstellt_von, grund: str):
     return ev
 
 
+@transaction.atomic
 def abschluss(ev, erstellt_von) -> dict:
-    """Schritt 1/2 der Rückgabe (API-Vertrag v1.1 Abschnitt 3.7).
+    """Schritt 1/2 der Rückgabe (API-Vertrag v1.4 Abschnitt 4.6).
 
-    Prüft, dass jeder abstimmungspflichtige TOP ein Ergebnis hat, ruft dann
-    ``beschluss_service.uebernimm_in_sammlung`` (bestehende Logik, nicht
+    Ruft ``beschluss_service.uebernimm_in_sammlung`` (bestehende Logik, nicht
     dupliziert) auf und liefert die vergebenen Beschlussnummern je TOP.
+
+    v1.4: Ein beschlusspflichtiger TOP OHNE Abstimmungsergebnis blockiert den
+    Abschluss NICHT mehr (früher HTTP 400). Er gilt als "kein Beschluss
+    gefasst" (z.B. vertagt oder zurückgezogen): er bekommt keine
+    Beschlussnummer und wird im Ereignis-Log vermerkt
+    (``abschluss_top_ohne_beschluss``), damit eine versehentlich ausgelassene
+    Abstimmung nachvollziehbar bleibt. Das einzige verbleibende 400 ist das
+    Status-Gate (Status != ausgecheckt). Hintergrund: Das Tool kann einen TOP
+    bewusst ohne Abstimmung lassen; dieses "ohne Abstimmung" wird nicht an
+    immocore übertragen, daher darf das Fehlen eines Ergebnisses den Abschluss
+    nicht verhindern.
     """
     if ev.status != 'ausgecheckt':
         raise ValidationError(
@@ -127,11 +138,18 @@ def abschluss(ev, erstellt_von) -> dict:
             f'"{ev.get_status_display()}").'
         )
 
-    offen = durchfuehrung_service.pruefe_ergebnisse_vollstaendig(ev)
-    if offen:
-        raise ValidationError(
-            'Abschluss nicht möglich — für folgende TOP fehlt noch ein '
-            'Ergebnis: ' + ', '.join(f'TOP {n}' for n in offen)
+    # v1.4: beschlusspflichtige TOPs ohne Ergebnis blockieren nicht mehr — sie
+    # gelten als "kein Beschluss gefasst" und werden nur im Ereignis-Log
+    # vermerkt (Gegenkontrolle gegen eine versehentlich vergessene Abstimmung).
+    for top in (ev.tagesordnung
+                .exclude(abstimmungsmodus='kein_beschluss')
+                .filter(abstimmungsergebnis='offen')
+                .select_related('eltern')):
+        ev_service.vermerke_ereignis(
+            ev, 'abschluss_top_ohne_beschluss', erstellt_von, top=top,
+            text=(f'TOP {top.nummer_anzeige}: kein Beschluss gefasst — '
+                  'kein Abstimmungsergebnis beim Abschluss (keine '
+                  'Beschlussnummer vergeben).'),
         )
 
     beschluss_service.uebernimm_in_sammlung(ev, erstellt_von)

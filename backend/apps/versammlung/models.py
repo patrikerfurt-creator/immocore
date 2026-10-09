@@ -856,6 +856,7 @@ class EVEreignis(models.Model):
         ('checkout',              'Checkout (Übergabe ans Abstimmtool)'),
         ('checkout_zurueckgenommen', 'Checkout zurückgenommen'),
         ('abschluss_erzeugt',     'Abschluss — Beschlussnummern vergeben'),
+        ('abschluss_top_ohne_beschluss', 'TOP ohne Beschluss (beim Abschluss übersprungen)'),
         ('protokoll_hochgeladen', 'Protokoll vom Abstimmtool hochgeladen'),
         ('kommentar',             'Kommentar'),
     ]
@@ -868,7 +869,7 @@ class EVEreignis(models.Model):
         Tagesordnungspunkt, on_delete=models.SET_NULL, null=True, blank=True,
         related_name='ereignisse',
     )
-    typ = models.CharField(max_length=25, choices=TYP_CHOICES)
+    typ = models.CharField(max_length=32, choices=TYP_CHOICES)
     text = models.TextField(blank=True, default='')
     alter_wert = models.CharField(max_length=200, blank=True, default='')
     neuer_wert = models.CharField(max_length=200, blank=True, default='')

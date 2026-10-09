@@ -182,10 +182,20 @@ class AbschlussTest(_Basis):
             checkout_service.abschluss(andere, self.user)
         self.assertIn('ausgecheckt', str(ctx.exception))
 
-    def test_offene_tops_blockieren(self):
-        with self.assertRaises(ValidationError) as ctx:
-            checkout_service.abschluss(self.ev, self.user)
-        self.assertIn('TOP 1', str(ctx.exception))
+    def test_offener_top_blockiert_nicht_und_wird_vermerkt(self):
+        # v1.4: ein beschlusspflichtiger TOP ohne Ergebnis blockiert den
+        # Abschluss nicht mehr — keine Beschlussnummer, aber Ereignis-Log.
+        ergebnis = checkout_service.abschluss(self.ev, self.user)
+        self.assertEqual(ergebnis['beschluesse'], [])
+        self.assertEqual(Beschluss.objects.filter(ev=self.ev).count(), 0)
+        self.assertEqual(
+            self.ev.ereignisse.filter(typ='abschluss_top_ohne_beschluss').count(),
+            1,
+        )
+        # Abschluss gilt als erledigt, Status bleibt (erst Protokoll-Upload wechselt).
+        self.ev.refresh_from_db()
+        self.assertEqual(self.ev.status, 'ausgecheckt')
+        self.assertIsNotNone(self.ev.abschluss_erledigt_am)
 
     def test_abschluss_liefert_beschlussnummern(self):
         durchfuehrung_service.erfasse_abstimmung(self.top, self.user, ja=3, nein=0)
