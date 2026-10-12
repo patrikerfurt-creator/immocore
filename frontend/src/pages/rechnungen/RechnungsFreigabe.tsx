@@ -118,13 +118,16 @@ export default function RechnungsFreigabe() {
   }
 
   const freigeben = async (r: RechnungList) => {
+    const istSplit = (r.splits?.length ?? 0) > 0
     const kontoId = auswahl[r.id]
-    // v1_1: ohne Aufwandskonto (weder gewählt noch gespeichert) ist keine Freigabe möglich
-    if (!kontoId && !r.aufwandskonto_id) {
+    // Gesplittete Rechnung: die Kontierung steht in den Split-Positionen, ein
+    // einzelnes Aufwandskonto ist weder nötig noch wählbar.
+    // Sonst: ohne Aufwandskonto (weder gewählt noch gespeichert) keine Freigabe.
+    if (!istSplit && !kontoId && !r.aufwandskonto_id) {
       setFehler('Bitte zuerst ein Aufwandskonto wählen.')
       return
     }
-    const geaendert = !!kontoId && kontoId !== (r.aufwandskonto_id ?? '')
+    const geaendert = !istSplit && !!kontoId && kontoId !== (r.aufwandskonto_id ?? '')
     let lernen = false
     if (geaendert) {
       // Match-Regel-Rückfrage (Spec 5.3) — nur „Ja" aktualisiert die Regel
@@ -184,7 +187,11 @@ export default function RechnungsFreigabe() {
               {rows.map(r => {
                 const rJahr = /^\d{4}-/.test(r.rechnungsdatum ?? '') ? r.rechnungsdatum!.slice(0, 4) : ''
                 const konten = r.objekt_id ? (kontenByObjekt[schluessel(r.objekt_id, rJahr)] ?? []) : []
-                const geaendert = !!auswahl[r.id] && auswahl[r.id] !== (r.aufwandskonto_id ?? '')
+                const istSplit = (r.splits?.length ?? 0) > 0
+                const geaendert = !istSplit && !!auswahl[r.id] && auswahl[r.id] !== (r.aufwandskonto_id ?? '')
+                const splitSumme = istSplit
+                  ? r.splits.reduce((s, sp) => s + Number(sp.betrag), 0)
+                  : 0
                 return (
                   <tr key={r.id} className="border-t hover:bg-gray-50">
                     <td className="px-3 py-2"><Ampelpunkt ampel={r.erkennung_ampel} /></td>
@@ -195,18 +202,38 @@ export default function RechnungsFreigabe() {
                       {r.betrag_brutto ? `${Number(r.betrag_brutto).toLocaleString('de-DE', { minimumFractionDigits: 2 })} €` : '—'}
                     </td>
                     <td className="px-3 py-2">
-                      <select
-                        className={`border rounded px-2 py-1 text-sm w-64 ${geaendert ? 'border-amber-400 bg-amber-50' : ''}`}
-                        value={auswahl[r.id] ?? ''}
-                        onChange={e => setAuswahl(prev => ({ ...prev, [r.id]: e.target.value }))}
-                      >
-                        <option value="">— Konto wählen —</option>
-                        {konten.map(k => (
-                          <option key={k.id} value={k.id}>{k.kontonummer} — {k.kontoname}</option>
-                        ))}
-                      </select>
-                      {geaendert && (
-                        <span className="block text-xs text-amber-700 mt-0.5">Konto geändert — beim Freigeben folgt die Match-Regel-Rückfrage</span>
+                      {istSplit ? (
+                        <div className="text-xs">
+                          <span className="inline-block mb-1 px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 font-medium">
+                            gesplittet ({r.splits.length} Positionen)
+                          </span>
+                          {r.splits.map(sp => (
+                            <span key={sp.id} className="flex justify-between gap-3 font-mono text-gray-700">
+                              <span>{sp.aufwandskonto_label}</span>
+                              <span className="whitespace-nowrap">{eur(sp.betrag)}</span>
+                            </span>
+                          ))}
+                          <span className="flex justify-between gap-3 font-mono text-gray-500 border-t mt-0.5 pt-0.5">
+                            <span>Summe</span>
+                            <span className="whitespace-nowrap">{eur(String(splitSumme))}</span>
+                          </span>
+                        </div>
+                      ) : (
+                        <>
+                          <select
+                            className={`border rounded px-2 py-1 text-sm w-64 ${geaendert ? 'border-amber-400 bg-amber-50' : ''}`}
+                            value={auswahl[r.id] ?? ''}
+                            onChange={e => setAuswahl(prev => ({ ...prev, [r.id]: e.target.value }))}
+                          >
+                            <option value="">— Konto wählen —</option>
+                            {konten.map(k => (
+                              <option key={k.id} value={k.id}>{k.kontonummer} — {k.kontoname}</option>
+                            ))}
+                          </select>
+                          {geaendert && (
+                            <span className="block text-xs text-amber-700 mt-0.5">Konto geändert — beim Freigeben folgt die Match-Regel-Rückfrage</span>
+                          )}
+                        </>
                       )}
                     </td>
                     <td className="px-3 py-2 text-right whitespace-nowrap">

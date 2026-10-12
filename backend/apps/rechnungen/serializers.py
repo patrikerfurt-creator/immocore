@@ -193,6 +193,9 @@ class RechnungListSerializer(serializers.ModelSerializer):
     erfasst_von_name = serializers.CharField(source='erfasst_von.get_full_name', read_only=True)
     kostenverursacher_id = serializers.UUIDField(source='kostenverursacher.id', read_only=True)
     pruefgrund = serializers.SerializerMethodField()
+    # Split-Positionen: bei gesplitteten Rechnungen gibt es kein einzelnes
+    # Aufwandskonto — die Kontierung steht hier (Freigabe-Liste zeigt sie read-only).
+    splits = RechnungSplitPositionSerializer(many=True, read_only=True)
 
     def get_pruefgrund(self, obj):
         return pruefgrund_text(obj)
@@ -219,6 +222,7 @@ class RechnungListSerializer(serializers.ModelSerializer):
             'betrag_haushaltsnah', 'ist_schlussrechnung',
             'skonto_faellig_bis', 'skonto_genutzt',
             'kostenverursacher_id', 'erfasst_von_name',
+            'splits',
         ]
 
     def get_kreditor_name(self, obj):

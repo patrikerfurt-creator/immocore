@@ -845,6 +845,8 @@ export interface RechnungList {
   skonto_genutzt: boolean
   kostenverursacher_id: string | null
   erfasst_von_name: string | null
+  // Bei gesplitteten Rechnungen steht die Kontierung hier statt in aufwandskonto_id
+  splits: RechnungSplitPosition[]
 }
 
 export interface Freigabe {

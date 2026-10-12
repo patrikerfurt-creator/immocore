@@ -540,7 +540,16 @@ class RechnungViewSet(viewsets.ModelViewSet):
         lernen = request.data.get('lernen', False)
         neues_konto_id = request.data.get('aufwandskonto_id')
 
-        if neues_konto_id:
+        if rechnung.splits.exists():
+            # Gesplittete Rechnung: die Kontierung steht in den Split-Positionen,
+            # es gibt KEIN einzelnes Aufwandskonto. rechnung_op_service bucht den
+            # Aufwand je Split (aufwandskonto=None + hat_splits). Ein mitgesendetes
+            # aufwandskonto_id wird bewusst ignoriert — Splits sind die Kontierung.
+            try:
+                op_freigeben(rechnung, None, request.user, buchungsdatum=buchungsdatum)
+            except DjangoValidationError as exc:
+                return Response({'error': exc.message}, status=status.HTTP_400_BAD_REQUEST)
+        elif neues_konto_id:
             # Trigger B: Aufwandskonto-Korrektur gegenüber gespeichertem Wert → Lernlogik
             if str(rechnung.aufwandskonto_id or '') != neues_konto_id:
                 from .recognition import lege_match_regel_an
