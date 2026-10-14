@@ -5,6 +5,8 @@ Reine Ein-/Ausgabe-Übersetzung — jede Mutation läuft über die Services
 (``vorgang_service`` / ``dokument_service``); Serializer enthalten bewusst
 KEINE Business-Logik (Architekturprinzip).
 """
+from decimal import Decimal
+
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
@@ -18,6 +20,7 @@ from .models import (
     VorgangAntwortVorschlag,
     VorgangEreignis,
     VorgangTyp,
+    VorgangZeiteintrag,
 )
 
 User = get_user_model()
@@ -97,6 +100,40 @@ class VorgangAntwortVorschlagSerializer(serializers.ModelSerializer):
         return _user_name(obj.freigegeben_von)
 
 
+class VorgangZeiteintragSerializer(serializers.ModelSerializer):
+    mitarbeiter_name = serializers.SerializerMethodField()
+    erstellt_von_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = VorgangZeiteintrag
+        fields = [
+            'id', 'mitarbeiter', 'mitarbeiter_name', 'datum', 'taetigkeit',
+            'dauer_minuten', 'kilometer', 'notiz',
+            'erstellt_am', 'erstellt_von', 'erstellt_von_name',
+        ]
+        read_only_fields = fields
+
+    def get_mitarbeiter_name(self, obj):
+        return _user_name(obj.mitarbeiter)
+
+    def get_erstellt_von_name(self, obj):
+        return _user_name(obj.erstellt_von)
+
+
+class VorgangZeiteintragCreateSerializer(serializers.Serializer):
+    """Eingabe-Validierung für ``POST /vorgaenge/{id}/zeiteintraege/`` — die
+    Anlage läuft über ``vorgang_service.fuege_zeiteintrag_hinzu``."""
+    mitarbeiter = serializers.PrimaryKeyRelatedField(queryset=User.objects.all())
+    datum = serializers.DateField()
+    taetigkeit = serializers.CharField(max_length=255)
+    dauer_minuten = serializers.IntegerField(min_value=0, required=False, default=0)
+    kilometer = serializers.DecimalField(
+        max_digits=7, decimal_places=1, min_value=Decimal('0'),
+        required=False, default=Decimal('0'),
+    )
+    notiz = serializers.CharField(required=False, allow_blank=True, default='')
+
+
 class VorgangListSerializer(serializers.ModelSerializer):
     typ_bezeichnung = serializers.CharField(source='typ.bezeichnung', read_only=True)
     objekt_bezeichnung = serializers.CharField(source='objekt.bezeichnung', read_only=True, default=None)
@@ -130,6 +167,8 @@ class VorgangDetailSerializer(serializers.ModelSerializer):
     ereignisse = VorgangEreignisSerializer(many=True, read_only=True)
     dokumente = VorgangDokumentSerializer(many=True, read_only=True)
     antwort_vorschlag = serializers.SerializerMethodField()
+    zeiteintraege = VorgangZeiteintragSerializer(many=True, read_only=True)
+    zeit_summe = serializers.SerializerMethodField()
 
     class Meta:
         model = Vorgang
@@ -139,12 +178,25 @@ class VorgangDetailSerializer(serializers.ModelSerializer):
             'person', 'person_name', 'betreff', 'beschreibung',
             'status', 'prioritaet', 'zugewiesen_an', 'zugewiesen_an_name',
             'faellig_am', 'wiedervorlage_am', 'mail_referenz',
-            'telefon_rufnummer', 'portal_sichtbar',
+            'telefon_rufnummer', 'portal_sichtbar', 'abrechenbar',
             'erstellt_am', 'erstellt_von', 'erstellt_von_name',
             'geschlossen_am', 'geschlossen_von', 'geschlossen_von_name',
             'ereignisse', 'dokumente', 'antwort_vorschlag',
+            'zeiteintraege', 'zeit_summe',
         ]
         read_only_fields = fields
+
+    def get_zeit_summe(self, obj):
+        """Summen über alle Zeiteinträge für die Nachweis-Tabelle. Decimal wird
+        als String ausgegeben (sonst JSON-Float, siehe Projekt-Konvention)."""
+        eintraege = obj.zeiteintraege.all()
+        minuten = sum(e.dauer_minuten for e in eintraege)
+        kilometer = sum((e.kilometer or 0) for e in eintraege)
+        return {
+            'anzahl': len(eintraege),
+            'minuten': minuten,
+            'kilometer': str(kilometer),
+        }
 
     def get_zugewiesen_an_name(self, obj):
         return _user_name(obj.zugewiesen_an)

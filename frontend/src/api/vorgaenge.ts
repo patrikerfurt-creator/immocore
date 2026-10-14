@@ -7,6 +7,7 @@ import type {
   VorgangList,
   VorgangPortalAnsicht,
   VorgangTyp,
+  VorgangZeiteintragCreatePayload,
 } from '../types'
 
 export const vorgaengeApi = {
@@ -62,6 +63,30 @@ export const vorgaengeApi = {
 
   antwortVorschlagVerwerfen: (id: string, grund?: string) =>
     client.post<VorgangAntwortVorschlag>(`/vorgaenge/${id}/antwort-vorschlag/verwerfen/`, grund ? { grund } : {}).then(r => r.data),
+
+  // ── Zeiterfassung (optionale Sonderkosten) ──────────────────────────────
+  abrechenbarSetzen: (id: string, abrechenbar: boolean) =>
+    client.post<VorgangDetail>(`/vorgaenge/${id}/abrechenbar/`, { abrechenbar }).then(r => r.data),
+
+  zeiteintragHinzufuegen: (id: string, payload: VorgangZeiteintragCreatePayload) =>
+    client.post<VorgangDetail>(`/vorgaenge/${id}/zeiteintraege/`, payload).then(r => r.data),
+
+  zeiteintragLoeschen: (id: string, eintragId: string) =>
+    client.delete<VorgangDetail>(`/vorgaenge/${id}/zeiteintraege/${eintragId}/`).then(r => r.data),
+
+  // CSV als Blob holen (Endpunkt verlangt Auth — ein einfaches window.open
+  // würde 401 liefern) und als Datei-Download auslösen.
+  zeitenExportieren: async (id: string, nummer: string) => {
+    const response = await client.get(`/vorgaenge/${id}/zeiten-export/`, { responseType: 'blob' })
+    const url = URL.createObjectURL(response.data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `Vorgang_${nummer}_Zeiten.csv`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  },
 }
 
 export const vorgangTypenAdminApi = {

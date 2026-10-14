@@ -143,6 +143,15 @@ class Vorgang(models.Model):
     telefon_rufnummer = models.CharField(max_length=30, null=True, blank=True)
     portal_sichtbar = models.BooleanField(default=False)
 
+    abrechenbar = models.BooleanField(
+        default=False,
+        verbose_name='Separat abrechenbar',
+        help_text='Schalter "separat abrechenbar" (Default aus). Nur wenn '
+                  'gesetzt, wird am Vorgang die Zeiterfassung (Sonderkosten) '
+                  'angeboten — nicht jeder Vorgang kann separat berechnet '
+                  'werden.',
+    )
+
     erstellt_am = models.DateTimeField(auto_now_add=True)
     erstellt_von = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
@@ -240,6 +249,71 @@ class VorgangEreignis(models.Model):
 
     def __str__(self):
         return f"{self.vorgang.nummer} — {self.get_typ_display()}"
+
+
+class VorgangZeiteintrag(models.Model):
+    """Zeit-/Kilometereintrag zu einem Vorgang (optionale Sonderkosten-Erfassung).
+
+    Hält fest, WER (``mitarbeiter``) WANN (``datum``) WAS (``taetigkeit``) getan
+    hat und wie lange (``dauer_minuten``) bzw. welche Fahrtstrecke
+    (``kilometer``) angefallen ist. Bewusst OHNE Betrag/Stundensatz — die
+    eigentliche Rechnungsstellung erfolgt in einem externen Programm; dieses
+    Modul liefert nur die Nachweis-Tabelle (CSV-Export).
+
+    Nur relevant, wenn ``vorgang.abrechenbar`` gesetzt ist. Die Einträge sind
+    ein Arbeitsnachweis, kein verbuchter Beleg — anders als ``VorgangEreignis``
+    dürfen sie angelegt und wieder gelöscht werden (keine GoBD-Unveränderbarkeit).
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    vorgang = models.ForeignKey(
+        Vorgang, on_delete=models.CASCADE, related_name='zeiteintraege',
+    )
+    mitarbeiter = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        related_name='vorgang_zeiteintraege',
+        help_text='Mitarbeiter, der die Leistung erbracht hat (wie bei der '
+                  'Zuweisung ein auth.User).',
+    )
+    datum = models.DateField(help_text='Tag, an dem die Tätigkeit angefallen ist.')
+    taetigkeit = models.CharField(
+        max_length=255,
+        help_text='Kurzbeschreibung, z.B. "Telefonat mit Architekt".',
+    )
+    dauer_minuten = models.PositiveIntegerField(
+        default=0,
+        verbose_name='Dauer (Minuten)',
+        help_text='Dauer in Minuten — per Stoppuhr erfasst oder von Hand.',
+    )
+    kilometer = models.DecimalField(
+        max_digits=7, decimal_places=1, default=0,
+        verbose_name='Gefahrene Kilometer',
+    )
+    notiz = models.TextField(blank=True, default='')
+
+    erstellt_am = models.DateTimeField(auto_now_add=True)
+    erstellt_von = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        null=True, blank=True, related_name='erfasste_vorgang_zeiteintraege',
+    )
+
+    class Meta:
+        verbose_name = 'Vorgangs-Zeiteintrag'
+        verbose_name_plural = 'Vorgangs-Zeiteinträge'
+        ordering = ['datum', 'erstellt_am']
+
+    def clean(self):
+        super().clean()
+        if self.dauer_minuten == 0 and (self.kilometer or 0) == 0:
+            raise ValidationError(
+                'Ein Zeiteintrag braucht entweder eine Dauer oder gefahrene '
+                'Kilometer — beides 0 ist nicht sinnvoll.'
+            )
+        if self.kilometer is not None and self.kilometer < 0:
+            raise ValidationError('Gefahrene Kilometer dürfen nicht negativ sein.')
+
+    def __str__(self):
+        return f"{self.vorgang.nummer} — {self.taetigkeit} ({self.dauer_minuten} min)"
 
 
 class VorgangAntwortVorschlag(models.Model):

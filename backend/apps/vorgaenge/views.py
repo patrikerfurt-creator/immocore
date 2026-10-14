@@ -6,8 +6,12 @@ KEINE Business-Logik hier — jede Mutation delegiert an
 werden als ``django.core.exceptions.ValidationError`` von den Services
 geworfen und hier zu HTTP 400 übersetzt.
 """
+import csv
+from decimal import Decimal
+
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
@@ -15,7 +19,7 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
 
-from .models import Vorgang, VorgangAntwortVorschlag, VorgangTyp
+from .models import Vorgang, VorgangAntwortVorschlag, VorgangTyp, VorgangZeiteintrag
 from .serializers import (
     VorgangAntwortVorschlagSerializer,
     VorgangCreateSerializer,
@@ -23,6 +27,7 @@ from .serializers import (
     VorgangDokumentSerializer,
     VorgangListSerializer,
     VorgangTypSerializer,
+    VorgangZeiteintragCreateSerializer,
 )
 from .services import antwort_vorschlag_service, dokument_service, vorgang_service
 
@@ -50,6 +55,22 @@ def _parse_bool(value) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _minuten_hhmm(minuten: int) -> str:
+    """Minuten als ``h:mm`` (z.B. 90 -> '1:30') für die Export-Tabelle."""
+    return f"{minuten // 60}:{minuten % 60:02d}"
+
+
+def _de_dezimal(wert) -> str:
+    """Deutsche Dezimalschreibweise (Komma statt Punkt) für den CSV-Export."""
+    return str(wert).replace('.', ',')
+
+
+def _user_anzeige(user) -> str:
+    if user is None:
+        return ''
+    return user.get_full_name() or user.get_username()
 
 
 class VorgangViewSet(mixins.ListModelMixin,
@@ -167,6 +188,82 @@ class VorgangViewSet(mixins.ListModelMixin,
         except DjangoValidationError as exc:
             return _validation_error_response(exc)
         return Response(VorgangDetailSerializer(vorgang).data)
+
+    @action(detail=True, methods=['post'], url_path='abrechenbar')
+    def abrechenbar_setzen(self, request, pk=None):
+        """Setzt den Schalter ``Vorgang.abrechenbar`` — Body
+        ``{"abrechenbar": true|false}``. Schaltet die Zeiterfassung frei."""
+        vorgang = self.get_object()
+        abrechenbar = _parse_bool(request.data.get('abrechenbar'))
+        try:
+            vorgang_service.setze_abrechenbar(vorgang, abrechenbar)
+        except DjangoValidationError as exc:
+            return _validation_error_response(exc)
+        return Response(VorgangDetailSerializer(vorgang).data)
+
+    @action(detail=True, methods=['post'], url_path='zeiteintraege')
+    def zeiteintrag_hinzufuegen(self, request, pk=None):
+        """Legt einen Zeiteintrag (Sonderkosten-Erfassung) an. Nur möglich,
+        wenn der Vorgang als "separat abrechenbar" markiert ist — sonst 400."""
+        vorgang = self.get_object()
+        eingabe = VorgangZeiteintragCreateSerializer(data=request.data)
+        eingabe.is_valid(raise_exception=True)
+        try:
+            vorgang_service.fuege_zeiteintrag_hinzu(
+                vorgang, erstellt_von=request.user, **eingabe.validated_data,
+            )
+        except DjangoValidationError as exc:
+            return _validation_error_response(exc)
+        return Response(VorgangDetailSerializer(vorgang).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['delete'], url_path=r'zeiteintraege/(?P<eid>[^/.]+)')
+    def zeiteintrag_loeschen(self, request, pk=None, eid=None):
+        """Löscht einen einzelnen Zeiteintrag dieses Vorgangs."""
+        vorgang = self.get_object()
+        eintrag = get_object_or_404(VorgangZeiteintrag, pk=eid, vorgang=vorgang)
+        try:
+            vorgang_service.loesche_zeiteintrag(eintrag)
+        except DjangoValidationError as exc:
+            return _validation_error_response(exc)
+        return Response(VorgangDetailSerializer(vorgang).data)
+
+    @action(detail=True, methods=['get'], url_path='zeiten-export')
+    def zeiten_export(self, request, pk=None):
+        """CSV-Export der Zeiten/Kilometer dieses Vorgangs (Nachweis-Tabelle
+        für die externe Rechnungsstellung). Semikolon-getrennt mit UTF-8-BOM,
+        damit Excel (de) Spalten und Umlaute korrekt übernimmt."""
+        vorgang = self.get_object()
+        response = HttpResponse(content_type='text/csv; charset=utf-8')
+        dateiname = f"Vorgang_{vorgang.nummer}_Zeiten.csv"
+        response['Content-Disposition'] = f'attachment; filename="{dateiname}"'
+        response.write('﻿')  # BOM für Excel
+
+        writer = csv.writer(response, delimiter=';')
+        writer.writerow([
+            'Datum', 'Mitarbeiter', 'Tätigkeit',
+            'Dauer (hh:mm)', 'Dauer (Minuten)', 'Kilometer', 'Notiz',
+        ])
+
+        summe_minuten = 0
+        summe_km = Decimal('0')
+        for e in vorgang.zeiteintraege.select_related('mitarbeiter').all():
+            summe_minuten += e.dauer_minuten
+            summe_km += e.kilometer or Decimal('0')
+            writer.writerow([
+                e.datum.strftime('%d.%m.%Y'),
+                _user_anzeige(e.mitarbeiter),
+                e.taetigkeit,
+                _minuten_hhmm(e.dauer_minuten),
+                e.dauer_minuten,
+                _de_dezimal(e.kilometer or 0),
+                e.notiz,
+            ])
+        writer.writerow([])
+        writer.writerow([
+            'Summe', '', '',
+            _minuten_hhmm(summe_minuten), summe_minuten, _de_dezimal(summe_km), '',
+        ])
+        return response
 
     @action(detail=True, methods=['post'], url_path='dokumente', parser_classes=[MultiPartParser, FormParser])
     def dokumente(self, request, pk=None):

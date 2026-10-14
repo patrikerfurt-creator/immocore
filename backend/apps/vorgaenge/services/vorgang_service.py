@@ -13,7 +13,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from apps.vorgaenge.models import Vorgang, VorgangEreignis
+from apps.vorgaenge.models import Vorgang, VorgangEreignis, VorgangZeiteintrag
 
 # Technischer System-User für ``Vorgang.erstellt_von`` bei Portal-Anlagen.
 # Portal-Identitäten (``PortalNutzer``/``PortalSession``) haben BEWUSST
@@ -200,6 +200,58 @@ def setze_portal_sichtbar(vorgang: Vorgang, sichtbar: bool) -> Vorgang:
     vorgang.full_clean()
     vorgang.save(update_fields=['portal_sichtbar'])
     return vorgang
+
+
+@transaction.atomic
+def setze_abrechenbar(vorgang: Vorgang, abrechenbar: bool) -> Vorgang:
+    """Setzt ``Vorgang.abrechenbar`` — den Schalter "separat abrechenbar".
+
+    Reine Sichtbarkeits-/Freischalt-Steuerung für die Zeiterfassung, kein
+    inhaltlicher Eingriff — erzeugt bewusst KEIN ``VorgangEreignis`` (analog
+    ``setze_portal_sichtbar``). Bereits erfasste Zeiteinträge bleiben beim
+    Ausschalten erhalten; sie werden dann nur nicht mehr angeboten.
+    """
+    vorgang.abrechenbar = bool(abrechenbar)
+    vorgang.full_clean()
+    vorgang.save(update_fields=['abrechenbar'])
+    return vorgang
+
+
+@transaction.atomic
+def fuege_zeiteintrag_hinzu(vorgang: Vorgang, *, mitarbeiter, datum, taetigkeit,
+                             dauer_minuten=0, kilometer=0, notiz='',
+                             erstellt_von) -> VorgangZeiteintrag:
+    """Legt einen ``VorgangZeiteintrag`` an (optionale Sonderkosten-Erfassung).
+
+    Nur zulässig, wenn der Vorgang als ``abrechenbar`` markiert ist und nicht
+    storniert wurde — sonst ``ValidationError``. Die fachliche Prüfung
+    (Dauer ODER Kilometer gesetzt) übernimmt ``VorgangZeiteintrag.clean()``.
+    """
+    if not vorgang.abrechenbar:
+        raise ValidationError(
+            'Für diesen Vorgang ist keine Zeiterfassung möglich — er ist nicht '
+            'als "separat abrechenbar" markiert.'
+        )
+    if vorgang.status == 'storniert':
+        raise ValidationError('Zu einem stornierten Vorgang können keine Zeiten erfasst werden.')
+
+    eintrag = VorgangZeiteintrag(
+        vorgang=vorgang, mitarbeiter=mitarbeiter, datum=datum,
+        taetigkeit=taetigkeit, dauer_minuten=dauer_minuten or 0,
+        kilometer=kilometer or 0, notiz=notiz or '', erstellt_von=erstellt_von,
+    )
+    eintrag.full_clean()
+    eintrag.save()
+    return eintrag
+
+
+@transaction.atomic
+def loesche_zeiteintrag(zeiteintrag: VorgangZeiteintrag) -> None:
+    """Löscht einen Zeiteintrag. Zulässig, solange der Vorgang nicht storniert
+    ist — Zeiteinträge sind ein korrigierbarer Arbeitsnachweis, kein Beleg."""
+    if zeiteintrag.vorgang.status == 'storniert':
+        raise ValidationError('Zeiteinträge eines stornierten Vorgangs können nicht gelöscht werden.')
+    zeiteintrag.delete()
 
 
 def portal_ansicht(vorgang: Vorgang) -> dict:

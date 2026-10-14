@@ -1098,11 +1098,43 @@ export interface VorgangDokument {
   hochgeladen_von_name: string | null
 }
 
+export interface VorgangZeiteintrag {
+  id: string
+  mitarbeiter: number
+  mitarbeiter_name: string | null
+  datum: string
+  taetigkeit: string
+  dauer_minuten: number
+  /** DecimalField – als String übertragen (Projekt-Konvention). */
+  kilometer: string
+  notiz: string
+  erstellt_am: string
+  erstellt_von: number | null
+  erstellt_von_name: string | null
+}
+
+export interface VorgangZeitSumme {
+  anzahl: number
+  minuten: number
+  /** Decimal als String. */
+  kilometer: string
+}
+
+export interface VorgangZeiteintragCreatePayload {
+  mitarbeiter: number
+  datum: string
+  taetigkeit: string
+  dauer_minuten?: number
+  kilometer?: string
+  notiz?: string
+}
+
 export interface VorgangDetail extends VorgangList {
   beschreibung: string | null
   mail_referenz: string | null
   telefon_rufnummer: string | null
   portal_sichtbar: boolean
+  abrechenbar: boolean
   erstellt_von: number
   erstellt_von_name: string | null
   geschlossen_am: string | null
@@ -1111,6 +1143,8 @@ export interface VorgangDetail extends VorgangList {
   ereignisse: VorgangEreignis[]
   dokumente: VorgangDokument[]
   antwort_vorschlag: VorgangAntwortVorschlag | null
+  zeiteintraege: VorgangZeiteintrag[]
+  zeit_summe: VorgangZeitSumme
 }
 
 export interface VorgangCreatePayload {
