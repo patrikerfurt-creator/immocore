@@ -62,6 +62,17 @@ local_seed/*.sql.gz
 /CamtDAT/
 /Maileingang/
 /Testdateine IMPORT/
+/ARGE/
+/sepa_output/
+/backend/maileingang_graph/
+/backend/sepa_output/
+
+# Root-Importvorlagen und Quell-Tabellen (Daten, kein Code — gehoeren nicht ins Repo).
+# Nur Repo-Wurzel (Code-Fixtures unter backend/ bleiben getrackt).
+/*.csv
+/*.xlsx
+/*.dat
+/IMMOCORE_Ausgangsspezifikation_*.pdf
 
 # Celery-Laufzeitstand (wird beim Start neu erzeugt)
 backend/celerybeat-schedule
