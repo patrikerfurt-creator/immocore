@@ -47,11 +47,10 @@ const variants: Record<string, string> = {
   bankabgang_erfolgt:'bg-green-100 text-green-800',
   abweichend_geklaert:'bg-yellow-100 text-yellow-800',
   verworfen:         'bg-gray-100 text-gray-500',
-  // Handwerkerauftrag (entwurf/abgelehnt/storniert/abgeschlossen s.o. bereits vorhanden)
+  // Handwerkerauftrag (entwurf/storniert/abgeschlossen s.o. bereits vorhanden)
   versendet:      'bg-blue-100 text-blue-700',
   angenommen:     'bg-green-100 text-green-800',
   in_arbeit:      'bg-indigo-100 text-indigo-700',
-  abgelaufen:     'bg-orange-100 text-orange-700',
   // Eigentümerversammlung (entwurf/in_bearbeitung/archiviert s.o. bereits vorhanden)
   einladungen_versendet:  'bg-blue-100 text-blue-700',
   ausgecheckt:            'bg-purple-100 text-purple-700',

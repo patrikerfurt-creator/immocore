@@ -5,12 +5,7 @@ Reine Ein-/Ausgabe-Übersetzung — jede Mutation läuft über ``auftrag_service
 Serializer enthalten bewusst KEINE Business-Logik (Architekturprinzip,
 analog ``apps.vorgaenge.serializers``).
 
-SICHERHEITSKRITISCH: ``AuftragsbestaetigungsToken.accept_token`` und
-``reject_token`` dürfen NIEMALS über einen Serializer nach außen gelangen.
-Deshalb ausschließlich explizite Feldlisten (nie ``fields = '__all__'``),
-und der Token-Status wird über ``get_token_status()`` manuell auf genau
-``gueltig_bis``/``verbraucht_am`` reduziert — das Token-Modell selbst wird
-nirgends direkt serialisiert.
+Ausschließlich explizite Feldlisten (nie ``fields = '__all__'``).
 """
 from rest_framework import serializers
 
@@ -91,7 +86,7 @@ class HandwerkerauftragListSerializer(serializers.ModelSerializer):
             'id', 'nummer', 'titel', 'status', 'prioritaet', 'geschaetzte_kosten',
             'objekt', 'objekt_bezeichnung',
             'kreditor', 'kreditor_name', 'kreditor_gewerke_bezeichnung',
-            'erstellt_am', 'versendet_am', 'angenommen_am', 'abgelehnt_am', 'abgeschlossen_am',
+            'erstellt_am', 'versendet_am', 'abgeschlossen_am',
             'rechnungen_anzahl',
         ]
         read_only_fields = fields
@@ -107,11 +102,10 @@ class HandwerkerauftragListSerializer(serializers.ModelSerializer):
 class HandwerkerauftragDetailSerializer(serializers.ModelSerializer):
     """Detailansicht — ``GET /api/v1/handwerkerauftraege/{id}/``.
 
-    ``vorgang`` und ``token_status`` sind bewusst als ``SerializerMethodField``
-    deklariert (überschreiben damit die von ``ModelSerializer`` sonst
-    automatisch erzeugten Felder) — ``vorgang`` liefert eine kompakte
-    Klarnamen-Repräsentation statt der reinen PK, ``token_status`` reduziert
-    das Token-Modell auf die zwei unkritischen Felder (siehe Modul-Docstring).
+    ``vorgang`` ist bewusst als ``SerializerMethodField`` deklariert
+    (überschreibt das von ``ModelSerializer`` sonst automatisch erzeugte
+    Feld) und liefert eine kompakte Klarnamen-Repräsentation statt der
+    reinen PK.
     """
 
     objekt_bezeichnung = serializers.CharField(source='objekt.bezeichnung', read_only=True)
@@ -121,7 +115,6 @@ class HandwerkerauftragDetailSerializer(serializers.ModelSerializer):
     erstellt_von_name = serializers.SerializerMethodField()
     ereignisse = HandwerkerauftragEreignisSerializer(many=True, read_only=True)
     rechnungen = HandwerkerauftragRechnungSerializer(many=True, read_only=True)
-    token_status = serializers.SerializerMethodField()
 
     class Meta:
         model = Handwerkerauftrag
@@ -130,11 +123,11 @@ class HandwerkerauftragDetailSerializer(serializers.ModelSerializer):
             'gewuenscht_ab', 'geschaetzte_kosten',
             'objekt', 'objekt_bezeichnung',
             'kreditor', 'kreditor_name', 'kreditor_gewerke_bezeichnung',
-            'vorgang', 'ablehnung_grund', 'abschluss_notiz',
+            'vorgang', 'abschluss_notiz',
             'erstellt_am', 'erstellt_von', 'erstellt_von_name',
-            'versendet_am', 'angenommen_am', 'abgelehnt_am', 'abgeschlossen_am',
+            'versendet_am', 'abgeschlossen_am',
             'geaendert_am',
-            'ereignisse', 'rechnungen', 'token_status',
+            'ereignisse', 'rechnungen',
         ]
         read_only_fields = fields
 
@@ -149,12 +142,6 @@ class HandwerkerauftragDetailSerializer(serializers.ModelSerializer):
     def get_kreditor_gewerke_bezeichnung(self, obj):
         bezeichnungen = [g.bezeichnung for g in obj.kreditor.gewerke.all()]
         return ', '.join(bezeichnungen) if bezeichnungen else None
-
-    def get_token_status(self, obj):
-        token = getattr(obj, 'token', None)
-        if token is None:
-            return None
-        return {'gueltig_bis': token.gueltig_bis, 'verbraucht_am': token.verbraucht_am}
 
 
 class HandwerkerauftragCreateSerializer(serializers.Serializer):

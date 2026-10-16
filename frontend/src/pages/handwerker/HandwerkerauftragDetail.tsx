@@ -88,14 +88,10 @@ export function HandwerkerauftragDetail() {
   // Knöpfe im UI aus der MANUELLEN Übergangsmenge (nicht aus der vollen
   // Service-Tabelle) — siehe Begründung in shared.ts (Phase-D-Abnahme, Fehler 1).
   const erlaubteZiele = HWA_MANUELLE_UEBERGAENGE[auftrag.status] ?? []
-  // Aus 'entwurf' (erster Versand ist fehlgeschlagen), 'versendet' und
-  // 'abgelaufen' ist der (erneute) Versand die fachlich richtige Aktion.
-  const darfVersenden = auftrag.status === 'entwurf' || auftrag.status === 'abgelaufen' || auftrag.status === 'versendet'
+  // Aus 'entwurf' (erster Versand ist fehlgeschlagen) und 'versendet' ist der
+  // (erneute) Versand die fachlich richtige Aktion.
+  const darfVersenden = auftrag.status === 'entwurf' || auftrag.status === 'versendet'
   const versandLabel = auftrag.status === 'entwurf' ? 'Auftragsmail senden' : 'Auftragsmail erneut senden'
-
-  const tokenAbgelaufen = auftrag.token_status
-    && auftrag.token_status.verbraucht_am === null
-    && new Date(auftrag.token_status.gueltig_bis).getTime() <= Date.now()
 
   const zugeordneteIds = new Set(auftrag.rechnungen.map(r => r.id))
   const auswaehlbareRechnungen = (kreditorRechnungen ?? []).filter(r => !zugeordneteIds.has(r.id))
@@ -158,27 +154,20 @@ export function HandwerkerauftragDetail() {
             </div>
           )}
           <div><dt className="text-gray-500">Erstellt</dt><dd>{formatDatumZeit(auftrag.erstellt_am)} von {auftrag.erstellt_von_name ?? '–'}</dd></div>
-          {auftrag.ablehnung_grund && (
-            <div className="col-span-2"><dt className="text-gray-500">Ablehnungsgrund</dt><dd>{auftrag.ablehnung_grund}</dd></div>
-          )}
           {auftrag.abschluss_notiz && (
             <div className="col-span-2"><dt className="text-gray-500">Abschlussnotiz</dt><dd>{auftrag.abschluss_notiz}</dd></div>
           )}
         </dl>
       </div>
 
-      {/* Token-Zustand (niemals den Token-Wert selbst — liefert die API bewusst nicht) */}
+      {/* Auftragsmail */}
       <div className="bg-white rounded-lg border border-gray-200 p-5">
-        <h2 className="font-medium text-gray-800 mb-2">Bestätigungslink</h2>
-        {!auftrag.token_status ? (
-          <p className="text-sm text-gray-400">Kein Bestätigungslink vorhanden.</p>
-        ) : auftrag.token_status.verbraucht_am ? (
-          <p className="text-sm text-gray-600">Bereits verwendet am {formatDatumZeit(auftrag.token_status.verbraucht_am)}.</p>
-        ) : tokenAbgelaufen ? (
-          <p className="text-sm text-orange-700">Abgelaufen seit {formatDatumZeit(auftrag.token_status.gueltig_bis)}.</p>
-        ) : (
-          <p className="text-sm text-gray-600">Gültig bis {formatDatumZeit(auftrag.token_status.gueltig_bis)}.</p>
-        )}
+        <h2 className="font-medium text-gray-800 mb-2">Auftragsmail</h2>
+        <p className="text-sm text-gray-600">
+          {auftrag.versendet_am
+            ? `Versendet am ${formatDatumZeit(auftrag.versendet_am)}.`
+            : 'Noch nicht versendet.'}
+        </p>
 
         {darfVersenden && (
           <div className="mt-3">
@@ -190,11 +179,6 @@ export function HandwerkerauftragDetail() {
             >
               {erneutVersendenMutation.isPending ? 'Wird versendet…' : versandLabel}
             </Button>
-            {auftrag.status !== 'entwurf' && (
-              <p className="text-xs text-gray-400 mt-1">
-                Dadurch wird ein neuer Bestätigungslink erzeugt — ein zuvor versendeter Link wird sofort ungültig.
-              </p>
-            )}
             {erneutVersendenMutation.isError && (
               <p className="text-red-600 text-sm mt-1">{fehlerText(erneutVersendenMutation.error, 'Erneuter Versand fehlgeschlagen.')}</p>
             )}

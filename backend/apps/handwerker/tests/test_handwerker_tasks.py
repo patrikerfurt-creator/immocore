@@ -5,9 +5,11 @@ E-Mail-Versand IMMER über das ``locmem``-Backend — niemals echter SMTP-Versan
 
 Deckt ab:
   - versende_auftragsmail: genau eine Mail, Empfänger = Kreditor-E-Mail,
-    Betreff enthält die Auftragsnummer, Body enthält beide Token-Links mit
-    FRONTEND_BASE_URL und den Verbindlichkeitshinweis; Status wechselt auf
-    'versendet' und versendet_am ist gesetzt
+    Betreff enthält die Auftragsnummer, Body enthält "im Auftrag der
+    {Objekt}", die Lieferadresse (Eingang bzw. Objektadresse), die Bitte um
+    Eingangsbestätigung, den Rechnungsrücklauf inkl. Lohnkostenanteil und KEINE
+    Annehmen-/Ablehnen-Links; Status wechselt auf 'versendet' und
+    versendet_am ist gesetzt
   - Versandfehler (gemockt): Ereignis 'versand_fehlgeschlagen', Status bleibt
     'entwurf', Task wirft nicht durch
   - Ladefehler (z.B. ProgrammingError nach Migration, Worker noch nicht neu
@@ -15,27 +17,18 @@ Deckt ab:
     Ereignis 'versand_fehlgeschlagen' wird per Zweitversuch (ohne
     select_related) protokolliert; scheitert auch der Zweitversuch, wird nur
     geloggt
-  - benachrichtige_intern: Ladefehler wirft nicht durch
-  - pruefe_abgelaufene_auftraege: abgelaufener (unverbrauchter) Token ->
-    'abgelaufen' + Systemereignis; gültiger Token bleibt unverändert;
-    verbrauchter Token führt NICHT zu 'abgelaufen'
 """
-from datetime import date, timedelta
+from datetime import date
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core import mail
 from django.db.utils import ProgrammingError
 from django.test import TestCase, override_settings
-from django.utils import timezone
 
-from apps.handwerker.models import AuftragsbestaetigungsToken, Handwerkerauftrag
-from apps.handwerker.tasks import (
-    benachrichtige_intern,
-    pruefe_abgelaufene_auftraege,
-    versende_auftragsmail,
-)
-from apps.objekte.models import Objekt
+from apps.handwerker.models import Handwerkerauftrag
+from apps.handwerker.tasks import versende_auftragsmail
+from apps.objekte.models import Eingang, Einheit, Objekt
 from apps.rechnungen.models import Kreditor
 
 User = get_user_model()
@@ -73,7 +66,6 @@ class VersendeAuftragsmailTest(TestCase):
             objekt=self.objekt, kreditor=self.kreditor, titel="Wasserhahn undicht",
             erstellt_von=self.user, status="entwurf",
         )
-        self.token = AuftragsbestaetigungsToken.objects.create(auftrag=self.auftrag)
 
     def test_versendet_genau_eine_mail_an_kreditor(self):
         versende_auftragsmail(str(self.auftrag.id))
@@ -83,22 +75,74 @@ class VersendeAuftragsmailTest(TestCase):
         self.assertEqual(gesendete_mail.to, [self.kreditor.email])
         self.assertIn(self.auftrag.nummer, gesendete_mail.subject)
 
-    def test_body_enthaelt_beide_token_links_und_verbindlichkeitshinweis(self):
+    def test_body_enthaelt_neue_formulierungen_und_keine_bestaetigungslinks(self):
         versende_auftragsmail(str(self.auftrag.id))
 
         gesendete_mail = mail.outbox[0]
         text_body = gesendete_mail.body
         html_body = gesendete_mail.alternatives[0][0]
 
-        erwarteter_accept_link = f"http://testserver.local/auftrag-bestaetigung/{self.token.accept_token}/"
-        erwarteter_reject_link = f"http://testserver.local/auftrag-bestaetigung/{self.token.reject_token}/"
+        self.assertIn(f"im Auftrag der {self.objekt.bezeichnung} übersenden", text_body)
+        self.assertIn(f"im Auftrag der <strong>{self.objekt.bezeichnung}</strong>", html_body)
+        for body in (text_body, html_body):
+            self.assertIn("im Auftrag der", body)
+            self.assertNotIn("Demme Immobilien Verwaltung GmbH</strong>", body)
+            self.assertNotIn("Handwerkerauftrag", body)
+            self.assertIn("den Eingang der Mail", body)
+            self.assertIn("ob Sie den", body)
+            self.assertIn("Lohnkostenanteil (brutto)", body)
+            self.assertIn(self.auftrag.nummer, body)
+            # Annehmen/Ablehnen-Flow ist entfernt.
+            self.assertNotIn("annehmen", body.lower())
+            self.assertNotIn("ablehnen", body.lower())
+            self.assertNotIn("auftrag-bestaetigung", body)
+            self.assertNotIn("verbindliche Auftragsannahme", body)
 
-        self.assertIn(erwarteter_accept_link, text_body)
-        self.assertIn(erwarteter_reject_link, text_body)
-        self.assertIn(erwarteter_accept_link, html_body)
-        self.assertIn(erwarteter_reject_link, html_body)
-        self.assertIn("verbindliche Auftragsannahme", text_body)
-        self.assertIn("verbindliche Auftragsannahme", html_body)
+    def test_adresse_ist_objektadresse_wenn_kein_eingang_existiert(self):
+        versende_auftragsmail(str(self.auftrag.id))
+
+        text_body = mail.outbox[0].body
+        self.assertIn("Adresse: Teststraße 1, 12345 Teststadt", text_body)
+
+    def test_adresse_ist_eingang_wenn_vorhanden(self):
+        Eingang.objects.create(
+            objekt=self.objekt, bezeichnung="Haus A", strasse="Eingangsweg 7",
+            plz="54321", ort="Eingangsstadt",
+        )
+
+        versende_auftragsmail(str(self.auftrag.id))
+
+        text_body = mail.outbox[0].body
+        html_body = mail.outbox[0].alternatives[0][0]
+        self.assertIn("Adresse: Eingangsweg 7, 54321 Eingangsstadt", text_body)
+        self.assertIn("Eingangsweg 7, 54321 Eingangsstadt", html_body)
+        self.assertNotIn("Teststraße 1", text_body)
+
+    def test_adresse_ist_eingang_der_einheit_des_vorgangs(self):
+        from apps.vorgaenge.models import Vorgang, VorgangTyp
+
+        Eingang.objects.create(
+            objekt=self.objekt, bezeichnung="A erster", strasse="Erste Str. 1",
+            plz="11111", ort="Erstort",
+        )
+        eingang_b = Eingang.objects.create(
+            objekt=self.objekt, bezeichnung="B zweiter", strasse="Zweite Str. 2",
+            plz="22222", ort="Zweitort",
+        )
+        einheit = Einheit.objects.create(
+            objekt=self.objekt, eingang=eingang_b, einheit_nr="1", einheit_typ="Wohnung",
+            lage="EG links",
+        )
+        vorgang = Vorgang.objects.create(
+            typ=VorgangTyp.objects.get(code="maengelmeldung"), betreff="Mangel",
+            erstellt_von=self.user, objekt=self.objekt, einheit=einheit,
+        )
+        self.auftrag.vorgang = vorgang
+        self.auftrag.save(update_fields=["vorgang"])
+
+        versende_auftragsmail(str(self.auftrag.id))
+
+        self.assertIn("Adresse: Zweite Str. 2, 22222 Zweitort", mail.outbox[0].body)
 
     def test_status_wechselt_auf_versendet(self):
         versende_auftragsmail(str(self.auftrag.id))
@@ -207,7 +251,6 @@ class VersendeAuftragsmailProduktionsSperreTest(TestCase):
             objekt=self.objekt, kreditor=self.kreditor, titel="Wasserhahn undicht",
             erstellt_von=self.user, status="entwurf",
         )
-        self.token = AuftragsbestaetigungsToken.objects.create(auftrag=self.auftrag)
 
     @override_settings(DEBUG=False, EMAIL_BACKEND="django.core.mail.backends.console.EmailBackend")
     def test_konsolen_backend_in_produktion_versendet_nicht(self):
@@ -272,104 +315,6 @@ class VersendeAuftragsmailProduktionsSperreTest(TestCase):
         self.assertEqual(fehler_ereignisse.count(), 0)
 
 
-class BenachrichtigeInternProduktionsSperreTest(TestCase):
-    def setUp(self):
-        self.user = _user()
-        self.objekt = _objekt()
-        self.kreditor = _kreditor()
-        self.auftrag = Handwerkerauftrag.objects.create(
-            objekt=self.objekt, kreditor=self.kreditor, titel="Wasserhahn undicht",
-            erstellt_von=self.user, status="entwurf",
-        )
-
-    @override_settings(DEBUG=False, EMAIL_BACKEND="django.core.mail.backends.console.EmailBackend")
-    def test_konsolen_backend_in_produktion_versendet_nicht(self):
-        benachrichtige_intern(str(self.auftrag.id), "angenommen")  # darf nicht durchwerfen
-        self.assertEqual(len(mail.outbox), 0)
-
-    @override_settings(
-        DEBUG=False, EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
-    )
-    def test_locmem_in_produktion_versendet(self):
-        self.auftrag.erstellt_von.email = "chef@example.de"
-        self.auftrag.erstellt_von.save(update_fields=["email"])
-
-        benachrichtige_intern(str(self.auftrag.id), "angenommen")
-
-        self.assertEqual(len(mail.outbox), 1)
-
-
-class BenachrichtigeInternTest(TestCase):
-    def setUp(self):
-        self.user = _user()
-        self.objekt = _objekt()
-        self.kreditor = _kreditor()
-        self.auftrag = Handwerkerauftrag.objects.create(
-            objekt=self.objekt, kreditor=self.kreditor, titel="Wasserhahn undicht",
-            erstellt_von=self.user, status="entwurf",
-        )
-
-    @patch.object(
-        Handwerkerauftrag.objects, "select_related",
-        side_effect=ProgrammingError("column rechnungen_kreditor.gewerk_id does not exist"),
-    )
-    def test_ladefehler_wirft_nicht_durch(self, mock_select_related):
-        benachrichtige_intern(str(self.auftrag.id), "angenommen")  # darf nicht durchwerfen
-        self.assertEqual(len(mail.outbox), 0)
-
-    def test_unbekannter_auftrag_wirft_nicht(self):
-        benachrichtige_intern(
-            "00000000-0000-0000-0000-000000000000", "angenommen",
-        )  # darf nicht durchwerfen
-        self.assertEqual(len(mail.outbox), 0)
-
-
-class PruefeAbgelaufeneAuftraegeTest(TestCase):
-    def setUp(self):
-        self.user = _user()
-        self.objekt = _objekt()
-        self.kreditor = _kreditor()
-
-    def _auftrag_versendet(self, nr):
-        return Handwerkerauftrag.objects.create(
-            objekt=self.objekt, kreditor=self.kreditor, titel=f"Auftrag {nr}",
-            erstellt_von=self.user, status="versendet",
-        )
-
-    def test_abgelaufener_unverbrauchter_token_fuehrt_zu_abgelaufen(self):
-        auftrag = self._auftrag_versendet(1)
-        token = AuftragsbestaetigungsToken.objects.create(auftrag=auftrag)
-        token.gueltig_bis = timezone.now() - timedelta(days=1)
-        token.save(update_fields=["gueltig_bis"])
-
-        pruefe_abgelaufene_auftraege()
-
-        auftrag.refresh_from_db()
-        self.assertEqual(auftrag.status, "abgelaufen")
-        self.assertEqual(auftrag.ereignisse.filter(typ="system_abgelaufen").count(), 1)
-
-    def test_gueltiger_token_bleibt_unveraendert(self):
-        auftrag = self._auftrag_versendet(2)
-        AuftragsbestaetigungsToken.objects.create(auftrag=auftrag)  # gueltig_bis in der Zukunft
-
-        pruefe_abgelaufene_auftraege()
-
-        auftrag.refresh_from_db()
-        self.assertEqual(auftrag.status, "versendet")
-
-    def test_verbrauchter_token_fuehrt_nicht_zu_abgelaufen(self):
-        auftrag = self._auftrag_versendet(3)
-        token = AuftragsbestaetigungsToken.objects.create(auftrag=auftrag)
-        token.gueltig_bis = timezone.now() - timedelta(days=1)
-        token.verbraucht_am = timezone.now() - timedelta(hours=1)
-        token.save(update_fields=["gueltig_bis", "verbraucht_am"])
-
-        pruefe_abgelaufene_auftraege()
-
-        auftrag.refresh_from_db()
-        self.assertEqual(auftrag.status, "versendet")
-
-
 class VersendeAuftragsmailObjektGateTest(TestCase):
     """Objekt-Gate (Objekt.mailversand_aktiv, Default False): ohne Freischaltung
     geht KEINE Auftragsmail raus – bewusst auch bei DEBUG/Konsolen-Backend."""
@@ -386,7 +331,6 @@ class VersendeAuftragsmailObjektGateTest(TestCase):
             objekt=objekt, kreditor=self.kreditor, titel="Test",
             erstellt_von=self.user, status="entwurf",
         )
-        AuftragsbestaetigungsToken.objects.create(auftrag=auftrag)
         return auftrag
 
     def test_gesperrtes_objekt_versendet_nicht(self):

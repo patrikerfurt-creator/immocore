@@ -4,12 +4,9 @@ import type { HandwerkerauftragEreignisTyp, HandwerkerauftragStatus } from '../.
 export const HWA_STATUS_LABEL: Record<HandwerkerauftragStatus, string> = {
   entwurf:       'Entwurf',
   versendet:     'Versendet',
-  angenommen:    'Angenommen',
-  abgelehnt:     'Abgelehnt',
   in_arbeit:     'In Arbeit',
   abgeschlossen: 'Abgeschlossen',
   storniert:     'Storniert',
-  abgelaufen:    'Abgelaufen',
 }
 
 export const HWA_STATUS_OPTIONEN: { value: HandwerkerauftragStatus; label: string }[] =
@@ -22,18 +19,14 @@ export const HWA_STATUS_OPTIONEN: { value: HandwerkerauftragStatus; label: strin
 // weiter unten. Diese Tabelle bewusst unverändert lassen.
 export const HWA_ERLAUBTE_UEBERGAENGE: Record<HandwerkerauftragStatus, HandwerkerauftragStatus[]> = {
   entwurf:       ['versendet', 'storniert'],
-  versendet:     ['angenommen', 'abgelehnt', 'abgelaufen', 'storniert'],
-  angenommen:    ['in_arbeit', 'abgeschlossen', 'storniert'],
+  versendet:     ['in_arbeit', 'storniert'],
   in_arbeit:     ['abgeschlossen', 'storniert'],
-  abgelehnt:     ['storniert'],
-  abgelaufen:    ['versendet', 'storniert'],
   abgeschlossen: [],
   storniert:     [],
 }
 
-// Ziele, die ein SACHBEARBEITER per Knopf DIREKT auslösen darf (Phase-D-
-// Abnahme, Fehler 1 — bewusst eine eigene, kleinere Menge als
-// HWA_ERLAUBTE_UEBERGAENGE):
+// Ziele, die ein SACHBEARBEITER per Knopf DIREKT auslösen darf (bewusst eine
+// eigene Menge neben HWA_ERLAUBTE_UEBERGAENGE):
 //
 // - 'entwurf' → 'versendet' ist HIER NICHT enthalten: das würde den Auftrag
 //   als versendet markieren, OHNE dass eine Mail rausgeht — das System würde
@@ -41,21 +34,12 @@ export const HWA_ERLAUBTE_UEBERGAENGE: Record<HandwerkerauftragStatus, Handwerke
 //   richtige Aktion aus 'entwurf' ist der Versand-Knopf (siehe
 //   HandwerkerauftragDetail — löst 'erneut-versenden' aus, das den Auftrag
 //   NACH erfolgreichem Mailversand automatisch auf 'versendet' setzt).
-// - 'abgelaufen' → 'versendet' ist HIER NICHT enthalten: ein reiner
-//   Statuswechsel ohne neuen Bestätigungs-Token — die Links des Handwerkers
-//   blieben tot, der Status würde aber 'versendet' lügen. Auch hier ist der
-//   Versand-Knopf die richtige Aktion.
-// - 'versendet' → 'abgelaufen' ist HIER NICHT enthalten: 'abgelaufen' ist ein
-//   reiner SYSTEM-Status, den ausschließlich der Nachtlauf
-//   (pruefe_abgelaufene_auftraege) anhand der Token-Frist setzt — als
-//   manueller Knopf wäre er sinnlos und irreführend.
+// - Es gibt keine Auftragsbestätigung per Link mehr: der Handwerker antwortet
+//   formlos per Mail, 'in_arbeit' setzt der Sachbearbeiter manuell.
 export const HWA_MANUELLE_UEBERGAENGE: Record<HandwerkerauftragStatus, HandwerkerauftragStatus[]> = {
   entwurf:       ['storniert'],
-  versendet:     ['angenommen', 'abgelehnt', 'storniert'],
-  angenommen:    ['in_arbeit', 'abgeschlossen', 'storniert'],
+  versendet:     ['in_arbeit', 'storniert'],
   in_arbeit:     ['abgeschlossen', 'storniert'],
-  abgelehnt:     ['storniert'],
-  abgelaufen:    ['storniert'],
   abgeschlossen: [],
   storniert:     [],
 }
@@ -66,7 +50,6 @@ export const HWA_EREIGNIS_LABEL: Record<HandwerkerauftragEreignisTyp, string> = 
   versand_fehlgeschlagen: 'Versand fehlgeschlagen',
   kommentar:              'Kommentar',
   rechnung_zugeordnet:    'Rechnung zugeordnet',
-  system_abgelaufen:      'System: Auftrag abgelaufen',
 }
 
 // Freundliche Fehlermeldung aus einer Axios-Fehlerantwort extrahieren

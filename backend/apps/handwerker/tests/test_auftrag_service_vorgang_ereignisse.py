@@ -10,8 +10,7 @@ Deckt ab:
   - Text enthält Firmenname und Auftragsnummer
   - kein doppelter Vermerk bei erneutem Versand desselben Auftrags
   - kein Vermerk, wenn der Auftrag keinen Vorgang hat
-  - handwerker_angenommen / _abgelehnt (mit Grund) / _abgeschlossen /
-    _abgelaufen entstehen bei den jeweiligen Statuswechseln
+  - handwerker_abgeschlossen entsteht beim Statuswechsel nach 'abgeschlossen'
   - alle diese Ereignisse sind intern=False
 """
 from datetime import date
@@ -19,7 +18,7 @@ from datetime import date
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
-from apps.handwerker.models import AuftragsbestaetigungsToken, Handwerkerauftrag
+from apps.handwerker.models import Handwerkerauftrag
 from apps.handwerker.services import auftrag_service
 from apps.objekte.models import Objekt
 from apps.rechnungen.models import Kreditor
@@ -108,16 +107,6 @@ class BeauftragungsvermerkTest(TestCase):
         auftrag_service.markiere_versendet(auftrag)
         self.assertEqual(VorgangEreignis.objects.count(), 0)
 
-    def test_abgelaufen_zu_versendet_erzeugt_ebenfalls_vermerk_nur_einmal(self):
-        auftrag = _auftrag_mit_vorgang(self.user, self.objekt, self.kreditor, status="abgelaufen")
-        auftrag_service.markiere_versendet(auftrag)
-        self.assertEqual(
-            VorgangEreignis.objects.filter(
-                vorgang=auftrag.vorgang, typ="handwerker_beauftragt",
-            ).count(),
-            1,
-        )
-
 
 class HandwerkerMeilensteineTest(TestCase):
     def setUp(self):
@@ -125,94 +114,28 @@ class HandwerkerMeilensteineTest(TestCase):
         self.objekt = _objekt()
         self.kreditor = _kreditor()
 
-    def test_angenommen_erzeugt_vermerk(self):
-        auftrag = _auftrag_mit_vorgang(self.user, self.objekt, self.kreditor, status="versendet")
-        auftrag_service.wechsle_status(auftrag, "angenommen", erstellt_von=self.user)
-
-        ereignis = VorgangEreignis.objects.get(vorgang=auftrag.vorgang, typ="handwerker_angenommen")
-        self.assertIn(self.kreditor.name, ereignis.text)
-        self.assertIn(auftrag.nummer, ereignis.text)
-        self.assertFalse(ereignis.intern)
-
-    def test_abgelehnt_erzeugt_vermerk_mit_grund(self):
-        auftrag = _auftrag_mit_vorgang(self.user, self.objekt, self.kreditor, status="versendet")
-        auftrag.ablehnung_grund = "Keine Kapazität diese Woche."
-        auftrag_service.wechsle_status(auftrag, "abgelehnt", erstellt_von=self.user)
-
-        ereignis = VorgangEreignis.objects.get(vorgang=auftrag.vorgang, typ="handwerker_abgelehnt")
-        self.assertIn(self.kreditor.name, ereignis.text)
-        self.assertIn("Keine Kapazität diese Woche.", ereignis.text)
-        self.assertFalse(ereignis.intern)
-
-    def test_abgelehnt_ohne_grund_erzeugt_trotzdem_vermerk(self):
-        auftrag = _auftrag_mit_vorgang(self.user, self.objekt, self.kreditor, status="versendet")
-        auftrag_service.wechsle_status(auftrag, "abgelehnt", erstellt_von=self.user)
-
-        ereignis = VorgangEreignis.objects.get(vorgang=auftrag.vorgang, typ="handwerker_abgelehnt")
-        self.assertIn(self.kreditor.name, ereignis.text)
-
     def test_abgeschlossen_erzeugt_vermerk(self):
-        auftrag = _auftrag_mit_vorgang(self.user, self.objekt, self.kreditor, status="angenommen")
+        auftrag = _auftrag_mit_vorgang(self.user, self.objekt, self.kreditor, status="in_arbeit")
         auftrag_service.wechsle_status(auftrag, "abgeschlossen", erstellt_von=self.user)
 
         ereignis = VorgangEreignis.objects.get(vorgang=auftrag.vorgang, typ="handwerker_abgeschlossen")
         self.assertIn(self.kreditor.name, ereignis.text)
         self.assertFalse(ereignis.intern)
 
-    def test_abgelaufen_erzeugt_vermerk(self):
-        auftrag = _auftrag_mit_vorgang(self.user, self.objekt, self.kreditor, status="versendet")
-        auftrag_service.wechsle_status(
-            auftrag, "abgelaufen", erstellt_von=None,
-            ereignis_typ="system_abgelaufen", _system_ausloeser=True,
-        )
-
-        ereignis = VorgangEreignis.objects.get(vorgang=auftrag.vorgang, typ="handwerker_abgelaufen")
-        self.assertIn(self.kreditor.name, ereignis.text)
-        self.assertFalse(ereignis.intern)
-        self.assertIsNone(ereignis.erstellt_von)
-
     def test_kein_vermerk_ohne_vorgang(self):
         auftrag = Handwerkerauftrag.objects.create(
             objekt=self.objekt, kreditor=self.kreditor, titel="Ohne Vorgang",
-            erstellt_von=self.user, status="versendet",
+            erstellt_von=self.user, status="in_arbeit",
         )
-        auftrag_service.wechsle_status(auftrag, "angenommen", erstellt_von=self.user)
+        auftrag_service.wechsle_status(auftrag, "abgeschlossen", erstellt_von=self.user)
         self.assertEqual(VorgangEreignis.objects.count(), 0)
 
     def test_zwischenschritte_ohne_vorgang_ereignis_typ_erzeugen_keinen_vermerk(self):
         """Übergänge ohne eigenen Meilenstein (z.B. 'versendet' -> Vermerk
         läuft separat über markiere_versendet, 'in_arbeit' hat keinen
         Eigentümer-Meilenstein) dürfen kein handwerker_*-Ereignis erzeugen."""
-        auftrag = _auftrag_mit_vorgang(self.user, self.objekt, self.kreditor, status="angenommen")
+        auftrag = _auftrag_mit_vorgang(self.user, self.objekt, self.kreditor, status="versendet")
         auftrag_service.wechsle_status(auftrag, "in_arbeit", erstellt_von=self.user)
         self.assertEqual(
             VorgangEreignis.objects.filter(vorgang=auftrag.vorgang).count(), 0,
         )
-
-
-class TokenAusloesungMeilensteineTest(TestCase):
-    """Die Token-basierte Annahme/Ablehnung (ohne Login) läuft ebenfalls über
-    ``wechsle_status`` — der Vermerk muss auch auf diesem Weg entstehen."""
-
-    def setUp(self):
-        self.user = _user()
-        self.objekt = _objekt()
-        self.kreditor = _kreditor()
-
-    def test_akzeptiere_via_token_erzeugt_vermerk(self):
-        auftrag = _auftrag_mit_vorgang(self.user, self.objekt, self.kreditor, status="versendet")
-        token = AuftragsbestaetigungsToken.objects.create(auftrag=auftrag)
-
-        auftrag_service.akzeptiere_via_token(token.accept_token)
-
-        ereignis = VorgangEreignis.objects.get(vorgang=auftrag.vorgang, typ="handwerker_angenommen")
-        self.assertFalse(ereignis.intern)
-
-    def test_lehne_ab_via_token_erzeugt_vermerk_mit_grund(self):
-        auftrag = _auftrag_mit_vorgang(self.user, self.objekt, self.kreditor, status="versendet")
-        token = AuftragsbestaetigungsToken.objects.create(auftrag=auftrag)
-
-        auftrag_service.lehne_ab_via_token(token.reject_token, grund="Termin passt nicht.")
-
-        ereignis = VorgangEreignis.objects.get(vorgang=auftrag.vorgang, typ="handwerker_abgelehnt")
-        self.assertIn("Termin passt nicht.", ereignis.text)

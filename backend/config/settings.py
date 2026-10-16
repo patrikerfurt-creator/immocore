@@ -314,8 +314,4 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'vorgaenge.pruefe_wiedervorlagen',
         'schedule': crontab(hour=6, minute=0),
     },
-    'handwerker-pruefe-abgelaufene-auftraege-taeglich-07uhr': {
-        'task': 'handwerker.pruefe_abgelaufene_auftraege',
-        'schedule': crontab(hour=7, minute=0),
-    },
 }

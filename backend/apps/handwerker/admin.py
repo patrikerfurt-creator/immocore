@@ -1,7 +1,6 @@
 from django.contrib import admin
 
 from .models import (
-    AuftragsbestaetigungsToken,
     Gewerk,
     Handwerkerauftrag,
     HandwerkerauftragEreignis,
@@ -34,16 +33,6 @@ class HandwerkerauftragEreignisInline(admin.TabularInline):
         return False
 
 
-class AuftragsbestaetigungsTokenInline(admin.StackedInline):
-    model = AuftragsbestaetigungsToken
-    extra = 0
-    readonly_fields = ['accept_token', 'reject_token', 'gueltig_bis', 'verbraucht_am', 'erstellt_am']
-    can_delete = False
-
-    def has_add_permission(self, request, obj=None):
-        return False
-
-
 @admin.register(Handwerkerauftrag)
 class HandwerkerauftragAdmin(admin.ModelAdmin):
     list_display = ['nummer', 'titel', 'objekt', 'kreditor', 'status', 'prioritaet', 'erstellt_am']
@@ -52,7 +41,7 @@ class HandwerkerauftragAdmin(admin.ModelAdmin):
     ordering = ['-erstellt_am']
     readonly_fields = ['nummer', 'erstellt_am', 'geaendert_am']
     raw_id_fields = ['objekt', 'kreditor', 'vorgang', 'erstellt_von']
-    inlines = [AuftragsbestaetigungsTokenInline, HandwerkerauftragEreignisInline]
+    inlines = [HandwerkerauftragEreignisInline]
 
 
 @admin.register(HandwerkerauftragEreignis)

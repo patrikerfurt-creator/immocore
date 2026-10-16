@@ -71,7 +71,6 @@ import { GewerkeAdmin } from './pages/handwerker/GewerkeAdmin'
 import { VersammlungenListe } from './pages/versammlungen/VersammlungenListe'
 import { VersammlungDetail } from './pages/versammlungen/VersammlungDetail'
 import { BeschlussSammlung } from './pages/versammlungen/BeschlussSammlung'
-import { AuftragBestaetigung } from './pages/oeffentlich/AuftragBestaetigung'
 import { PortalLayout } from './pages/portal/PortalLayout'
 import { PortalLogin } from './pages/portal/PortalLogin'
 import { PortalAnmelden } from './pages/portal/PortalAnmelden'
@@ -94,8 +93,6 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
-          {/* Öffentlich, ohne Login — Handwerker bestätigen ihren Auftrag per Mail-Link. */}
-          <Route path="/auftrag-bestaetigung/:token" element={<AuftragBestaetigung />} />
 
           {/* Eigentümer-Portal (Spec 1a) — eigener Zweig mit eigener
               Anmeldung. Steht VOR den internen Routen, damit der

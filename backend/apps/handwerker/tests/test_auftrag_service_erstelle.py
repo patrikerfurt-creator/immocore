@@ -17,7 +17,7 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.test import TestCase
 
-from apps.handwerker.models import AuftragsbestaetigungsToken, Handwerkerauftrag
+from apps.handwerker.models import Handwerkerauftrag
 from apps.handwerker.services import auftrag_service
 from apps.objekte.models import Einheit, Objekt
 from apps.personen.models import Person
@@ -125,13 +125,12 @@ class ErstelleAuftragObjektermittlungTest(TestCase):
         )
         self.assertEqual(auftrag.prioritaet, "normal")
 
-    def test_status_ist_entwurf_und_token_wird_angelegt(self):
+    def test_status_ist_entwurf(self):
         auftrag = auftrag_service.erstelle_auftrag(
             kreditor=self.kreditor, titel="Wasserschaden", erstellt_von=self.user,
             objekt=self.objekt,
         )
         self.assertEqual(auftrag.status, "entwurf")
-        self.assertTrue(AuftragsbestaetigungsToken.objects.filter(auftrag=auftrag).exists())
 
 
 class ErstelleAuftragAsyncTest(TestCase):

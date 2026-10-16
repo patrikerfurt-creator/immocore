@@ -1425,12 +1425,11 @@ export interface ObjektHandwerker {
 }
 
 export type HandwerkerauftragStatus =
-  | 'entwurf' | 'versendet' | 'angenommen' | 'abgelehnt'
-  | 'in_arbeit' | 'abgeschlossen' | 'storniert' | 'abgelaufen'
+  | 'entwurf' | 'versendet' | 'in_arbeit' | 'abgeschlossen' | 'storniert'
 
 export type HandwerkerauftragEreignisTyp =
   | 'statuswechsel' | 'versand' | 'versand_fehlgeschlagen'
-  | 'kommentar' | 'rechnung_zugeordnet' | 'system_abgelaufen'
+  | 'kommentar' | 'rechnung_zugeordnet'
 
 export interface HandwerkerauftragList {
   id: string
@@ -1446,8 +1445,6 @@ export interface HandwerkerauftragList {
   kreditor_gewerke_bezeichnung: string | null
   erstellt_am: string
   versendet_am: string | null
-  angenommen_am: string | null
-  abgelehnt_am: string | null
   abgeschlossen_am: string | null
   rechnungen_anzahl: number
 }
@@ -1468,11 +1465,6 @@ export interface HandwerkerauftragRechnung {
   rechnungsnummer: string
   rechnungsdatum: string | null
   betrag_brutto: string | null
-}
-
-export interface HandwerkerauftragTokenStatus {
-  gueltig_bis: string
-  verbraucht_am: string | null
 }
 
 export interface HandwerkerauftragVorgangRef {
@@ -1496,19 +1488,15 @@ export interface HandwerkerauftragDetail {
   kreditor_name: string
   kreditor_gewerke_bezeichnung: string | null
   vorgang: HandwerkerauftragVorgangRef | null
-  ablehnung_grund: string
   abschluss_notiz: string
   erstellt_am: string
   erstellt_von: number | null
   erstellt_von_name: string | null
   versendet_am: string | null
-  angenommen_am: string | null
-  abgelehnt_am: string | null
   abgeschlossen_am: string | null
   geaendert_am: string
   ereignisse: HandwerkerauftragEreignis[]
   rechnungen: HandwerkerauftragRechnung[]
-  token_status: HandwerkerauftragTokenStatus | null
 }
 
 export interface HandwerkerauftragCreatePayload {
@@ -1519,30 +1507,6 @@ export interface HandwerkerauftragCreatePayload {
   gewuenscht_ab?: string | null
   prioritaet?: VorgangPrioritaet
   geschaetzte_kosten?: number | string | null
-}
-
-// ── Öffentliche Auftragsbestätigung (kein Login, Token-Link) ───────────
-export interface OeffentlicherAuftrag {
-  nummer: string
-  objekt_bezeichnung: string
-  objekt_adresse: string
-  titel: string
-  beschreibung: string
-  prioritaet: VorgangPrioritaet
-  gewuenscht_ab: string | null
-  geschaetzte_kosten: string | null
-  kreditor_name: string
-  gueltig_bis: string
-  aktion: 'annehmen' | 'ablehnen'
-  status: HandwerkerauftragStatus
-  bereits_verwendet: boolean
-  abgelaufen: boolean
-}
-
-export interface OeffentlicherAuftragBestaetigungErgebnis {
-  nummer: string
-  status: HandwerkerauftragStatus
-  aktion: 'annehmen' | 'ablehnen'
 }
 
 // ---------------------------------------------------------------------------

@@ -5,10 +5,6 @@ KEINE Business-Logik hier — jede Mutation delegiert an ``auftrag_service``.
 Ungültige Übergänge/Eingaben werden als ``django.core.exceptions.ValidationError``
 von den Services geworfen und hier zu HTTP 400 übersetzt (Muster:
 ``apps.vorgaenge.views``).
-
-Die öffentlichen (nicht angemeldeten) Endpunkte liegen bewusst in einem
-eigenen Modul, ``views_oeffentlich.py`` — andere Auth-/Throttle-/CSRF-Regeln,
-klare Trennung.
 """
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Q
@@ -33,8 +29,7 @@ from .services import auftrag_service
 
 _ERLAUBTE_ORDERING = {
     '-erstellt_am', 'erstellt_am',
-    'angenommen_am', '-angenommen_am',
-    'abgelehnt_am', '-abgelehnt_am',
+    'versendet_am', '-versendet_am',
     'nummer', '-nummer',
 }
 
@@ -69,7 +64,7 @@ class HandwerkerauftragViewSet(mixins.ListModelMixin,
 
     def get_queryset(self):
         qs = Handwerkerauftrag.objects.select_related(
-            'objekt', 'kreditor', 'vorgang', 'token',
+            'objekt', 'kreditor', 'vorgang',
         ).prefetch_related(
             'kreditor__gewerke', 'ereignisse', 'ereignisse__erstellt_von', 'rechnungen',
         )

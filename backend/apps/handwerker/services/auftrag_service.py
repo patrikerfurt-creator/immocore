@@ -3,8 +3,7 @@ Handwerkerauftrag-Service (Phase B, Umsetzung von
 docs/CLAUDE_CODE_ANLEITUNG_HANDWERKERAUFTRAG_v1_0.md, Kap. 2/3 — mit
 verbindlichen Korrekturen gegenüber der Spec, siehe Orchestrator-Auftrag).
 
-Business-Logik rund um Anlage, Statuswechsel, Token-basierte Bestätigung
-(Annahme/Ablehnung durch den Handwerker ohne Login), erneuten Mailversand und
+Business-Logik rund um Anlage, Statuswechsel, erneuten Mailversand und
 Rechnungszuordnung eines ``Handwerkerauftrag``. Statuswechsel laufen
 AUSSCHLIESSLICH über ``wechsle_status`` — analog
 ``apps.vorgaenge.services.vorgang_service`` — damit ungültige Übergänge und
@@ -20,24 +19,10 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
-from apps.handwerker.models import (
-    AuftragsbestaetigungsToken,
-    Handwerkerauftrag,
-    HandwerkerauftragEreignis,
-)
+from apps.handwerker.models import Handwerkerauftrag, HandwerkerauftragEreignis
 from apps.vorgaenge.models import VorgangEreignis
 
 logger = logging.getLogger(__name__)
-
-
-class TokenAbgelaufen(Exception):
-    """Der Bestätigungs-Token ist über seine Gültigkeitsfrist hinaus, wurde
-    aber (noch) nicht verbraucht. Von der API auf HTTP 410 zu mappen."""
-
-
-class TokenVerbraucht(Exception):
-    """Der Bestätigungs-Token wurde bereits für eine Annahme/Ablehnung
-    verwendet (Einmalverwendung). Von der API auf HTTP 409 zu mappen."""
 
 
 # Erlaubte Statusübergänge (Orchestrator-Vorgabe Schritt 2 — die Spec hat
@@ -45,19 +30,14 @@ class TokenVerbraucht(Exception):
 # haben eine leere Zielmenge.
 _ERLAUBTE_UEBERGAENGE = {
     'entwurf':       {'versendet', 'storniert'},
-    'versendet':     {'angenommen', 'abgelehnt', 'abgelaufen', 'storniert'},
-    'angenommen':    {'in_arbeit', 'abgeschlossen', 'storniert'},
+    'versendet':     {'in_arbeit', 'storniert'},
     'in_arbeit':     {'abgeschlossen', 'storniert'},
-    'abgelehnt':     {'storniert'},
-    'abgelaufen':    {'versendet', 'storniert'},
     'abgeschlossen': set(),
     'storniert':     set(),
 }
 
 _ZEITSTEMPEL_FELD_JE_STATUS = {
     'versendet':     'versendet_am',
-    'angenommen':    'angenommen_am',
-    'abgelehnt':     'abgelehnt_am',
     'abgeschlossen': 'abgeschlossen_am',
 }
 
@@ -68,10 +48,7 @@ _ZEITSTEMPEL_FELD_JE_STATUS = {
 # geschrieben (dort mit eigener Einmaligkeitsprüfung), nicht bei jedem
 # generischen Übergang nach 'versendet'.
 _VORGANG_EREIGNIS_JE_STATUS = {
-    'angenommen':    ('handwerker_angenommen', 'Handwerker hat den Auftrag angenommen'),
-    'abgelehnt':     ('handwerker_abgelehnt', 'Handwerker hat den Auftrag abgelehnt'),
     'abgeschlossen': ('handwerker_abgeschlossen', 'Handwerkerauftrag abgeschlossen'),
-    'abgelaufen':    ('handwerker_abgelaufen', 'Auftragsbestätigung abgelaufen'),
 }
 
 
@@ -95,8 +72,7 @@ def _handwerker_beauftragt_bereits_vermerkt(auftrag: Handwerkerauftrag) -> bool:
 
 
 def _vermerke_handwerker_ereignis(auftrag: Handwerkerauftrag, typ: str, text: str) -> None:
-    """Schreibt einen Handwerker-Meilenstein (Beauftragung, Zusage, Ablehnung,
-    Abschluss, Ablauf) als ``VorgangEreignis`` in den Verlauf des verknüpften
+    """Schreibt einen Handwerker-Meilenstein (Beauftragung, Abschluss) als ``VorgangEreignis`` in den Verlauf des verknüpften
     Vorgangs — NUR wenn ``auftrag.vorgang_id`` gesetzt ist (Aufträge ohne
     Vorgang haben keinen Verlauf, in dem sie stehen könnten).
 
@@ -107,9 +83,8 @@ def _vermerke_handwerker_ereignis(auftrag: Handwerkerauftrag, typ: str, text: st
     Nebenwirkung darf den Hauptvorgang nicht blockieren, daher eigener
     Savepoint statt Ausbreitung der Exception in die äußere Transaktion).
 
-    ``erstellt_von=None``: alle Aufrufer sind Token-/Systemauslöser (Versand,
-    Handwerker-Bestätigung ohne Login, Ablauf-Task) — kein eingeloggter
-    Mitarbeiter. ``intern=False`` immer (Patrik-Entscheidung: beim Handwerker
+    ``erstellt_von=None``: alle Aufrufer sind Systemauslöser (Mailversand) —
+    kein eingeloggter Mitarbeiter. ``intern=False`` immer (Patrik-Entscheidung: beim Handwerker
     sind ALLE Schritte für den Eigentümer sichtbar).
     """
     if not auftrag.vorgang_id:
@@ -142,8 +117,7 @@ def erstelle_auftrag(*, kreditor, titel, erstellt_von, vorgang=None, objekt=None
     ``prioritaet`` wird, sofern nicht übergeben, aus ``vorgang.prioritaet``
     vorbelegt, sonst mit ``'normal'``.
 
-    Erzeugt zusätzlich den ``AuftragsbestaetigungsToken`` und löst den
-    Mailversand NACH erfolgreichem Commit aus (Celery, ``transaction.on_commit``)
+    Löst den Mailversand NACH erfolgreichem Commit aus (Celery, ``transaction.on_commit``)
     — die Spec versendet synchron im Request und macht den Statuswechsel vom
     Rückgabewert abhängig, was bei einem SMTP-Timeout den Auftrag still in
     ``entwurf`` hängen ließe.
@@ -172,9 +146,6 @@ def erstelle_auftrag(*, kreditor, titel, erstellt_von, vorgang=None, objekt=None
     auftrag.full_clean()
     auftrag.save()
 
-    # gueltig_bis und die Tokens füllt das Modell selbst (AuftragsbestaetigungsToken.save()).
-    AuftragsbestaetigungsToken.objects.create(auftrag=auftrag)
-
     from apps.handwerker.tasks import versende_auftragsmail
     transaction.on_commit(lambda: versende_auftragsmail.delay(str(auftrag.id)))
 
@@ -193,15 +164,14 @@ def wechsle_status(auftrag: Handwerkerauftrag, neuer_status: str, *, erstellt_vo
       Prüfungen laufen VOR jeder Mutation).
     - ``erstellt_von`` darf nur ``None`` sein, wenn der Wechsel NICHT von
       einem Sachbearbeiter über die API/das UI ausgelöst wird, sondern durch
-      einen automatisierten/Token-Auslöser dieses Service-Moduls selbst
-      (Ablauf-Task, Mailversand-Bestätigung, Token-Annahme/-Ablehnung durch
-      den Handwerker — der kein User ist). Dafür MUSS der interne Parameter
+      einen automatisierten Auslöser dieses Service-Moduls selbst
+      (Mailversand-Bestätigung — kein User). Dafür MUSS der interne Parameter
       ``_system_ausloeser=True`` gesetzt werden; er ist bewusst nicht Teil der
       öffentlichen Signatur, die eine künftige API (Phase C) nutzen würde,
       damit von dort niemals unbemerkt ``erstellt_von=None`` durchgereicht
       werden kann.
-    - Zeitstempel werden passend gesetzt (``versendet_am``, ``angenommen_am``,
-      ``abgelehnt_am``, ``abgeschlossen_am``).
+    - Zeitstempel werden passend gesetzt (``versendet_am``,
+      ``abgeschlossen_am``).
     - Jeder (gültige) Wechsel erzeugt genau ein ``HandwerkerauftragEreignis``.
     """
     alter_status = auftrag.status
@@ -212,7 +182,7 @@ def wechsle_status(auftrag: Handwerkerauftrag, neuer_status: str, *, erstellt_vo
         )
     if erstellt_von is None and not _system_ausloeser:
         raise ValidationError(
-            "erstellt_von darf nur None sein bei automatisierten/Token-Auslösern."
+            "erstellt_von darf nur None sein bei automatisierten Auslösern."
         )
 
     # Ab hier ausschließlich Mutationen — alle Validierungen sind bereits durch.
@@ -234,8 +204,6 @@ def wechsle_status(auftrag: Handwerkerauftrag, neuer_status: str, *, erstellt_vo
     if vorgang_ereignis:
         vorgang_typ, label = vorgang_ereignis
         text = f"{label}: {auftrag.kreditor.name} ({auftrag.nummer})"
-        if neuer_status == 'abgelehnt' and auftrag.ablehnung_grund:
-            text += f" — Grund: {auftrag.ablehnung_grund}"
         _vermerke_handwerker_ereignis(auftrag, vorgang_typ, text)
 
     return auftrag
@@ -248,7 +216,7 @@ def markiere_versendet(auftrag: Handwerkerauftrag) -> Handwerkerauftrag:
     ``mail.send()`` aufgerufen).
 
     Wechselt den Status nach ``versendet``, sofern der Auftrag noch nicht in
-    diesem Status ist (``entwurf``/``abgelaufen`` → ``versendet``). War der
+    diesem Status ist (``entwurf`` → ``versendet``). War der
     Auftrag bereits ``versendet`` (erneuter Versand über ``versende_erneut``
     ohne dass sich der Status ändert), wird kein Statuswechsel vollzogen
     (``versendet`` → ``versendet`` ist kein gültiger Übergang), sondern nur
@@ -263,7 +231,7 @@ def markiere_versendet(auftrag: Handwerkerauftrag) -> Handwerkerauftrag:
     (dieser Funktions-Zweig hier, zweiter Aufruf desselben Auftrags) erzeugt
     KEINEN zweiten Vermerk.
     """
-    if auftrag.status in ('entwurf', 'abgelaufen'):
+    if auftrag.status == 'entwurf':
         auftrag = wechsle_status(
             auftrag, 'versendet', erstellt_von=None, ereignis_typ='versand',
             _system_ausloeser=True,
@@ -299,8 +267,8 @@ def protokolliere_versandfehler(auftrag: Handwerkerauftrag, fehlertext: str) -> 
 
 @transaction.atomic
 def versende_erneut(auftrag: Handwerkerauftrag, erstellt_von) -> Handwerkerauftrag:
-    """Löst den Mailversand für einen Auftrag erneut aus — aus ``entwurf``,
-    ``abgelaufen`` oder ``versendet`` zulässig.
+    """Löst den Mailversand für einen Auftrag erneut aus — aus ``entwurf``
+    oder ``versendet`` zulässig.
 
     ``entwurf`` ist bewusst zusätzlich erlaubt (Korrektur aus der Phase-D-
     Abnahme, Orchestrator): schlägt der ERSTE Versand fehl (SMTP nicht
@@ -311,98 +279,20 @@ def versende_erneut(auftrag: Handwerkerauftrag, erstellt_von) -> Handwerkerauftr
     dauerhaft unversendbar hängen. ``markiere_versendet`` behandelt ``entwurf``
     bereits heute als gültigen Ausgangsstatus für einen ERFOLGREICHEN Versand
     (siehe oben) — diese Funktion muss den erneuten VERSUCH ebenso zulassen.
-
-    Entscheidung Token-Neuaufbau (Patrik/Orchestrator-Vorgabe: entscheiden und
-    begründen): der ALTE Token wird GELÖSCHT und ein komplett NEUER erzeugt
-    (nicht überschrieben). Begründung: dadurch werden alte, dem Handwerker
-    bereits zugestellte Links (die z.B. in einem Mail-Postfach oder
-    Gateway-Log liegen könnten) sofort ungültig, statt nur ihre Gültigkeitsfrist
-    stillschweigend zu verlängern — sauberer Audit-Schnitt statt Wiederverwendung
-    derselben Geheimnisse. ``AuftragsbestaetigungsToken`` ist zudem kein
-    Audit-Objekt (siehe Modell-Docstring), Löschen ist hier also unproblematisch.
     """
-    if auftrag.status not in ('entwurf', 'abgelaufen', 'versendet'):
+    if auftrag.status not in ('entwurf', 'versendet'):
         raise ValidationError(
             f"Erneuter Versand ist aus Status '{auftrag.status}' nicht möglich "
-            "(nur aus 'entwurf' (nach Versandfehler), 'abgelaufen' oder 'versendet')."
+            "(nur aus 'entwurf' (nach Versandfehler) oder 'versendet')."
         )
-
-    AuftragsbestaetigungsToken.objects.filter(auftrag=auftrag).delete()
-    AuftragsbestaetigungsToken.objects.create(auftrag=auftrag)
 
     HandwerkerauftragEreignis.objects.create(
         auftrag=auftrag, typ='kommentar', erstellt_von=erstellt_von,
-        text='Auftragsmail erneut ausgelöst (neuer Bestätigungs-Token erzeugt, '
-             'alter Token ungültig).',
+        text='Auftragsmail erneut ausgelöst.',
     )
 
     from apps.handwerker.tasks import versende_auftragsmail
     transaction.on_commit(lambda: versende_auftragsmail.delay(str(auftrag.id)))
-
-    return auftrag
-
-
-@transaction.atomic
-def akzeptiere_via_token(accept_token: str) -> Handwerkerauftrag:
-    """Nimmt einen Auftrag im Namen des Handwerkers an (Bestätigungslink ohne
-    Login). Lädt den Token per ``select_for_update()`` (Einmalverwendung
-    race-sicher gegen gleichzeitige Doppelklicks/Retries).
-    """
-    token = (
-        AuftragsbestaetigungsToken.objects
-        .select_for_update()
-        .select_related('auftrag')
-        .get(accept_token=accept_token)
-    )
-    if token.verbraucht_am is not None:
-        raise TokenVerbraucht("Dieser Bestätigungslink wurde bereits verwendet.")
-    if not token.ist_gueltig():
-        raise TokenAbgelaufen("Dieser Bestätigungslink ist abgelaufen.")
-
-    token.verbraucht_am = timezone.now()
-    token.save(update_fields=['verbraucht_am'])
-
-    auftrag = wechsle_status(
-        token.auftrag, 'angenommen', erstellt_von=None,
-        kommentar='Auftrag wurde vom Handwerker per Bestätigungslink (Token) angenommen.',
-        _system_ausloeser=True,
-    )
-
-    from apps.handwerker.tasks import benachrichtige_intern
-    transaction.on_commit(lambda: benachrichtige_intern.delay(str(auftrag.id), 'angenommen'))
-
-    return auftrag
-
-
-@transaction.atomic
-def lehne_ab_via_token(reject_token: str, grund: str = '') -> Handwerkerauftrag:
-    """Lehnt einen Auftrag im Namen des Handwerkers ab (Ablehnungslink ohne
-    Login). Analog ``akzeptiere_via_token`` race-sicher per
-    ``select_for_update()``."""
-    token = (
-        AuftragsbestaetigungsToken.objects
-        .select_for_update()
-        .select_related('auftrag')
-        .get(reject_token=reject_token)
-    )
-    if token.verbraucht_am is not None:
-        raise TokenVerbraucht("Dieser Ablehnungslink wurde bereits verwendet.")
-    if not token.ist_gueltig():
-        raise TokenAbgelaufen("Dieser Ablehnungslink ist abgelaufen.")
-
-    token.verbraucht_am = timezone.now()
-    token.save(update_fields=['verbraucht_am'])
-
-    auftrag = token.auftrag
-    auftrag.ablehnung_grund = grund
-    auftrag = wechsle_status(
-        auftrag, 'abgelehnt', erstellt_von=None,
-        kommentar='Auftrag wurde vom Handwerker per Ablehnungslink (Token) abgelehnt.',
-        _system_ausloeser=True,
-    )
-
-    from apps.handwerker.tasks import benachrichtige_intern
-    transaction.on_commit(lambda: benachrichtige_intern.delay(str(auftrag.id), 'abgelehnt'))
 
     return auftrag
 
@@ -463,3 +353,16 @@ def kommentiere(auftrag: Handwerkerauftrag, text: str, erstellt_von) -> Handwerk
     return HandwerkerauftragEreignis.objects.create(
         auftrag=auftrag, typ='kommentar', text=text, erstellt_von=erstellt_von,
     )
+
+
+def liefer_eingang(auftrag: Handwerkerauftrag):
+    """Ermittelt den Eingang, an dem der Handwerker die Arbeit ausführt
+    (Lieferadresse in der Auftragsmail).
+
+    Reihenfolge: Eingang der Einheit des verknüpften Vorgangs, sonst der
+    erste Eingang des Objekts (nach ``bezeichnung``), sonst ``None``.
+    """
+    vorgang = auftrag.vorgang if auftrag.vorgang_id else None
+    if vorgang is not None and vorgang.einheit_id and vorgang.einheit.eingang_id:
+        return vorgang.einheit.eingang
+    return auftrag.objekt.eingaenge.order_by('bezeichnung').first()

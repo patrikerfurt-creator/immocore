@@ -65,50 +65,14 @@ class WechsleStatusErlaubteUebergaengeTest(TestCase):
         auftrag.refresh_from_db()
         self.assertEqual(auftrag.status, "storniert")
 
-    def test_versendet_zu_angenommen(self):
+    def test_versendet_zu_in_arbeit(self):
         auftrag = self._auftrag("versendet")
-        auftrag_service.wechsle_status(auftrag, "angenommen", erstellt_von=self.user)
-        auftrag.refresh_from_db()
-        self.assertEqual(auftrag.status, "angenommen")
-        self.assertIsNotNone(auftrag.angenommen_am)
-
-    def test_versendet_zu_abgelehnt(self):
-        auftrag = self._auftrag("versendet")
-        auftrag_service.wechsle_status(auftrag, "abgelehnt", erstellt_von=self.user)
-        auftrag.refresh_from_db()
-        self.assertEqual(auftrag.status, "abgelehnt")
-        self.assertIsNotNone(auftrag.abgelehnt_am)
-
-    def test_versendet_zu_abgelaufen(self):
-        auftrag = self._auftrag("versendet")
-        auftrag_service.wechsle_status(
-            auftrag, "abgelaufen", erstellt_von=None,
-            ereignis_typ="system_abgelaufen", _system_ausloeser=True,
-        )
-        auftrag.refresh_from_db()
-        self.assertEqual(auftrag.status, "abgelaufen")
-
-    def test_versendet_zu_storniert(self):
-        auftrag = self._auftrag("versendet")
-        auftrag_service.wechsle_status(auftrag, "storniert", erstellt_von=self.user)
-        auftrag.refresh_from_db()
-        self.assertEqual(auftrag.status, "storniert")
-
-    def test_angenommen_zu_in_arbeit(self):
-        auftrag = self._auftrag("angenommen")
         auftrag_service.wechsle_status(auftrag, "in_arbeit", erstellt_von=self.user)
         auftrag.refresh_from_db()
         self.assertEqual(auftrag.status, "in_arbeit")
 
-    def test_angenommen_zu_abgeschlossen(self):
-        auftrag = self._auftrag("angenommen")
-        auftrag_service.wechsle_status(auftrag, "abgeschlossen", erstellt_von=self.user)
-        auftrag.refresh_from_db()
-        self.assertEqual(auftrag.status, "abgeschlossen")
-        self.assertIsNotNone(auftrag.abgeschlossen_am)
-
-    def test_angenommen_zu_storniert(self):
-        auftrag = self._auftrag("angenommen")
+    def test_versendet_zu_storniert(self):
+        auftrag = self._auftrag("versendet")
         auftrag_service.wechsle_status(auftrag, "storniert", erstellt_von=self.user)
         auftrag.refresh_from_db()
         self.assertEqual(auftrag.status, "storniert")
@@ -121,24 +85,6 @@ class WechsleStatusErlaubteUebergaengeTest(TestCase):
 
     def test_in_arbeit_zu_storniert(self):
         auftrag = self._auftrag("in_arbeit")
-        auftrag_service.wechsle_status(auftrag, "storniert", erstellt_von=self.user)
-        auftrag.refresh_from_db()
-        self.assertEqual(auftrag.status, "storniert")
-
-    def test_abgelehnt_zu_storniert(self):
-        auftrag = self._auftrag("abgelehnt")
-        auftrag_service.wechsle_status(auftrag, "storniert", erstellt_von=self.user)
-        auftrag.refresh_from_db()
-        self.assertEqual(auftrag.status, "storniert")
-
-    def test_abgelaufen_zu_versendet(self):
-        auftrag = self._auftrag("abgelaufen")
-        auftrag_service.wechsle_status(auftrag, "versendet", erstellt_von=self.user)
-        auftrag.refresh_from_db()
-        self.assertEqual(auftrag.status, "versendet")
-
-    def test_abgelaufen_zu_storniert(self):
-        auftrag = self._auftrag("abgelaufen")
         auftrag_service.wechsle_status(auftrag, "storniert", erstellt_von=self.user)
         auftrag.refresh_from_db()
         self.assertEqual(auftrag.status, "storniert")
@@ -168,17 +114,22 @@ class WechsleStatusUnerlaubteUebergaengeTest(TestCase):
         self.assertEqual(auftrag.status, von_status)
         self.assertEqual(auftrag.ereignisse.count(), 0)
 
-    def test_entwurf_zu_angenommen_abgewiesen(self):
-        self._assert_uebergang_abgewiesen("entwurf", "angenommen")
+    def test_entwurf_zu_in_arbeit_abgewiesen(self):
+        self._assert_uebergang_abgewiesen("entwurf", "in_arbeit")
+
+    def test_versendet_zu_abgeschlossen_abgewiesen(self):
+        self._assert_uebergang_abgewiesen("versendet", "abgeschlossen")
+
+    def test_entfernte_stati_sind_nicht_mehr_erreichbar(self):
+        for ziel in ("angenommen", "abgelehnt", "abgelaufen"):
+            with self.subTest(ziel=ziel):
+                self._assert_uebergang_abgewiesen("versendet", ziel)
 
     def test_storniert_zu_versendet_abgewiesen(self):
         self._assert_uebergang_abgewiesen("storniert", "versendet")
 
     def test_abgeschlossen_zu_in_arbeit_abgewiesen(self):
         self._assert_uebergang_abgewiesen("abgeschlossen", "in_arbeit")
-
-    def test_abgelehnt_zu_angenommen_abgewiesen(self):
-        self._assert_uebergang_abgewiesen("abgelehnt", "angenommen")
 
     def test_erstellt_von_none_ohne_system_ausloeser_wird_abgewiesen(self):
         auftrag = self._auftrag("entwurf")
@@ -201,25 +152,25 @@ class WechsleStatusMitNachtraeglichUngueltigemKreditorTest(TestCase):
         self.objekt = _objekt()
         self.kreditor = _kreditor()
 
-    def _auftrag_angenommen_mit_ungueltigem_kreditor(self):
+    def _auftrag_in_arbeit_mit_ungueltigem_kreditor(self):
         auftrag = Handwerkerauftrag.objects.create(
             objekt=self.objekt, kreditor=self.kreditor, titel="Testauftrag",
-            erstellt_von=self.user, status="angenommen",
+            erstellt_von=self.user, status="in_arbeit",
         )
-        # Kreditor wird NACH Anlage/Versand/Annahme ungültig gemacht.
+        # Kreditor wird NACH Anlage/Versand ungültig gemacht.
         self.kreditor.ist_handwerker = False
         self.kreditor.email = ""
         self.kreditor.save(update_fields=["ist_handwerker", "email"])
         return auftrag
 
-    def test_angenommen_zu_abgeschlossen_trotz_ungueltigem_kreditor(self):
-        auftrag = self._auftrag_angenommen_mit_ungueltigem_kreditor()
+    def test_in_arbeit_zu_abgeschlossen_trotz_ungueltigem_kreditor(self):
+        auftrag = self._auftrag_in_arbeit_mit_ungueltigem_kreditor()
         auftrag_service.wechsle_status(auftrag, "abgeschlossen", erstellt_von=self.user)
         auftrag.refresh_from_db()
         self.assertEqual(auftrag.status, "abgeschlossen")
 
-    def test_angenommen_zu_storniert_trotz_ungueltigem_kreditor(self):
-        auftrag = self._auftrag_angenommen_mit_ungueltigem_kreditor()
+    def test_in_arbeit_zu_storniert_trotz_ungueltigem_kreditor(self):
+        auftrag = self._auftrag_in_arbeit_mit_ungueltigem_kreditor()
         auftrag_service.wechsle_status(auftrag, "storniert", erstellt_von=self.user)
         auftrag.refresh_from_db()
         self.assertEqual(auftrag.status, "storniert")

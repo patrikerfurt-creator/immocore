@@ -15,12 +15,7 @@ from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from apps.handwerker.models import (
-    AuftragsbestaetigungsToken,
-    Gewerk,
-    Handwerkerauftrag,
-    ObjektHandwerker,
-)
+from apps.handwerker.models import Gewerk, Handwerkerauftrag, ObjektHandwerker
 from apps.objekte.models import Objekt
 from apps.rechnungen.models import Kreditor, Rechnung
 from apps.vorgaenge.models import Vorgang, VorgangTyp
@@ -153,7 +148,7 @@ class HandwerkerauftragDashboardFilterTest(APITestCase):
         )
         self.a3 = Handwerkerauftrag.objects.create(
             objekt=self.objekt1, kreditor=self.kreditor1, titel='Dach undicht',
-            erstellt_von=self.user, status='angenommen', prioritaet='normal',
+            erstellt_von=self.user, status='in_arbeit', prioritaet='normal',
         )
 
     def _ids(self, response):
@@ -171,7 +166,7 @@ class HandwerkerauftragDashboardFilterTest(APITestCase):
         self.assertEqual(self._ids(response), {str(self.a2.id)})
 
     def test_filter_status_mehrere_kommagetrennt(self):
-        response = self.client.get(HANDWERKERAUFTRAEGE, {'status': 'entwurf,angenommen'})
+        response = self.client.get(HANDWERKERAUFTRAEGE, {'status': 'entwurf,in_arbeit'})
         self.assertEqual(self._ids(response), {str(self.a1.id), str(self.a3.id)})
 
     def test_filter_objekt(self):
@@ -227,7 +222,7 @@ class HandwerkerauftragStatusAktionTest(APITestCase):
         self.assertEqual(self.auftrag.status, 'entwurf')
 
     def test_abschluss_notiz_wird_bei_abgeschlossen_gespeichert(self):
-        self.auftrag.status = 'angenommen'
+        self.auftrag.status = 'in_arbeit'
         self.auftrag.save(update_fields=['status'])
         response = self.client.post(f'{HANDWERKERAUFTRAEGE}{self.auftrag.id}/status/', {
             'status': 'abgeschlossen',
@@ -248,7 +243,6 @@ class HandwerkerauftragKommentarVersendenRechnungTest(APITestCase):
             objekt=self.objekt, kreditor=self.kreditor, titel='Testauftrag',
             erstellt_von=self.user, status='versendet',
         )
-        AuftragsbestaetigungsToken.objects.create(auftrag=self.auftrag)
 
     def test_kommentar_wird_angelegt(self):
         response = self.client.post(f'{HANDWERKERAUFTRAEGE}{self.auftrag.id}/kommentar/', {
@@ -258,11 +252,9 @@ class HandwerkerauftragKommentarVersendenRechnungTest(APITestCase):
         self.assertEqual(self.auftrag.ereignisse.filter(typ='kommentar').count(), 1)
 
     def test_erneut_versenden(self):
-        alter_token = self.auftrag.token.accept_token
         response = self.client.post(f'{HANDWERKERAUFTRAEGE}{self.auftrag.id}/erneut-versenden/')
         self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
-        self.auftrag.refresh_from_db()
-        self.assertNotEqual(self.auftrag.token.accept_token, alter_token)
+        self.assertEqual(self.auftrag.ereignisse.filter(typ='kommentar').count(), 1)
 
     def test_erneut_versenden_aus_entwurf_nach_versandfehler(self):
         """Phase-D-Abnahme, Fehler 2: ein Auftrag mit fehlgeschlagenem ERSTEN
@@ -272,15 +264,12 @@ class HandwerkerauftragKommentarVersendenRechnungTest(APITestCase):
             objekt=self.objekt, kreditor=self.kreditor, titel='Versandfehler-Auftrag',
             erstellt_von=self.user, status='entwurf',
         )
-        AuftragsbestaetigungsToken.objects.create(auftrag=auftrag)
-        alter_token = auftrag.token.accept_token
 
         response = self.client.post(f'{HANDWERKERAUFTRAEGE}{auftrag.id}/erneut-versenden/')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
         auftrag.refresh_from_db()
         self.assertEqual(auftrag.status, 'entwurf')
-        self.assertNotEqual(auftrag.token.accept_token, alter_token)
 
     def test_rechnung_zuordnen(self):
         rechnung = _rechnung(self.objekt, self.kreditor)
@@ -364,12 +353,13 @@ class ObjektHandwerkerTest(APITestCase):
         self.assertEqual(liste.data[0]['kreditor_name'], self.kreditor.name)
 
 
-class TokenLeakTest(APITestCase):
-    """🔒 Pflicht-Test: accept_token/reject_token dürfen in KEINER Antwort der
-    internen Endpunkte vorkommen (Orchestrator-Vorgabe Schritt 6)."""
+class EntfallenerBestaetigungsFlowTest(APITestCase):
+    """Der Token-/Annahme-Flow existiert nicht mehr: weder Token-Status noch
+    Annahme-/Ablehnungsfelder dürfen in der API auftauchen, und der frühere
+    öffentliche Endpunkt ist weg."""
 
     def setUp(self):
-        self.user = User.objects.create_user(username='token-leak-tester')
+        self.user = User.objects.create_user(username='kein-token-tester')
         self.client.force_authenticate(self.user)
         self.objekt = _objekt()
         self.kreditor = _kreditor()
@@ -377,18 +367,18 @@ class TokenLeakTest(APITestCase):
             objekt=self.objekt, kreditor=self.kreditor, titel='Testauftrag',
             erstellt_von=self.user, status='entwurf',
         )
-        self.token = AuftragsbestaetigungsToken.objects.create(auftrag=self.auftrag)
 
-    def test_token_werte_nicht_in_liste(self):
-        response = self.client.get(HANDWERKERAUFTRAEGE)
-        inhalt = str(response.content)
-        self.assertNotIn(self.token.accept_token, inhalt)
-        self.assertNotIn(self.token.reject_token, inhalt)
-
-    def test_token_werte_nicht_im_detail(self):
+    def test_detail_enthaelt_keine_token_oder_annahme_felder(self):
         response = self.client.get(f'{HANDWERKERAUFTRAEGE}{self.auftrag.id}/')
-        inhalt = str(response.content)
-        self.assertNotIn(self.token.accept_token, inhalt)
-        self.assertNotIn(self.token.reject_token, inhalt)
-        # Token-Status ist trotzdem enthalten (gueltig_bis/verbraucht_am).
-        self.assertIn('token_status', inhalt)
+        for feld in ('token_status', 'angenommen_am', 'abgelehnt_am', 'ablehnung_grund'):
+            self.assertNotIn(feld, response.data)
+
+    def test_liste_enthaelt_keine_annahme_felder(self):
+        response = self.client.get(HANDWERKERAUFTRAEGE)
+        for feld in ('angenommen_am', 'abgelehnt_am'):
+            self.assertNotIn(feld, response.data['results'][0])
+
+    def test_oeffentlicher_endpunkt_existiert_nicht_mehr(self):
+        self.client.force_authenticate(None)
+        response = self.client.get('/api/v1/oeffentlich/auftrag/irgendein-token/')
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)

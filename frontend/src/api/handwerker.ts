@@ -1,4 +1,3 @@
-import axios from 'axios'
 import client from './client'
 import type {
   Gewerk,
@@ -7,8 +6,6 @@ import type {
   HandwerkerauftragList,
   Kreditor,
   ObjektHandwerker,
-  OeffentlicherAuftrag,
-  OeffentlicherAuftragBestaetigungErgebnis,
   PaginatedResponse,
 } from '../types'
 
@@ -92,29 +89,4 @@ export const handwerkerApi = {
     )
     return details.filter(d => d.vorgang?.id === vorgangId)
   },
-}
-
-// ── Öffentliche API (kein Login — Auftragsbestätigung per Token) ───────
-//
-// SICHERHEITSKRITISCH: eigene axios-Instanz OHNE den Request-Interceptor aus
-// client.ts (kein Authorization-Header) und OHNE dessen Response-Interceptor
-// (kein Redirect auf /login bei 401/Token-Refresh). Ein Handwerker, der ohne
-// Session auf /auftrag-bestaetigung/:token klickt, würde sonst — sobald der
-// Server aus irgendeinem Grund 401 liefert, oder schlicht weil kein
-// access_token im localStorage liegt und der Refresh fehlschlägt — auf die
-// interne Login-Seite umgeleitet. Die öffentlichen Endpunkte sind serverseitig
-// ohnehin AllowAny + authentication_classes=[] (siehe views_oeffentlich.py),
-// hier muss also niemals ein Bearer-Token mitgeschickt werden.
-const oeffentlicherClient = axios.create({
-  baseURL: '/api/v1',
-  headers: { 'Content-Type': 'application/json' },
-})
-
-export const oeffentlicherAuftragApi = {
-  get: (token: string) =>
-    oeffentlicherClient.get<OeffentlicherAuftrag>(`/oeffentlich/auftrag/${token}/`).then(r => r.data),
-  bestaetigen: (token: string, grund?: string) =>
-    oeffentlicherClient
-      .post<OeffentlicherAuftragBestaetigungErgebnis>(`/oeffentlich/auftrag/${token}/bestaetigen/`, grund ? { grund } : {})
-      .then(r => r.data),
 }

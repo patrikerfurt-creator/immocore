@@ -5,8 +5,6 @@ Auftragsbestätigung per Token (Annahme/Ablehnung ohne Login).
 Umsetzung von docs/CLAUDE_CODE_ANLEITUNG_HANDWERKERAUFTRAG_v1_0.md, Phase A —
 mit verbindlichen Korrekturen gegenüber der Spec (siehe Orchestrator-Auftrag).
 """
-import secrets
-from datetime import datetime, time
 from uuid import uuid4
 
 from django.conf import settings
@@ -14,7 +12,6 @@ from django.core.exceptions import ValidationError
 from django.db import models, transaction
 from django.utils import timezone
 
-from apps.buchhaltung.services.sepa_fristen_service import bd_addieren
 from apps.objekte.models import Objekt
 from apps.vorgaenge.models import PRIORITAET_CHOICES, Vorgang
 
@@ -114,12 +111,9 @@ class Handwerkerauftrag(models.Model):
     STATUS_CHOICES = [
         ('entwurf',       'Entwurf'),
         ('versendet',     'Versendet'),
-        ('angenommen',    'Angenommen'),
-        ('abgelehnt',     'Abgelehnt'),
         ('in_arbeit',     'In Arbeit'),
         ('abgeschlossen', 'Abgeschlossen'),
         ('storniert',     'Storniert'),
-        ('abgelaufen',    'Abgelaufen'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
@@ -152,9 +146,6 @@ class Handwerkerauftrag(models.Model):
 
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='entwurf')
     versendet_am = models.DateTimeField(null=True, blank=True)
-    angenommen_am = models.DateTimeField(null=True, blank=True)
-    abgelehnt_am = models.DateTimeField(null=True, blank=True)
-    ablehnung_grund = models.TextField(blank=True)
     abgeschlossen_am = models.DateTimeField(null=True, blank=True)
     abschluss_notiz = models.TextField(blank=True)
 
@@ -240,7 +231,6 @@ class HandwerkerauftragEreignis(models.Model):
         ('versand_fehlgeschlagen', 'Versand fehlgeschlagen'),
         ('kommentar',              'Kommentar'),
         ('rechnung_zugeordnet',    'Rechnung zugeordnet'),
-        ('system_abgelaufen',      'System: Auftrag abgelaufen'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
@@ -265,70 +255,3 @@ class HandwerkerauftragEreignis(models.Model):
 
     def __str__(self):
         return f"{self.auftrag.nummer} — {self.get_typ_display()}"
-
-
-# Bankarbeitstage bis Ablauf der Auftragsbestätigungs-Frist, je Priorität.
-BANKARBEITSTAGE_JE_PRIORITAET = {
-    'hoch': 3,
-    'normal': 7,
-    'niedrig': 14,
-}
-
-
-def berechne_gueltig_bis(auftrag: 'Handwerkerauftrag', start=None) -> datetime:
-    """Berechnet das Gültigkeitsende eines Auftragsbestätigungs-Tokens:
-    Ende des Tages, der ``N`` Bankarbeitstage (je nach Priorität des
-    Auftrags) nach ``start`` (Default: heute) liegt.
-
-    Nutzt bewusst den bestehenden ``sepa_fristen_service.bd_addieren``
-    (bundeslandspezifische Feiertage über ``holidays``, kein fest
-    verdrahtetes Jahr) statt einer eigenen Bankarbeitstags-Logik.
-    ``start`` ist als Parameter vorgesehen, damit Tests ein festes
-    Startdatum vorgeben können, statt auf ``today()`` angewiesen zu sein.
-    """
-    anzahl_bd = BANKARBEITSTAGE_JE_PRIORITAET.get(auftrag.prioritaet, 7)
-    bundesland = auftrag.objekt.bundesland
-    start = start or timezone.localdate()
-    frist_tag = bd_addieren(start, anzahl_bd, bundesland)
-    ende_des_tages = datetime.combine(frist_tag, time.max)
-    return timezone.make_aware(ende_des_tages)
-
-
-class AuftragsbestaetigungsToken(models.Model):
-    """Zugangsmittel für die Auftragsbestätigung (Annahme/Ablehnung) per
-    Link ohne Login. Anders als ``HandwerkerauftragEreignis`` kein
-    Audit-Objekt — CASCADE ist hier korrekt."""
-
-    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
-    auftrag = models.OneToOneField(
-        Handwerkerauftrag, on_delete=models.CASCADE, related_name='token',
-    )
-    accept_token = models.CharField(max_length=64, unique=True, db_index=True, blank=True)
-    reject_token = models.CharField(max_length=64, unique=True, db_index=True, blank=True)
-    gueltig_bis = models.DateTimeField()
-    verbraucht_am = models.DateTimeField(
-        null=True, blank=True,
-        help_text='Einmalverwendung — gesetzt sobald Accept- oder Reject-Link '
-                  'benutzt wurde. Bewusst kein Boolean-Feld (würde eine zweite '
-                  'Wahrheit neben gueltig_bis erzeugen).',
-    )
-    erstellt_am = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        verbose_name = 'Auftragsbestätigungs-Token'
-        verbose_name_plural = 'Auftragsbestätigungs-Token'
-
-    def save(self, *args, **kwargs):
-        if not self.accept_token:
-            self.accept_token = secrets.token_urlsafe(48)
-        if not self.reject_token:
-            self.reject_token = secrets.token_urlsafe(48)
-        if not self.gueltig_bis:
-            self.gueltig_bis = berechne_gueltig_bis(self.auftrag)
-        super().save(*args, **kwargs)
-
-    def ist_gueltig(self) -> bool:
-        return self.verbraucht_am is None and timezone.now() < self.gueltig_bis
-
-    def __str__(self):
-        return f"Token für {self.auftrag.nummer}"
