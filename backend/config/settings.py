@@ -217,7 +217,7 @@ KORRESPONDENZ_MAHNWESEN_AKTIV = os.environ.get(
 MAIL_GRAPH_EINGANG = os.environ.get('MAIL_GRAPH_EINGANG', str(BASE_DIR / 'maileingang_graph'))
 
 # Empfangsadresse für den Rechnungsrücklauf von Handwerkern (Hinweis im Mailtext).
-RECHNUNG_EMPFANG_EMAIL = os.environ.get('RECHNUNG_EMPFANG_EMAIL', 'rechnungen@demme-immobilien.de')
+RECHNUNG_EMPFANG_EMAIL = os.environ.get('RECHNUNG_EMPFANG_EMAIL', 'rechnung@demme-immobilien.de')
 # Basis-URL des Frontends für Links in E-Mails (z.B. Auftragsbestätigung).
 FRONTEND_BASE_URL = os.environ.get('FRONTEND_BASE_URL', 'http://localhost:3000')
 
