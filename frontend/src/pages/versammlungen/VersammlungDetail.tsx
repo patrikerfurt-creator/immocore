@@ -16,6 +16,7 @@ import type {
 const MODUS_OPTIONEN: { value: EVAbstimmungsmodus; label: string }[] = [
   { value: 'einfache_mehrheit', label: 'Einfache Mehrheit (Ja > Nein)' },
   { value: 'qualifizierte_mehrheit', label: 'Qualifizierte Mehrheit (Schwelle laut TE)' },
+  { value: 'doppelt_qualifiziert', label: 'Doppelt qualifizierte Mehrheit (§ 21 Abs. 2 Nr. 1 WEG)' },
   { value: 'einstimmigkeit', label: 'Einstimmigkeit (alle abgegebenen Stimmen)' },
   { value: 'allstimmigkeit', label: 'Allstimmigkeit (alle Eigentümer)' },
 ]
@@ -166,6 +167,8 @@ function TopFormular({
     top && top.abstimmungsmodus !== 'kein_beschluss' ? top.abstimmungsmodus : 'einfache_mehrheit',
   )
   const [schwelle, setSchwelle] = useState(top?.mehrheit_schwelle ?? '66.67')
+  // 2. Achse (MEA) der doppelt qualifizierten Mehrheit (§ 21 Abs. 2 Nr. 1 WEG).
+  const [schwelle2, setSchwelle2] = useState(top?.mehrheit_schwelle_2 ?? '50.00')
   const [triggertVorgang, setTriggertVorgang] = useState(top?.triggert_vorgang ?? false)
   const [triggertWp, setTriggertWp] = useState(top?.triggert_wirtschaftsplan ?? false)
   // Übergeordneter TOP (nur beim Anlegen wählbar). Mögliche Eltern: Haupt-TOPs
@@ -186,7 +189,11 @@ function TopFormular({
       erlaeuterung,
       beschlussvorlage: nurInfo ? '' : vorlage,
       abstimmungsmodus: (nurInfo ? 'kein_beschluss' : modus) as EVAbstimmungsmodus,
-      mehrheit_schwelle: !nurInfo && modus === 'qualifizierte_mehrheit' ? schwelle : null,
+      mehrheit_schwelle:
+        !nurInfo && (modus === 'qualifizierte_mehrheit' || modus === 'doppelt_qualifiziert')
+          ? schwelle : null,
+      mehrheit_schwelle_2:
+        !nurInfo && modus === 'doppelt_qualifiziert' ? schwelle2 : null,
       triggert_vorgang: nurInfo ? false : triggertVorgang,
       triggert_wirtschaftsplan: nurInfo ? false : triggertWp,
     }
@@ -294,7 +301,32 @@ function TopFormular({
                     onChange={e => setSchwelle(e.target.value)}
                   />
                 )}
+                {modus === 'doppelt_qualifiziert' && (
+                  <>
+                    <Input
+                      label="Schwelle Köpfe in % (mehr als, z.B. 66,67)"
+                      value={schwelle}
+                      onChange={e => setSchwelle(e.target.value)}
+                    />
+                    <Input
+                      label="Schwelle MEA in % (mindestens, z.B. 50)"
+                      value={schwelle2}
+                      onChange={e => setSchwelle2(e.target.value)}
+                    />
+                  </>
+                )}
               </div>
+              {modus === 'doppelt_qualifiziert' && (
+                <p className="text-xs text-gray-500">
+                  § 21 Abs. 2 Nr. 1 WEG: angenommen nur, wenn die 1. Achse nach
+                  Köpfen die Schwelle <strong>überschreitet</strong> (mehr als,
+                  bezogen auf die abgegebenen Stimmen) <strong>und</strong> die
+                  2. Achse nach MEA sie <strong>erreicht</strong> (mindestens,
+                  bezogen auf alle Miteigentumsanteile der Gemeinschaft).
+                  Die Kopf- und MEA-Stimmgrundlage müssen an der Versammlung
+                  angelegt sein.
+                </p>
+              )}
               <div className="flex flex-wrap gap-4 text-sm">
                 <label className="flex items-center gap-2">
                   <input type="checkbox" checked={triggertVorgang}
@@ -492,7 +524,14 @@ function TagesordnungPanel({ ev }: { ev: EVDetail }) {
                     )}
                     <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-500">
                       <span>{top.abstimmungsmodus_display}</span>
-                      {top.mehrheit_schwelle && <span>· {top.mehrheit_schwelle} %</span>}
+                      {top.abstimmungsmodus === 'doppelt_qualifiziert' ? (
+                        <span>
+                          · Köpfe &gt; {top.mehrheit_schwelle ?? '–'} %
+                          · MEA ≥ {top.mehrheit_schwelle_2 ?? '–'} %
+                        </span>
+                      ) : (
+                        top.mehrheit_schwelle && <span>· {top.mehrheit_schwelle} %</span>
+                      )}
                       <TopStimmgrundlageAuswahl ev={ev} top={top} gesperrt={!bearbeitbar} />
                       {top.triggert_vorgang && <Badge value="vorschlag" label="Folge-Vorgang" />}
                       {top.triggert_wirtschaftsplan && <Badge value="vorschlag" label="WP-Beschluss" />}
