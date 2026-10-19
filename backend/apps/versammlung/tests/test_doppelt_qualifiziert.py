@@ -18,6 +18,9 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.utils import timezone
 
+from apps.versammlung.serializers import (
+    TagesordnungspunktCreateSerializer, TagesordnungspunktSerializer,
+)
 from apps.versammlung.services import (
     durchfuehrung_service, ev_service, stimmgrundlage_service,
     stimmkraft_service, tagesordnung_service,
@@ -187,3 +190,72 @@ class DoppeltQualifiziertGrundlagenPflichtTest(TestCase):
                 abstimmungsmodus='doppelt_qualifiziert',
                 mehrheit_schwelle=Decimal('66.67'),
             )
+
+
+class DoppeltQualifiziertSerializerTest(_DoppeltBasis):
+    """API-Vertrag v1.5: Serializer-Felder und doppelt_achsen."""
+
+    def test_read_serializer_liefert_doppelt_achsen(self):
+        top = self._top()
+        data = TagesordnungspunktSerializer(top).data
+        self.assertEqual(data['mehrheit_schwelle'], '66.67')
+        self.assertEqual(data['mehrheit_schwelle_2'], '50.00')
+        self.assertIn('abstimmung_ja_2', data)
+        self.assertIn('abstimmung_nein_2', data)
+
+        kopf_g = self.ev.stimmgrundlagen.get(ist_kopfprinzip=True)
+        mea_g = self.ev.stimmgrundlagen.get(verteilerschluessel__vs_typ='mea')
+        achsen = data['doppelt_achsen']
+        self.assertEqual(achsen['koepfe']['stimmgrundlage_id'], str(kopf_g.id))
+        self.assertEqual(achsen['koepfe']['schwelle'], '66.67')
+        self.assertEqual(achsen['koepfe']['vergleich'], 'groesser')
+        self.assertEqual(achsen['mea']['stimmgrundlage_id'], str(mea_g.id))
+        self.assertEqual(achsen['mea']['schwelle'], '50.00')
+        self.assertEqual(achsen['mea']['vergleich'], 'groesser_gleich')
+
+    def test_doppelt_achsen_null_bei_anderem_modus(self):
+        top = tagesordnung_service.top_anlegen(
+            ev=self.ev, titel='Normaler TOP', erstellt_von=self.user,
+            beschlussvorlage='Es wird beschlossen.',
+            abstimmungsmodus='einfache_mehrheit',
+        )
+        data = TagesordnungspunktSerializer(top).data
+        self.assertIsNone(data['doppelt_achsen'])
+
+    def test_create_serializer_akzeptiert_zweite_schwelle(self):
+        serializer = TagesordnungspunktCreateSerializer(data={
+            'ev': str(self.ev.id), 'titel': 'Bauliche Veränderung',
+            'beschlussvorlage': 'Es wird beschlossen.',
+            'abstimmungsmodus': 'doppelt_qualifiziert',
+            'mehrheit_schwelle': '66.67', 'mehrheit_schwelle_2': '50.00',
+        })
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertEqual(serializer.validated_data['mehrheit_schwelle_2'], Decimal('50.00'))
+
+
+class DoppeltQualifiziertToolErgebnisTest(_DoppeltBasis):
+    """API-Vertrag v1.5: der ergebnis-Block trägt die 2. Achse (ja_2/nein_2),
+    und immocore übernimmt die Entscheidung des Tools 1:1."""
+
+    def test_tool_ergebnis_mit_zweiter_achse_wird_uebernommen(self):
+        self._anwesend('Gross', 'Zwei', 'Drei', 'Vier')
+        top = self._top()
+        voten = {
+            str(self.teilnehmer[n].id): v for n, v in
+            {'Gross': 'ja', 'Zwei': 'ja', 'Drei': 'ja', 'Vier': 'nein'}.items()
+        }
+        # Das Tool meldet bewusst 'abgelehnt', obwohl die Stimmen rechnerisch
+        # angenommen ergäben — immocore übernimmt 1:1 und bewertet NICHT neu.
+        durchfuehrung_service.erfasse_einzelstimmen(
+            top, self.user, voten,
+            ergebnis={
+                'ja': '3.0000', 'nein': '1.0000', 'enthaltung': '0.0000',
+                'ja_2': '920.0000', 'nein_2': '80.0000', 'ergebnis': 'abgelehnt',
+            },
+        )
+        top.refresh_from_db()
+        self.assertEqual(top.abstimmungsergebnis, 'abgelehnt')      # 1:1 übernommen
+        self.assertEqual(top.abstimmung_ja, Decimal('3.0000'))     # Köpfe
+        self.assertEqual(top.abstimmung_nein, Decimal('1.0000'))
+        self.assertEqual(top.abstimmung_ja_2, Decimal('920.0000'))  # MEA
+        self.assertEqual(top.abstimmung_nein_2, Decimal('80.0000'))

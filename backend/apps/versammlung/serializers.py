@@ -63,15 +63,21 @@ class TagesordnungspunktSerializer(serializers.ModelSerializer):
     # Unterpunkte → wird nicht abgestimmt). eltern verweist auf den Haupt-TOP.
     nummer_anzeige = serializers.CharField(read_only=True)
     hat_unterpunkte = serializers.BooleanField(read_only=True)
+    # API-Vertrag v1.5: bei doppelt qualifizierter Mehrheit die beiden Achsen
+    # (Köpfe + MEA) mit ihren aufgelösten Stimmgrundlagen und Schwellen — das
+    # Abstimmtool wertet damit zweiachsig aus.
+    doppelt_achsen = serializers.SerializerMethodField()
 
     class Meta:
         model = Tagesordnungspunkt
         fields = [
             'id', 'ev', 'eltern', 'nummer', 'nummer_anzeige', 'hat_unterpunkte',
             'titel', 'erlaeuterung', 'beschlussvorlage',
-            'abstimmungsmodus', 'abstimmungsmodus_display', 'mehrheit_schwelle',
+            'abstimmungsmodus', 'abstimmungsmodus_display',
+            'mehrheit_schwelle', 'mehrheit_schwelle_2', 'doppelt_achsen',
             'stimmgrundlage', 'stimmgrundlage_id',
             'abstimmung_ja', 'abstimmung_nein', 'abstimmung_enthaltung',
+            'abstimmung_ja_2', 'abstimmung_nein_2',
             'abstimmungsergebnis', 'abstimmungsergebnis_display',
             'ergebnis_bemerkung', 'triggert_vorgang', 'triggert_wirtschaftsplan',
         ]
@@ -80,7 +86,8 @@ class TagesordnungspunktSerializer(serializers.ModelSerializer):
         # beim Anlegen gesetzt (kein Umhängen bestehender TOPs über PATCH).
         read_only_fields = [
             'id', 'ev', 'eltern', 'abstimmung_ja', 'abstimmung_nein',
-            'abstimmung_enthaltung', 'abstimmungsergebnis',
+            'abstimmung_enthaltung', 'abstimmung_ja_2', 'abstimmung_nein_2',
+            'abstimmungsergebnis',
         ]
 
     def get_stimmgrundlage(self, obj):
@@ -89,6 +96,37 @@ class TagesordnungspunktSerializer(serializers.ModelSerializer):
         return {
             'id': str(obj.stimmgrundlage_id),
             'bezeichnung': obj.stimmgrundlage.bezeichnung_anzeige,
+        }
+
+    def get_doppelt_achsen(self, obj):
+        """Aufgelöste Achsen der doppelt qualifizierten Mehrheit (§ 21 Abs. 2
+        Nr. 1 WEG) — sonst None.
+
+        ``koepfe``: 1. Achse, Ja-Anteil der abgegebenen Stimmen MUSS die Schwelle
+        ÜBERSCHREITEN (strikt >). ``mea``: 2. Achse, Ja-Anteil an ALLEN MEA der
+        Gemeinschaft muss die Schwelle ERREICHEN (>=). Die ``stimmgrundlage_id``
+        verweist auf die je Teilnehmer im Teilnehmer-Endpunkt gelieferte
+        ``stimmkraft_je_grundlage`` — damit gewichtet das Tool dieselben Stimmen
+        zweifach.
+        """
+        if obj.abstimmungsmodus != 'doppelt_qualifiziert':
+            return None
+        kopf = obj.ev.stimmgrundlagen.filter(ist_kopfprinzip=True).first()
+        mea = obj.ev.stimmgrundlagen.filter(verteilerschluessel__vs_typ='mea').first()
+
+        def _achse(grundlage, schwelle, vergleich):
+            if grundlage is None:
+                return None
+            return {
+                'stimmgrundlage_id': str(grundlage.id),
+                'bezeichnung': grundlage.bezeichnung_anzeige,
+                'schwelle': str(schwelle) if schwelle is not None else None,
+                'vergleich': vergleich,
+            }
+
+        return {
+            'koepfe': _achse(kopf, obj.mehrheit_schwelle, 'groesser'),
+            'mea': _achse(mea, obj.mehrheit_schwelle_2, 'groesser_gleich'),
         }
 
 
@@ -114,6 +152,11 @@ class TagesordnungspunktCreateSerializer(serializers.Serializer):
     )
     mehrheit_schwelle = serializers.DecimalField(
         max_digits=5, decimal_places=2, required=False, allow_null=True,
+    )
+    mehrheit_schwelle_2 = serializers.DecimalField(
+        max_digits=5, decimal_places=2, required=False, allow_null=True,
+        help_text='Nur bei abstimmungsmodus="doppelt_qualifiziert": Schwelle der '
+                  '2. Achse (MEA), § 21 Abs. 2 Nr. 1 WEG.',
     )
     stimmgrundlage = serializers.PrimaryKeyRelatedField(
         queryset=EVStimmgrundlage.objects.all(), required=False, allow_null=True,
@@ -428,12 +471,23 @@ class EinzelstimmenErgebnisSerializer(serializers.Serializer):
     übernimmt diese Werte 1:1 und bewertet NICHT neu. ``ergebnis`` kennt nur
     ``angenommen``/``abgelehnt``: Stimmengleichheit ist kein Mehrheitsbeschluss
     und wird vom Tool bereits als ``abgelehnt`` geliefert.
+
+    API-Vertrag v1.5: bei doppelt qualifizierter Mehrheit (§ 21 Abs. 2 Nr. 1 WEG)
+    liefert das Tool zusätzlich die 2. Achse (MEA) in ``ja_2``/``nein_2``;
+    ``ja``/``nein`` sind dann die 1. Achse (Köpfe). Beide werden zum Nachweis
+    gespeichert; die Entscheidung in ``ergebnis`` bleibt maßgeblich.
     """
 
     ja = serializers.DecimalField(max_digits=12, decimal_places=4)
     nein = serializers.DecimalField(max_digits=12, decimal_places=4)
     enthaltung = serializers.DecimalField(
         max_digits=12, decimal_places=4, required=False, default=0,
+    )
+    ja_2 = serializers.DecimalField(
+        max_digits=12, decimal_places=4, required=False, allow_null=True,
+    )
+    nein_2 = serializers.DecimalField(
+        max_digits=12, decimal_places=4, required=False, allow_null=True,
     )
     ergebnis = serializers.ChoiceField(choices=['angenommen', 'abgelehnt'])
     bemerkung = serializers.CharField(required=False, allow_blank=True, default='')

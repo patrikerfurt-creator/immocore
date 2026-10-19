@@ -393,6 +393,12 @@ def _uebernehme_tool_ergebnis(top, erfasst_von, ergebnis: dict,
     enthaltung = Decimal(str(ergebnis.get('enthaltung') or 0))
     entscheidung = ergebnis['ergebnis']
     bemerkung = ergebnis.get('bemerkung')
+    # API-Vertrag v1.5: 2. Achse (MEA) bei doppelt qualifizierter Mehrheit.
+    # Bei diesem Modus sind ja/nein die 1. Achse (Köpfe), ja_2/nein_2 die MEA.
+    ist_doppelt = top.abstimmungsmodus == 'doppelt_qualifiziert'
+    ja_2 = ergebnis.get('ja_2')
+    nein_2 = ergebnis.get('nein_2')
+    hat_zweite_achse = ja_2 is not None or nein_2 is not None
 
     war_erfasst = top.abstimmungsergebnis != 'offen'
     alt = (
@@ -406,6 +412,10 @@ def _uebernehme_tool_ergebnis(top, erfasst_von, ergebnis: dict,
     top.abstimmungsergebnis = entscheidung
     felder = ['abstimmung_ja', 'abstimmung_nein', 'abstimmung_enthaltung',
               'abstimmungsergebnis']
+    if hat_zweite_achse:
+        top.abstimmung_ja_2 = Decimal(str(ja_2 or 0))
+        top.abstimmung_nein_2 = Decimal(str(nein_2 or 0))
+        felder += ['abstimmung_ja_2', 'abstimmung_nein_2']
     if bemerkung:
         top.ergebnis_bemerkung = bemerkung
         felder.append('ergebnis_bemerkung')
@@ -414,31 +424,42 @@ def _uebernehme_tool_ergebnis(top, erfasst_von, ergebnis: dict,
     # Weiche Konsistenzprüfung: die Summe der namentlichen Stimmen (immocore
     # rechnet mit Decimal-Snapshots, das Tool mit Fließkomma) sollte dem
     # gemeldeten Ergebnis entsprechen. Kleine Rundungsdifferenzen sind
-    # unkritisch; nur echte Abweichungen werden vermerkt.
+    # unkritisch; nur echte Abweichungen werden vermerkt. Bei doppelt
+    # qualifizierter Mehrheit entfällt sie: dort ist die gemeldete 1. Achse
+    # nach Köpfen gewichtet, die lokalen Summen aber nach top.stimmgrundlage —
+    # ein Vergleich wäre nicht aussagekräftig.
     abweichung = ''
-    toleranz = Decimal('0.01')
-    erwartet = (
-        einzelstimmen_summen['ja'], einzelstimmen_summen['nein'],
-        einzelstimmen_summen['enthaltung'],
-    )
-    if any(abs(a - b) > toleranz for a, b in
-           zip(erwartet, (ja, nein, enthaltung))):
-        abweichung = (
-            f' [Hinweis: Einzelstimmen-Summe '
-            f'{erwartet[0]}/{erwartet[1]}/{erwartet[2]} weicht vom gemeldeten '
-            f'Ergebnis ab]'
+    if not ist_doppelt:
+        toleranz = Decimal('0.01')
+        erwartet = (
+            einzelstimmen_summen['ja'], einzelstimmen_summen['nein'],
+            einzelstimmen_summen['enthaltung'],
         )
+        if any(abs(a - b) > toleranz for a, b in
+               zip(erwartet, (ja, nein, enthaltung))):
+            abweichung = (
+                f' [Hinweis: Einzelstimmen-Summe '
+                f'{erwartet[0]}/{erwartet[1]}/{erwartet[2]} weicht vom gemeldeten '
+                f'Ergebnis ab]'
+            )
+
+    if ist_doppelt:
+        details = (
+            f'Köpfe Ja {ja} / Nein {nein}, '
+            f'MEA Ja {top.abstimmung_ja_2} / Nein {top.abstimmung_nein_2}'
+        )
+    else:
+        details = f'Ja {ja}, Nein {nein}, Enthaltung {enthaltung}'
 
     ev_service.vermerke_ereignis(
         top.ev, 'abstimmung_korrigiert' if war_erfasst else 'abstimmung_erfasst',
         erfasst_von, top=top,
         text=(
             f'TOP {top.nummer_anzeige} ({top.get_abstimmungsmodus_display()}): '
-            f'Ja {ja}, Nein {nein}, Enthaltung {enthaltung} → '
-            f'{entscheidung.upper()} (vom Abstimmtool übernommen){abweichung}'
+            f'{details} → {entscheidung.upper()} (vom Abstimmtool übernommen){abweichung}'
         ),
         alter_wert=alt if war_erfasst else '',
-        neuer_wert=f'{ja}/{nein}/{enthaltung} → {entscheidung}',
+        neuer_wert=f'{details} → {entscheidung}',
     )
     return top
 
