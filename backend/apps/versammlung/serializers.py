@@ -547,7 +547,7 @@ class BeschlussSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'objekt', 'objekt_bezeichnung', 'nummer', 'ev',
             'top', 'top_nummer', 'top_nummer_anzeige', 'top_titel',
-            'beschluss_datum', 'ort', 'ueberschrift', 'wortlaut',
+            'beschluss_datum', 'ort', 'ueberschrift', 'wortlaut', 'anmerkung',
             'ergebnis', 'ergebnis_display',
             'dokument', 'dokument_dateiname', 'vorgang', 'vorgang_nummer',
             'anfechtung_status', 'anfechtung_status_display', 'anfechtung_notiz',
@@ -578,6 +578,7 @@ class BeschlussManuellSerializer(serializers.Serializer):
     ort = serializers.CharField(required=False, allow_blank=True, default='')
     ueberschrift = serializers.CharField(required=False, allow_blank=True, default='')
     wortlaut = serializers.CharField()
+    anmerkung = serializers.CharField(required=False, allow_blank=True, default='')
     ergebnis = serializers.ChoiceField(choices=Beschluss.ERGEBNIS_CHOICES)
     datei = serializers.FileField(required=False, allow_null=True)
 

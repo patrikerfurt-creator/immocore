@@ -152,6 +152,11 @@
   {% endif %}
 </div>
 
+{% if beschluss.anmerkung %}
+  <div class="company-meta">Anmerkung der Verwaltung</div>
+  <div class="wortlaut">{{ beschluss.anmerkung|linebreaksbr }}</div>
+{% endif %}
+
 {% if beschluss.anfechtung_status != 'keine' %}
   <div class="hinweis">
     <strong>{{ beschluss.get_anfechtung_status_display }}</strong>
