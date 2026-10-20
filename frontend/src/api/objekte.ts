@@ -18,6 +18,19 @@ export const objekteApi = {
   listEinheiten: (params?: Record<string, string>) =>
     client.get<Einheit[]>('/einheiten/', { params }).then(r => r.data),
   createEinheit: (data: Partial<Einheit>) => client.post<Einheit>('/einheiten/', data).then(r => r.data),
+  // Einzelne Einheit zu bestehendem Objekt anlegen (Admin): legt die Einheit an und
+  // zieht Verteilerschlüssel-Werte (MEA/Fläche) nach. 403 für Nicht-Administratoren.
+  anlegenEinheit: (data: {
+    objekt: string
+    einheit_nr: string
+    einheit_typ: string
+    lage: string
+    eingang?: string | null
+    flaechennummer?: string
+    mea?: string
+    flaeche_qm?: string
+    umsatzsteuer_abrechnungsart?: string | null
+  }) => client.post<Einheit>('/einheiten/anlegen/', data).then(r => r.data),
   updateEinheit: (id: string, data: Partial<Einheit>) => client.patch<Einheit>(`/einheiten/${id}/`, data).then(r => r.data),
   deleteEinheit: (id: string) => client.delete(`/einheiten/${id}/`),
   csvVorlageEinheiten: (objektId?: string) =>
@@ -55,6 +68,8 @@ export const objekteApi = {
     ).then(r => r.data),
 
   // Eingänge
+  listEingaenge: (objektId: string) =>
+    client.get<Eingang[]>('/eingaenge/', { params: { objekt: objektId } }).then(r => r.data),
   createEingang: (data: Partial<Eingang>) => client.post<Eingang>('/eingaenge/', data).then(r => r.data),
   updateEingang: (id: string, data: Partial<Eingang>) => client.patch<Eingang>(`/eingaenge/${id}/`, data).then(r => r.data),
   deleteEingang: (id: string) => client.delete(`/eingaenge/${id}/`),

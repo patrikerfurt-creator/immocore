@@ -38,6 +38,28 @@ const EMPTY_FILTERS: Filters = {
   eigentuemer: '',
 }
 
+const EINHEIT_TYPEN = ['Wohnung', 'Gewerbe', 'Stellplatz', 'Sonstiges'] as const
+
+type AnlageForm = {
+  einheit_nr: string
+  einheit_typ: string
+  lage: string
+  eingang: string
+  flaechennummer: string
+  mea: string
+  flaeche_qm: string
+}
+
+const LEERE_ANLAGE: AnlageForm = {
+  einheit_nr: '',
+  einheit_typ: 'Wohnung',
+  lage: '',
+  eingang: '',
+  flaechennummer: '',
+  mea: '',
+  flaeche_qm: '',
+}
+
 function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
   if (!active) return <span className="ml-1 text-gray-300">↕</span>
   return <span className="ml-1 text-primary-600">{dir === 'asc' ? '↑' : '↓'}</span>
@@ -57,6 +79,9 @@ export function EinheitenPage() {
   const [editEinheitId, setEditEinheitId] = useState<string | null>(null)
   const [editPersonId, setEditPersonId] = useState<string>('')
   const [historieEinheit, setHistorieEinheit] = useState<{ id: string; einheit_nr: string } | null>(null)
+  const [showAnlegen, setShowAnlegen] = useState(false)
+  const [anlageForm, setAnlageForm] = useState<AnlageForm>(LEERE_ANLAGE)
+  const [anlageFehler, setAnlageFehler] = useState<Record<string, string> | string | null>(null)
   const [schreibenFuer, setSchreibenFuer] = useState<{
     einheitId: string; personId: string; personName: string; evId: string
   } | null>(null)
@@ -85,6 +110,41 @@ export function EinheitenPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['eigentumsverhaeltnisse', 'objekt', selectedObjektId] })
       setEditEinheitId(null)
+    },
+  })
+
+  const { data: eingaenge = [] } = useQuery({
+    queryKey: ['eingaenge', selectedObjektId],
+    queryFn: () => objekteApi.listEingaenge(selectedObjektId!),
+    enabled: !!selectedObjektId && showAnlegen,
+  })
+
+  const anlegenMut = useMutation({
+    mutationFn: () => objekteApi.anlegenEinheit({
+      objekt: selectedObjektId!,
+      einheit_nr: anlageForm.einheit_nr.trim(),
+      einheit_typ: anlageForm.einheit_typ,
+      lage: anlageForm.lage.trim(),
+      eingang: anlageForm.eingang || null,
+      flaechennummer: anlageForm.flaechennummer.trim() || undefined,
+      mea: anlageForm.mea.trim() || undefined,
+      flaeche_qm: anlageForm.flaeche_qm.trim() || undefined,
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['einheiten', selectedObjektId] })
+      setShowAnlegen(false)
+      setAnlageForm(LEERE_ANLAGE)
+      setAnlageFehler(null)
+    },
+    onError: (err: unknown) => {
+      // @ts-expect-error axios error shape
+      const statusCode = err?.response?.status
+      if (statusCode === 403) {
+        setAnlageFehler('Kein Zugriff — Einheiten anlegen ist nur für Administratoren (is_staff) möglich.')
+      } else {
+        // @ts-expect-error axios error shape
+        setAnlageFehler(err?.response?.data ?? 'Anlegen fehlgeschlagen.')
+      }
     },
   })
 
@@ -254,6 +314,17 @@ export function EinheitenPage() {
             >
               {importing ? 'Prüfe…' : 'CSV importieren'}
             </button>
+            <span className="text-gray-300">|</span>
+            <button
+              type="button"
+              onClick={() => {
+                setShowAnlegen(v => !v)
+                setAnlageFehler(null)
+              }}
+              className="text-sm px-3 py-1.5 rounded border border-primary-600 text-primary-700 hover:bg-primary-50 transition-colors"
+            >
+              + Einheit anlegen
+            </button>
             <input
               ref={fileRef}
               type="file"
@@ -271,6 +342,134 @@ export function EinheitenPage() {
               Kompletter Neuimport (alle Einheiten löschen)
             </label>
           </div>
+
+          {/* Einzelne Einheit anlegen (Admin) — z. B. nach Aufstockung */}
+          {showAnlegen && (
+            <div className="rounded-lg border border-primary-200 bg-primary-50/40 p-4 space-y-3">
+              <div className="flex items-start justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-800">Einheit anlegen</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Fügt dem Objekt eine weitere Einheit hinzu. Die Verteilerschlüssel-Werte werden
+                    automatisch angelegt; MEA und Fläche kommen additiv zum Bestand hinzu. Den
+                    Eigentümer trägst du anschließend im Vertragsmanagement ein.
+                  </p>
+                </div>
+              </div>
+
+              {typeof anlageFehler === 'string' && (
+                <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{anlageFehler}</p>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                <label className="text-xs text-gray-600 space-y-1">
+                  <span className="font-medium">Bez. Einheit *</span>
+                  <input
+                    type="text"
+                    value={anlageForm.einheit_nr}
+                    onChange={e => setAnlageForm(f => ({ ...f, einheit_nr: e.target.value }))}
+                    className="w-full rounded border-gray-300 text-sm px-2 py-1.5"
+                    placeholder="z. B. W-05"
+                  />
+                  {typeof anlageFehler === 'object' && anlageFehler?.einheit_nr && (
+                    <span className="text-red-600">{anlageFehler.einheit_nr}</span>
+                  )}
+                </label>
+
+                <label className="text-xs text-gray-600 space-y-1">
+                  <span className="font-medium">Typ *</span>
+                  <select
+                    value={anlageForm.einheit_typ}
+                    onChange={e => setAnlageForm(f => ({ ...f, einheit_typ: e.target.value }))}
+                    className="w-full rounded border-gray-300 text-sm px-2 py-1.5"
+                  >
+                    {EINHEIT_TYPEN.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </label>
+
+                <label className="text-xs text-gray-600 space-y-1">
+                  <span className="font-medium">Eingang</span>
+                  <select
+                    value={anlageForm.eingang}
+                    onChange={e => setAnlageForm(f => ({ ...f, eingang: e.target.value }))}
+                    className="w-full rounded border-gray-300 text-sm px-2 py-1.5"
+                  >
+                    <option value="">— ohne —</option>
+                    {eingaenge.map(e => <option key={e.id} value={e.id}>{e.bezeichnung || e.strasse}</option>)}
+                  </select>
+                </label>
+
+                <label className="text-xs text-gray-600 space-y-1 sm:col-span-2 lg:col-span-1">
+                  <span className="font-medium">Lage *</span>
+                  <input
+                    type="text"
+                    value={anlageForm.lage}
+                    onChange={e => setAnlageForm(f => ({ ...f, lage: e.target.value }))}
+                    className="w-full rounded border-gray-300 text-sm px-2 py-1.5"
+                    placeholder="z. B. 3. OG rechts"
+                  />
+                  {typeof anlageFehler === 'object' && anlageFehler?.lage && (
+                    <span className="text-red-600">{anlageFehler.lage}</span>
+                  )}
+                </label>
+
+                <label className="text-xs text-gray-600 space-y-1">
+                  <span className="font-medium">Flächennummer</span>
+                  <input
+                    type="text"
+                    value={anlageForm.flaechennummer}
+                    onChange={e => setAnlageForm(f => ({ ...f, flaechennummer: e.target.value }))}
+                    className="w-full rounded border-gray-300 text-sm px-2 py-1.5"
+                  />
+                  {typeof anlageFehler === 'object' && anlageFehler?.flaechennummer && (
+                    <span className="text-red-600">{anlageFehler.flaechennummer}</span>
+                  )}
+                </label>
+
+                <label className="text-xs text-gray-600 space-y-1">
+                  <span className="font-medium">MEA</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={anlageForm.mea}
+                    onChange={e => setAnlageForm(f => ({ ...f, mea: e.target.value }))}
+                    className="w-full rounded border-gray-300 text-sm px-2 py-1.5"
+                    placeholder="z. B. 123,45"
+                  />
+                </label>
+
+                <label className="text-xs text-gray-600 space-y-1">
+                  <span className="font-medium">Fläche (qm)</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={anlageForm.flaeche_qm}
+                    onChange={e => setAnlageForm(f => ({ ...f, flaeche_qm: e.target.value }))}
+                    className="w-full rounded border-gray-300 text-sm px-2 py-1.5"
+                    placeholder="z. B. 78,50"
+                  />
+                </label>
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={anlegenMut.isPending || !anlageForm.einheit_nr.trim() || !anlageForm.lage.trim()}
+                  onClick={() => { setAnlageFehler(null); anlegenMut.mutate() }}
+                  className="text-sm px-3 py-1.5 rounded bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50 transition-colors"
+                >
+                  {anlegenMut.isPending ? 'Lege an…' : 'Einheit anlegen'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setShowAnlegen(false); setAnlageForm(LEERE_ANLAGE); setAnlageFehler(null) }}
+                  className="text-sm px-3 py-1.5 rounded border border-gray-300 text-gray-600 hover:bg-gray-50"
+                >
+                  Abbrechen
+                </button>
+              </div>
+            </div>
+          )}
 
           {modus === 'neuimport' && (
             <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-xs text-red-700">

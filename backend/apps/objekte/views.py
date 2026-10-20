@@ -6,7 +6,7 @@ from django.db.models import Q
 from django.http import HttpResponse
 from rest_framework import viewsets, filters, status
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
 from .models import Objekt, Eingang, Bankkonto, Einheit, Verteilerschluessel, VerteilerschluesselWert
 from .serializers import (
@@ -564,6 +564,124 @@ class EinheitViewSet(viewsets.ModelViewSet):
         if objekt_id:
             qs = qs.filter(objekt_id=objekt_id)
         return qs
+
+    @action(detail=False, methods=['post'], url_path='anlegen', permission_classes=[IsAdminUser])
+    def anlegen(self, request):
+        """Einzelne Einheit zu einem BESTEHENDEN Objekt anlegen (z. B. nach Aufstockung).
+
+        Anders als der CSV-Import legt diese Aktion eine einzelne Einheit an und
+        zieht direkt die Verteilerschlüssel-Werte des Objekts für sie nach
+        (idempotent über ``verteilerschluessel_anlegen``). MEA (010) und Fläche
+        (001) werden aus den übergebenen Werten gesetzt; bestehende Einheiten
+        bleiben unverändert — die MEA der neuen Einheit kommt additiv obendrauf.
+        Eigentümer (EigentumsVerhältnis) werden separat im Vertragsmanagement
+        gepflegt. Nur für Administratoren (is_staff).
+        """
+        from decimal import Decimal, InvalidOperation
+        from apps.konten.services import verteilerschluessel_anlegen
+
+        d = request.data
+        objekt_id   = d.get('objekt')
+        einheit_nr  = (d.get('einheit_nr') or '').strip()
+        einheit_typ = (d.get('einheit_typ') or '').strip()
+        lage        = (d.get('lage') or '').strip()
+
+        fehler = {}
+        if not objekt_id:
+            fehler['objekt'] = 'Objekt erforderlich.'
+        if not einheit_nr:
+            fehler['einheit_nr'] = 'Bezeichnung der Einheit erforderlich.'
+        gueltige_typen = [c[0] for c in Einheit.EINHEIT_TYP_CHOICES]
+        if einheit_typ not in gueltige_typen:
+            fehler['einheit_typ'] = f'Typ muss einer von {", ".join(gueltige_typen)} sein.'
+        if not lage:
+            fehler['lage'] = 'Lage erforderlich.'
+        # Feldlängen gegen die Modell-Grenzen prüfen (sonst DataError/500 in der DB).
+        if len(einheit_nr) > 20:
+            fehler['einheit_nr'] = 'Bezeichnung darf höchstens 20 Zeichen lang sein.'
+        if len(lage) > 255:
+            fehler['lage'] = 'Lage darf höchstens 255 Zeichen lang sein.'
+        if fehler:
+            return Response(fehler, status=status.HTTP_400_BAD_REQUEST)
+
+        objekt = Objekt.objects.filter(pk=objekt_id).first()
+        if objekt is None:
+            return Response({'objekt': 'Objekt nicht gefunden.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Eindeutigkeit innerhalb des Objekts — es gibt KEINEN DB-Constraint.
+        if Einheit.objects.filter(objekt=objekt, einheit_nr=einheit_nr).exists():
+            return Response(
+                {'einheit_nr': f'Im Objekt existiert bereits eine Einheit „{einheit_nr}".'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        flaechennummer = (d.get('flaechennummer') or '').strip()
+        if len(flaechennummer) > 20:
+            return Response(
+                {'flaechennummer': 'Flächennummer darf höchstens 20 Zeichen lang sein.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if flaechennummer and Einheit.objects.filter(objekt=objekt, flaechennummer=flaechennummer).exists():
+            return Response(
+                {'flaechennummer': f'Flächennummer „{flaechennummer}" ist im Objekt bereits vergeben.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        eingang_id = d.get('eingang') or None
+        if eingang_id and not Eingang.objects.filter(pk=eingang_id, objekt=objekt).exists():
+            return Response(
+                {'eingang': 'Eingang gehört nicht zu diesem Objekt.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        def _dezimal(key):
+            roh = d.get(key)
+            if roh in (None, ''):
+                return None
+            try:
+                val = Decimal(str(roh).replace(',', '.'))
+            except (InvalidOperation, ValueError):
+                raise ValueError(key)
+            if val < 0:
+                raise ValueError(key)
+            return val
+
+        try:
+            mea     = _dezimal('mea')
+            flaeche = _dezimal('flaeche_qm')
+        except ValueError as exc:
+            return Response({str(exc): 'Ungültiger Zahlenwert.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            einheit = Einheit.objects.create(
+                objekt=objekt,
+                eingang_id=eingang_id,
+                flaechennummer=flaechennummer,
+                einheit_nr=einheit_nr,
+                einheit_typ=einheit_typ,
+                lage=lage,
+                umsatzsteuer_abrechnungsart=d.get('umsatzsteuer_abrechnungsart') or None,
+            )
+
+            # Verteilerschlüssel-Werte des Objekts für die neue Einheit nachziehen.
+            # Idempotent: vorhandene VS/Werte bleiben, für die neue Einheit
+            # entsteht je VS eine Wert-Zeile (MEA/Fläche zunächst leer).
+            verteilerschluessel_anlegen(objekt.id)
+
+            # MEA (010) und Fläche (001) aus den Formularwerten setzen — zeitlos (wj=0).
+            for schluessel, wert in (('010', mea), ('001', flaeche)):
+                if wert is None:
+                    continue
+                vs = Verteilerschluessel.objects.filter(objekt=objekt, schluessel=schluessel).first()
+                if vs is None:
+                    continue
+                VerteilerschluesselWert.objects.update_or_create(
+                    schluessel=vs,
+                    einheit=einheit,
+                    wirtschaftsjahr=0,
+                    defaults={'wert': wert, 'beteiligt': True, 'quelle': 'stammdaten'},
+                )
+
+        return Response(EinheitSerializer(einheit).data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=['get'], url_path='csv-vorlage')
     def csv_vorlage(self, request):
