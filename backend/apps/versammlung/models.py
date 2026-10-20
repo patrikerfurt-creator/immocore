@@ -351,6 +351,7 @@ class Tagesordnungspunkt(models.Model):
     MODUS_CHOICES = [
         ('einfache_mehrheit',      'Einfache Mehrheit (Ja > Nein)'),
         ('qualifizierte_mehrheit', 'Qualifizierte Mehrheit (Schwelle laut TE)'),
+        ('doppelt_qualifiziert',   'Doppelt qualifizierte Mehrheit (§ 21 Abs. 2 Nr. 1 WEG)'),
         ('einstimmigkeit',         'Einstimmigkeit (alle abgegebenen Stimmen)'),
         ('allstimmigkeit',         'Allstimmigkeit (alle Eigentümer)'),
         ('kein_beschluss',         'Ohne Beschluss (Bericht/Information)'),
@@ -412,17 +413,30 @@ class Tagesordnungspunkt(models.Model):
     mehrheit_schwelle = models.DecimalField(
         max_digits=5, decimal_places=2, null=True, blank=True,
         verbose_name='Mehrheitsschwelle in Prozent',
-        help_text='Nur bei abstimmungsmodus="qualifizierte_mehrheit": '
-                  'erforderlicher Ja-Anteil an den abgegebenen Stimmen '
-                  '(z.B. 66.67). Grundlage ist die Teilungserklärung — die '
-                  'frühere "doppelt qualifizierte Mehrheit" ist mit der '
-                  'WEG-Reform 2020 entfallen.',
+        help_text='Bei abstimmungsmodus="qualifizierte_mehrheit": erforderlicher '
+                  'Ja-Anteil an den abgegebenen Stimmen (z.B. 66.67), Grundlage '
+                  'ist die Teilungserklärung. Bei "doppelt_qualifiziert" die '
+                  'Schwelle der 1. Achse (Köpfe), § 21 Abs. 2 Nr. 1 WEG: '
+                  '"mehr als" dieser Anteil (strikt >, Default 66.67 = 2/3).',
+    )
+    mehrheit_schwelle_2 = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True,
+        verbose_name='Zweite Mehrheitsschwelle in Prozent (MEA)',
+        help_text='Nur bei abstimmungsmodus="doppelt_qualifiziert": Schwelle der '
+                  '2. Achse (Miteigentumsanteile), § 21 Abs. 2 Nr. 1 WEG. '
+                  'Erforderlicher Ja-Anteil an ALLEN MEA der Gemeinschaft '
+                  '(nicht nur den abgegebenen), mindestens dieser Anteil '
+                  '(>=, Default 50.00 = die Hälfte).',
     )
 
     # Ergebnis-Summen in Stimmkraft (nicht Köpfe) — daher Decimal.
     abstimmung_ja         = models.DecimalField(max_digits=12, decimal_places=4, default=0)
     abstimmung_nein       = models.DecimalField(max_digits=12, decimal_places=4, default=0)
     abstimmung_enthaltung = models.DecimalField(max_digits=12, decimal_places=4, default=0)
+    # Zweite Achse (MEA) — nur bei abstimmungsmodus="doppelt_qualifiziert"
+    # befüllt; dieselben namentlichen Stimmen, nach MEA gewichtet. Sonst 0.
+    abstimmung_ja_2       = models.DecimalField(max_digits=12, decimal_places=4, default=0)
+    abstimmung_nein_2     = models.DecimalField(max_digits=12, decimal_places=4, default=0)
     abstimmungsergebnis = models.CharField(
         max_length=12, choices=ERGEBNIS_CHOICES, default='offen',
     )
@@ -503,15 +517,56 @@ class Tagesordnungspunkt(models.Model):
                 'beschlussvorlage': 'Beschlussvorlage erforderlich — über einen '
                                     'TOP ohne Wortlaut kann nicht abgestimmt werden.',
             })
-        if self.abstimmungsmodus == 'qualifizierte_mehrheit' and not self.mehrheit_schwelle:
-            raise ValidationError({
-                'mehrheit_schwelle': 'Bei qualifizierter Mehrheit ist die Schwelle '
-                                     'anzugeben (Grundlage: Teilungserklärung).',
-            })
-        if self.abstimmungsmodus != 'qualifizierte_mehrheit' and self.mehrheit_schwelle:
-            raise ValidationError({
-                'mehrheit_schwelle': 'Schwelle ist nur bei qualifizierter Mehrheit zulässig.',
-            })
+        if self.abstimmungsmodus == 'qualifizierte_mehrheit':
+            if not self.mehrheit_schwelle:
+                raise ValidationError({
+                    'mehrheit_schwelle': 'Bei qualifizierter Mehrheit ist die Schwelle '
+                                         'anzugeben (Grundlage: Teilungserklärung).',
+                })
+            if self.mehrheit_schwelle_2:
+                raise ValidationError({
+                    'mehrheit_schwelle_2': 'Die zweite Schwelle ist nur bei doppelt '
+                                           'qualifizierter Mehrheit zulässig.',
+                })
+        elif self.abstimmungsmodus == 'doppelt_qualifiziert':
+            # § 21 Abs. 2 Nr. 1 WEG: 1. Achse Köpfe (> Schwelle), 2. Achse MEA
+            # (>= Schwelle). Beide Schwellen Pflicht; beide Grundlagen (Kopf- und
+            # MEA-Stimmgrundlage) müssen an der EV existieren.
+            if not self.mehrheit_schwelle:
+                raise ValidationError({
+                    'mehrheit_schwelle': 'Bei doppelt qualifizierter Mehrheit ist die '
+                                         'Schwelle der 1. Achse (Köpfe) anzugeben.',
+                })
+            if not self.mehrheit_schwelle_2:
+                raise ValidationError({
+                    'mehrheit_schwelle_2': 'Bei doppelt qualifizierter Mehrheit ist die '
+                                           'Schwelle der 2. Achse (MEA) anzugeben.',
+                })
+            if self.ev_id:
+                grundlagen = self.ev.stimmgrundlagen
+                if not grundlagen.filter(ist_kopfprinzip=True).exists():
+                    raise ValidationError({
+                        'abstimmungsmodus': 'Für die doppelt qualifizierte Mehrheit muss '
+                                            'an der Versammlung eine Kopf-Stimmgrundlage '
+                                            '(§ 25 Abs. 2 WEG) angelegt sein.',
+                    })
+                if not grundlagen.filter(verteilerschluessel__vs_typ='mea').exists():
+                    raise ValidationError({
+                        'abstimmungsmodus': 'Für die doppelt qualifizierte Mehrheit muss '
+                                            'an der Versammlung eine MEA-Stimmgrundlage '
+                                            'angelegt sein.',
+                    })
+        else:
+            if self.mehrheit_schwelle:
+                raise ValidationError({
+                    'mehrheit_schwelle': 'Schwelle ist nur bei (doppelt) qualifizierter '
+                                         'Mehrheit zulässig.',
+                })
+            if self.mehrheit_schwelle_2:
+                raise ValidationError({
+                    'mehrheit_schwelle_2': 'Die zweite Schwelle ist nur bei doppelt '
+                                           'qualifizierter Mehrheit zulässig.',
+                })
         if (self.stimmgrundlage_id and self.ev_id
                 and self.stimmgrundlage.ev_id != self.ev_id):
             raise ValidationError({

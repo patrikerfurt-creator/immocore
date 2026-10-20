@@ -157,6 +157,15 @@ def bewerte_ergebnis(top, ja: Decimal, nein: Decimal, enthaltung: Decimal,
         return 'angenommen' if (nein == 0 and ja > 0) else 'abgelehnt'
     if modus == 'allstimmigkeit':
         return 'angenommen' if (gesamt_stimmkraft > 0 and ja >= gesamt_stimmkraft) else 'abgelehnt'
+    if modus == 'doppelt_qualifiziert':
+        # Zwei Achsen (Köpfe + MEA) lassen sich nicht aus einem einzelnen
+        # Summenergebnis bewerten — dafür gibt es bewerte_doppelt_qualifiziert
+        # auf Basis der namentlichen Einzelstimmen.
+        raise ValidationError(
+            'Die doppelt qualifizierte Mehrheit (§ 21 Abs. 2 Nr. 1 WEG) kann nicht '
+            'aus einem einzelnen Summenergebnis bewertet werden — sie braucht die '
+            'namentlichen Einzelstimmen (Erfassung über erfasse_einzelstimmen).'
+        )
 
     raise ValidationError(f'Unbekannter Abstimmungsmodus: {modus}')
 
@@ -239,15 +248,133 @@ def _stimmkraft_fuer(teilnehmer, top) -> Decimal:
     zurück, falls der TOP keine Stimmgrundlage hat oder kein Snapshot existiert
     (Alt-/Testdaten ohne Datenmigration).
     """
-    if top.stimmgrundlage_id:
+    return _stimmkraft_grundlage(teilnehmer, top.stimmgrundlage if top.stimmgrundlage_id else None)
+
+
+def _stimmkraft_grundlage(teilnehmer, stimmgrundlage) -> Decimal:
+    """Stimmkraft eines Teilnehmers für eine BELIEBIGE Stimmgrundlage.
+
+    Liest den ``EVTeilnehmerStimmkraft``-Snapshot dieser Grundlage; fällt auf
+    den Legacy-Einzelwert ``teilnehmer.stimmkraft`` zurück, wenn keine Grundlage
+    übergeben wird oder kein Snapshot existiert. Wird für die zwei Achsen der
+    doppelt qualifizierten Mehrheit gebraucht (Köpfe + MEA an demselben TOP).
+    """
+    if stimmgrundlage is not None:
         snapshot = (
             teilnehmer.stimmkraft_snapshots
-            .filter(stimmgrundlage_id=top.stimmgrundlage_id)
+            .filter(stimmgrundlage_id=stimmgrundlage.id)
             .first()
         )
         if snapshot is not None:
             return snapshot.stimmkraft
     return teilnehmer.stimmkraft
+
+
+def _doppelt_grundlagen(ev):
+    """Kopf- und MEA-Stimmgrundlage der EV für die doppelt qualifizierte Mehrheit.
+
+    § 21 Abs. 2 Nr. 1 WEG stellt fest auf Köpfe (1. Achse) und MEA (2. Achse) ab
+    — unabhängig vom sonst in der Gemeinschaft geltenden Stimmprinzip. Beide
+    Grundlagen müssen an der EV existieren.
+    """
+    kopf = ev.stimmgrundlagen.filter(ist_kopfprinzip=True).first()
+    mea = ev.stimmgrundlagen.filter(verteilerschluessel__vs_typ='mea').first()
+    if kopf is None or mea is None:
+        raise ValidationError(
+            'Doppelt qualifizierte Mehrheit (§ 21 Abs. 2 Nr. 1 WEG) erfordert eine '
+            'Kopf- UND eine MEA-Stimmgrundlage an der Versammlung.'
+        )
+    return kopf, mea
+
+
+def bewerte_doppelt_qualifiziert(top) -> dict:
+    """Zwei-Achsen-Bewertung nach § 21 Abs. 2 Nr. 1 WEG aus den namentlichen
+    Stimmen des TOP (``top.stimmen``).
+
+    * 1. Achse (Köpfe): Ja-Anteil der abgegebenen Stimmen MUSS die Schwelle
+      ``mehrheit_schwelle`` ÜBERSCHREITEN (strikt >, "mehr als" 2/3).
+    * 2. Achse (MEA): Ja-Anteil an der GESAMTEN MEA der Gemeinschaft (auch
+      Abwesende) muss ``mehrheit_schwelle_2`` ERREICHEN (>=, "die Hälfte").
+
+    Angenommen nur, wenn beide Achsen erfüllt sind. Die Prozentsätze werden exakt
+    (ungerundet) verglichen, damit die strikte "mehr als"-Grenze der 1. Achse
+    nicht durch Rundung kippt. Rückgabe enthält beide Achsen-Summen und das
+    Ergebnis.
+    """
+    ev = top.ev
+    kopf_g, mea_g = _doppelt_grundlagen(ev)
+
+    ja_kopf = nein_kopf = enth_kopf = Decimal('0')
+    ja_mea = nein_mea = Decimal('0')
+    for stimme in top.stimmen.select_related('teilnehmer'):
+        kraft_kopf = _stimmkraft_grundlage(stimme.teilnehmer, kopf_g)
+        kraft_mea = _stimmkraft_grundlage(stimme.teilnehmer, mea_g)
+        if stimme.votum == 'ja':
+            ja_kopf += kraft_kopf
+            ja_mea += kraft_mea
+        elif stimme.votum == 'nein':
+            nein_kopf += kraft_kopf
+            nein_mea += kraft_mea
+        else:  # enthaltung — zählt bei beiden Achsen nicht als Ja/Nein mit
+            enth_kopf += kraft_kopf
+
+    gesamt_mea = stimmkraft_service.berechne_quorum(ev, mea_g)['gesamt_stimmkraft']
+
+    abgegeben_kopf = ja_kopf + nein_kopf
+    schwelle_kopf = top.mehrheit_schwelle if top.mehrheit_schwelle is not None else Decimal('66.67')
+    schwelle_mea = top.mehrheit_schwelle_2 if top.mehrheit_schwelle_2 is not None else Decimal('50.00')
+
+    achse_koepfe = abgegeben_kopf > 0 and (ja_kopf / abgegeben_kopf * 100) > schwelle_kopf
+    achse_mea = gesamt_mea > 0 and (ja_mea / gesamt_mea * 100) >= schwelle_mea
+    ergebnis = 'angenommen' if (achse_koepfe and achse_mea) else 'abgelehnt'
+
+    return {
+        'ja_kopf': ja_kopf, 'nein_kopf': nein_kopf, 'enthaltung_kopf': enth_kopf,
+        'ja_mea': ja_mea, 'nein_mea': nein_mea, 'gesamt_mea': gesamt_mea,
+        'ergebnis': ergebnis,
+    }
+
+
+@transaction.atomic
+def _erfasse_doppelt_qualifiziert(top, erfasst_von):
+    """Bewertet einen doppelt qualifizierten TOP aus den bereits erfassten
+    namentlichen Stimmen und speichert beide Achsen (Köpfe in abstimmung_*,
+    MEA in abstimmung_*_2)."""
+    kennz = bewerte_doppelt_qualifiziert(top)
+
+    war_erfasst = top.abstimmungsergebnis != 'offen'
+    alt = (
+        f'{top.abstimmung_ja}/{top.abstimmung_nein}/{top.abstimmung_enthaltung}'
+        f' → {top.abstimmungsergebnis}'
+    )
+
+    top.abstimmung_ja = kennz['ja_kopf']
+    top.abstimmung_nein = kennz['nein_kopf']
+    top.abstimmung_enthaltung = kennz['enthaltung_kopf']
+    top.abstimmung_ja_2 = kennz['ja_mea']
+    top.abstimmung_nein_2 = kennz['nein_mea']
+    top.abstimmungsergebnis = kennz['ergebnis']
+    top.save(update_fields=[
+        'abstimmung_ja', 'abstimmung_nein', 'abstimmung_enthaltung',
+        'abstimmung_ja_2', 'abstimmung_nein_2', 'abstimmungsergebnis',
+    ])
+
+    ev_service.vermerke_ereignis(
+        top.ev, 'abstimmung_korrigiert' if war_erfasst else 'abstimmung_erfasst',
+        erfasst_von, top=top,
+        text=(
+            f'TOP {top.nummer_anzeige} (doppelt qualifiziert, § 21 Abs. 2 Nr. 1 WEG): '
+            f'Köpfe Ja {kennz["ja_kopf"]} / Nein {kennz["nein_kopf"]}, '
+            f'MEA Ja {kennz["ja_mea"]} von {kennz["gesamt_mea"]} '
+            f'→ {kennz["ergebnis"].upper()}'
+        ),
+        alter_wert=alt if war_erfasst else '',
+        neuer_wert=(
+            f'{kennz["ja_kopf"]}/{kennz["nein_kopf"]} Köpfe, '
+            f'{kennz["ja_mea"]}/{kennz["gesamt_mea"]} MEA → {kennz["ergebnis"]}'
+        ),
+    )
+    return top
 
 
 @transaction.atomic
@@ -266,6 +393,12 @@ def _uebernehme_tool_ergebnis(top, erfasst_von, ergebnis: dict,
     enthaltung = Decimal(str(ergebnis.get('enthaltung') or 0))
     entscheidung = ergebnis['ergebnis']
     bemerkung = ergebnis.get('bemerkung')
+    # API-Vertrag v1.5: 2. Achse (MEA) bei doppelt qualifizierter Mehrheit.
+    # Bei diesem Modus sind ja/nein die 1. Achse (Köpfe), ja_2/nein_2 die MEA.
+    ist_doppelt = top.abstimmungsmodus == 'doppelt_qualifiziert'
+    ja_2 = ergebnis.get('ja_2')
+    nein_2 = ergebnis.get('nein_2')
+    hat_zweite_achse = ja_2 is not None or nein_2 is not None
 
     war_erfasst = top.abstimmungsergebnis != 'offen'
     alt = (
@@ -279,6 +412,10 @@ def _uebernehme_tool_ergebnis(top, erfasst_von, ergebnis: dict,
     top.abstimmungsergebnis = entscheidung
     felder = ['abstimmung_ja', 'abstimmung_nein', 'abstimmung_enthaltung',
               'abstimmungsergebnis']
+    if hat_zweite_achse:
+        top.abstimmung_ja_2 = Decimal(str(ja_2 or 0))
+        top.abstimmung_nein_2 = Decimal(str(nein_2 or 0))
+        felder += ['abstimmung_ja_2', 'abstimmung_nein_2']
     if bemerkung:
         top.ergebnis_bemerkung = bemerkung
         felder.append('ergebnis_bemerkung')
@@ -287,31 +424,42 @@ def _uebernehme_tool_ergebnis(top, erfasst_von, ergebnis: dict,
     # Weiche Konsistenzprüfung: die Summe der namentlichen Stimmen (immocore
     # rechnet mit Decimal-Snapshots, das Tool mit Fließkomma) sollte dem
     # gemeldeten Ergebnis entsprechen. Kleine Rundungsdifferenzen sind
-    # unkritisch; nur echte Abweichungen werden vermerkt.
+    # unkritisch; nur echte Abweichungen werden vermerkt. Bei doppelt
+    # qualifizierter Mehrheit entfällt sie: dort ist die gemeldete 1. Achse
+    # nach Köpfen gewichtet, die lokalen Summen aber nach top.stimmgrundlage —
+    # ein Vergleich wäre nicht aussagekräftig.
     abweichung = ''
-    toleranz = Decimal('0.01')
-    erwartet = (
-        einzelstimmen_summen['ja'], einzelstimmen_summen['nein'],
-        einzelstimmen_summen['enthaltung'],
-    )
-    if any(abs(a - b) > toleranz for a, b in
-           zip(erwartet, (ja, nein, enthaltung))):
-        abweichung = (
-            f' [Hinweis: Einzelstimmen-Summe '
-            f'{erwartet[0]}/{erwartet[1]}/{erwartet[2]} weicht vom gemeldeten '
-            f'Ergebnis ab]'
+    if not ist_doppelt:
+        toleranz = Decimal('0.01')
+        erwartet = (
+            einzelstimmen_summen['ja'], einzelstimmen_summen['nein'],
+            einzelstimmen_summen['enthaltung'],
         )
+        if any(abs(a - b) > toleranz for a, b in
+               zip(erwartet, (ja, nein, enthaltung))):
+            abweichung = (
+                f' [Hinweis: Einzelstimmen-Summe '
+                f'{erwartet[0]}/{erwartet[1]}/{erwartet[2]} weicht vom gemeldeten '
+                f'Ergebnis ab]'
+            )
+
+    if ist_doppelt:
+        details = (
+            f'Köpfe Ja {ja} / Nein {nein}, '
+            f'MEA Ja {top.abstimmung_ja_2} / Nein {top.abstimmung_nein_2}'
+        )
+    else:
+        details = f'Ja {ja}, Nein {nein}, Enthaltung {enthaltung}'
 
     ev_service.vermerke_ereignis(
         top.ev, 'abstimmung_korrigiert' if war_erfasst else 'abstimmung_erfasst',
         erfasst_von, top=top,
         text=(
             f'TOP {top.nummer_anzeige} ({top.get_abstimmungsmodus_display()}): '
-            f'Ja {ja}, Nein {nein}, Enthaltung {enthaltung} → '
-            f'{entscheidung.upper()} (vom Abstimmtool übernommen){abweichung}'
+            f'{details} → {entscheidung.upper()} (vom Abstimmtool übernommen){abweichung}'
         ),
         alter_wert=alt if war_erfasst else '',
-        neuer_wert=f'{ja}/{nein}/{enthaltung} → {entscheidung}',
+        neuer_wert=f'{details} → {entscheidung}',
     )
     return top
 
@@ -386,6 +534,11 @@ def erfasse_einzelstimmen(top, erfasst_von, voten: dict, ergebnis: dict | None =
 
     if ergebnis is not None:
         return _uebernehme_tool_ergebnis(top, erfasst_von, ergebnis, summen)
+
+    # Doppelt qualifizierte Mehrheit: zwei Achsen (Köpfe + MEA) aus denselben
+    # namentlichen Stimmen — nicht über die einachsige Summenbewertung.
+    if top.abstimmungsmodus == 'doppelt_qualifiziert':
+        return _erfasse_doppelt_qualifiziert(top, erfasst_von)
 
     return erfasse_abstimmung(
         top, erfasst_von,

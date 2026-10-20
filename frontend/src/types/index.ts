@@ -1529,9 +1529,24 @@ export type EVVersandkanal = 'portal' | 'email' | 'epost'
 export type EVAbstimmungsmodus =
   | 'einfache_mehrheit'
   | 'qualifizierte_mehrheit'
+  | 'doppelt_qualifiziert'
   | 'einstimmigkeit'
   | 'allstimmigkeit'
   | 'kein_beschluss'
+
+/** Eine Achse der doppelt qualifizierten Mehrheit (§ 21 Abs. 2 Nr. 1 WEG). */
+export interface EVDoppeltAchse {
+  stimmgrundlage_id: string
+  bezeichnung: string
+  schwelle: string | null
+  /** 'groesser' = strikt > (Köpfe), 'groesser_gleich' = >= (MEA). */
+  vergleich: 'groesser' | 'groesser_gleich'
+}
+
+export interface EVDoppeltAchsen {
+  koepfe: EVDoppeltAchse | null
+  mea: EVDoppeltAchse | null
+}
 
 export type EVAbstimmungsergebnis =
   | 'offen' | 'angenommen' | 'abgelehnt' | 'vertagt' | 'entfallen'
@@ -1581,10 +1596,17 @@ export interface Tagesordnungspunkt {
   abstimmungsmodus: EVAbstimmungsmodus
   abstimmungsmodus_display: string
   mehrheit_schwelle: string | null
+  /** Nur bei abstimmungsmodus='doppelt_qualifiziert': Schwelle der 2. Achse (MEA). */
+  mehrheit_schwelle_2: string | null
+  /** Nur bei doppelt_qualifiziert: die aufgelösten Achsen (Köpfe + MEA); sonst null. */
+  doppelt_achsen: EVDoppeltAchsen | null
   stimmgrundlage: EVStimmgrundlageRef | null
   abstimmung_ja: string
   abstimmung_nein: string
   abstimmung_enthaltung: string
+  /** 2. Achse (MEA) bei doppelt_qualifiziert; sonst 0. */
+  abstimmung_ja_2: string
+  abstimmung_nein_2: string
   abstimmungsergebnis: EVAbstimmungsergebnis
   abstimmungsergebnis_display: string
   ergebnis_bemerkung: string
@@ -1603,6 +1625,8 @@ export interface TagesordnungspunktCreatePayload {
   beschlussvorlage?: string
   abstimmungsmodus?: EVAbstimmungsmodus
   mehrheit_schwelle?: string | null
+  /** Nur bei abstimmungsmodus='doppelt_qualifiziert': Schwelle der 2. Achse (MEA). */
+  mehrheit_schwelle_2?: string | null
   /** Optional — unbelegt wird serverseitig automatisch vorbelegt (Spec v1.1
    *  Kap. 3). Feldname entspricht TagesordnungspunktCreateSerializer; die
    *  PATCH-Route erwartet stattdessen "stimmgrundlage_id" (siehe

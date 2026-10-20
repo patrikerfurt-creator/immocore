@@ -27,8 +27,8 @@ _FELDER_NACH_VERSAND_ERLAUBT = {'erlaeuterung', 'ergebnis_bemerkung'}
 # ändern (analog zur Sperre der übrigen inhaltlichen Felder).
 _PFLEGBARE_FELDER = {
     'titel', 'erlaeuterung', 'beschlussvorlage', 'abstimmungsmodus',
-    'mehrheit_schwelle', 'triggert_vorgang', 'triggert_wirtschaftsplan',
-    'ergebnis_bemerkung', 'stimmgrundlage',
+    'mehrheit_schwelle', 'mehrheit_schwelle_2', 'triggert_vorgang',
+    'triggert_wirtschaftsplan', 'ergebnis_bemerkung', 'stimmgrundlage',
 }
 
 
@@ -72,10 +72,11 @@ def _mache_zum_gliederungspunkt(eltern, erstellt_von) -> None:
         return
     eltern.abstimmungsmodus = 'kein_beschluss'
     eltern.mehrheit_schwelle = None
+    eltern.mehrheit_schwelle_2 = None
     eltern.triggert_vorgang = False
     eltern.triggert_wirtschaftsplan = False
     eltern.save(update_fields=[
-        'abstimmungsmodus', 'mehrheit_schwelle',
+        'abstimmungsmodus', 'mehrheit_schwelle', 'mehrheit_schwelle_2',
         'triggert_vorgang', 'triggert_wirtschaftsplan',
     ])
     ev_service.vermerke_ereignis(
@@ -88,6 +89,7 @@ def _mache_zum_gliederungspunkt(eltern, erstellt_von) -> None:
 @transaction.atomic
 def top_anlegen(*, ev, titel, erstellt_von, erlaeuterung='', beschlussvorlage='',
                 abstimmungsmodus='einfache_mehrheit', mehrheit_schwelle=None,
+                mehrheit_schwelle_2=None,
                 nummer=None, eltern=None, triggert_vorgang=False,
                 triggert_wirtschaftsplan=False,
                 stimmgrundlage=None) -> Tagesordnungspunkt:
@@ -151,6 +153,7 @@ def top_anlegen(*, ev, titel, erstellt_von, erlaeuterung='', beschlussvorlage=''
         erlaeuterung=erlaeuterung,
         beschlussvorlage=beschlussvorlage, abstimmungsmodus=abstimmungsmodus,
         mehrheit_schwelle=mehrheit_schwelle,
+        mehrheit_schwelle_2=mehrheit_schwelle_2,
         triggert_vorgang=triggert_vorgang,
         triggert_wirtschaftsplan=triggert_wirtschaftsplan,
         stimmgrundlage=stimmgrundlage,
