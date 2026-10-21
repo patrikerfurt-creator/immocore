@@ -1908,6 +1908,8 @@ export interface EVBeschluss {
   ort: string
   ueberschrift: string
   wortlaut: string
+  /** Freitext-Anmerkung der Verwaltung (aus dem Abstimmtool); nicht Teil des Wortlauts. */
+  anmerkung: string
   ergebnis: 'angenommen' | 'abgelehnt'
   ergebnis_display: string
   dokument: string | null

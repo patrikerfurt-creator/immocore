@@ -367,6 +367,15 @@ export function BeschlussSammlung() {
                     {b.wortlaut}
                   </p>
 
+                  {b.anmerkung && (
+                    <div className="pl-3 text-sm">
+                      <span className="text-xs font-medium text-gray-500">
+                        Anmerkung der Verwaltung
+                      </span>
+                      <p className="whitespace-pre-line text-gray-700">{b.anmerkung}</p>
+                    </div>
+                  )}
+
                   {(b.ev || b.vorgang_nummer) && (
                     <div className="text-xs text-gray-500">
                       {b.ev && (

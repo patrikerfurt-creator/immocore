@@ -1052,6 +1052,16 @@ class Beschluss(models.Model):
     ergebnis_nein       = models.DecimalField(max_digits=12, decimal_places=4, default=0)
     ergebnis_enthaltung = models.DecimalField(max_digits=12, decimal_places=4, default=0)
 
+    anmerkung = models.TextField(
+        blank=True, default='',
+        verbose_name='Anmerkung der Verwaltung',
+        help_text='Freitext-Anmerkung der Verwaltung zum Beschluss — wird aus '
+                  'der im Abstimmtool erfassten Bemerkung (top.ergebnis_bemerkung) '
+                  'übernommen. KEIN Bestandteil des unveränderlichen Wortlauts '
+                  '(§ 24 Abs. 7 WEG), sondern eine erläuternde Notiz; erscheint '
+                  'im Beschlussprotokoll und in der Sammlung.',
+    )
+
     dokument = models.ForeignKey(
         'dokumente.Dokument', on_delete=models.PROTECT, null=True, blank=True,
         related_name='beschluesse',

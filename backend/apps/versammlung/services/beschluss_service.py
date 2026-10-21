@@ -243,6 +243,9 @@ def uebernimm_in_sammlung(ev, erstellt_von) -> dict:
             ort=ev.ort,
             ueberschrift=top.titel,
             wortlaut=top.beschlussvorlage,
+            # Verwaltungs-Anmerkung (im Abstimmtool erfasst) als erläuternde
+            # Notiz übernehmen — getrennt vom unveränderlichen Wortlaut.
+            anmerkung=top.ergebnis_bemerkung,
             ergebnis=top.abstimmungsergebnis,
             ergebnis_ja=top.abstimmung_ja,
             ergebnis_nein=top.abstimmung_nein,
@@ -321,7 +324,8 @@ def _beschluss_dokument_aus_upload(datei, objekt, beschluss, erstellt_von) -> Do
 
 @transaction.atomic
 def erfasse_manuell(*, objekt, beschluss_datum, wortlaut, ergebnis, erstellt_von,
-                    nummer=None, ort='', ueberschrift='', datei=None) -> Beschluss:
+                    nummer=None, ort='', ueberschrift='', anmerkung='',
+                    datei=None) -> Beschluss:
     """Trägt einen Bestandsbeschluss von Hand in die Sammlung nach.
 
     Ausschließlich für die Nachpflege bei Objektübernahme: Beschlüsse, die unter
@@ -369,6 +373,7 @@ def erfasse_manuell(*, objekt, beschluss_datum, wortlaut, ergebnis, erstellt_von
         ort=ort or '',
         ueberschrift=ueberschrift or '',
         wortlaut=wortlaut,
+        anmerkung=anmerkung or '',
         ergebnis=ergebnis,
         erstellt_von=erstellt_von,
     )

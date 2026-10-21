@@ -121,6 +121,31 @@ class UebernahmeTest(_Basis):
         # Fortlaufende Nummern auch über abgelehnte hinweg.
         self.assertNotEqual(b_ja.nummer, b_nein.nummer)
 
+    def test_anmerkung_wird_in_sammlung_uebernommen(self):
+        # Die im Abstimmtool erfasste Bemerkung (top.ergebnis_bemerkung) wird als
+        # Beschluss.anmerkung in die Sammlung übernommen — getrennt vom Wortlaut.
+        top = self._top('Dachsanierung')
+        self._checkout()
+        durchfuehrung_service.erfasse_abstimmung(
+            top, self.user, ja=3, nein=0,
+            bemerkung='Angebot der Firma Mustermann liegt vor.',
+        )
+        beschluss_service.uebernimm_in_sammlung(self.ev, self.user)
+
+        beschluss = Beschluss.objects.get(top=top)
+        self.assertEqual(
+            beschluss.anmerkung, 'Angebot der Firma Mustermann liegt vor.',
+        )
+        # Der unveränderliche Wortlaut bleibt frei von der Anmerkung.
+        self.assertNotIn('Mustermann', beschluss.wortlaut)
+
+    def test_ohne_anmerkung_bleibt_leer(self):
+        top = self._top('Hausordnung')
+        self._checkout()
+        self._abstimmen(top)
+        beschluss_service.uebernimm_in_sammlung(self.ev, self.user)
+        self.assertEqual(Beschluss.objects.get(top=top).anmerkung, '')
+
     def test_nummern_laufen_je_objekt_fortlaufend(self):
         tops = [self._top(titel) for titel in ('TOP A', 'TOP B')]
         self._checkout()
