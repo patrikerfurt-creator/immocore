@@ -76,11 +76,17 @@ function extractErrors(err: unknown): string[] {
   if (!response) return ['Ein unbekannter Fehler ist aufgetreten.']
   if (typeof response === 'string') return [response]
   if (typeof response === 'object' && response !== null) {
-    const detail = (response as Record<string, unknown>).detail
+    const r = response as Record<string, unknown>
+    // Klartext-Fehlermeldungen des Backends bevorzugen (saubere Liste).
+    if (Array.isArray(r.errors) && r.errors.length > 0) {
+      return (r.errors as unknown[]).map(e => String(e))
+    }
+    const detail = r.detail
     if (typeof detail === 'string') return [detail]
-    // Flatten field errors
+    // Feld-Fehler flach darstellen; technische Keys (z. B. Traceback) auslassen.
     const msgs: string[] = []
-    for (const [key, val] of Object.entries(response as Record<string, unknown>)) {
+    for (const [key, val] of Object.entries(r)) {
+      if (key === 'traceback') continue
       if (Array.isArray(val)) {
         val.forEach(v => msgs.push(`${key}: ${v}`))
       } else if (typeof val === 'string') {

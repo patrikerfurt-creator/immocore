@@ -782,10 +782,13 @@ class ProzessViewSet(viewsets.ModelViewSet):
                 })
         except Exception as e:
             import traceback
-            return Response(
-                {'errors': [f'Aktivierung fehlgeschlagen: {str(e)}. Rollback.'], 'detail': traceback.format_exc()},
-                status=500,
-            )
+            from django.conf import settings
+            payload = {'errors': [f'Aktivierung fehlgeschlagen: {str(e)}. Rollback.']}
+            if settings.DEBUG:
+                # Nur im Entwicklungsmodus den Traceback mitliefern (eigener Key,
+                # damit das Frontend die Klartext-Meldung aus 'errors' zeigt).
+                payload['traceback'] = traceback.format_exc()
+            return Response(payload, status=500)
 
     def _abschliessen_eigentuemerwechsel(self, request, prozess):
         """Eigentümerwechsel-Commit via eigentuemerwechsel_service."""
