@@ -6,7 +6,9 @@ from django.db.models import Max
 from ..models import Abrechnungsart, Konto, Personenkonto
 
 
-FIXTURE_PATH = Path(__file__).resolve().parent.parent.parent / 'fixtures' / 'musterkontenrahmen_weg.csv'
+# musterkontenrahmen_weg.csv liegt unter backend/fixtures/ — vier Ebenen über
+# dieser Datei (services → konten → apps → backend).
+FIXTURE_PATH = Path(__file__).resolve().parents[3] / 'fixtures' / 'musterkontenrahmen_weg.csv'
 
 MUSTER_ABRECHNUNGSARTEN = [
     ('900', 'Hausgeld'),
