@@ -67,9 +67,19 @@ class AnlageUndListeTest(APITestCase):
         self.assertEqual(response.data['task_status']['anzahl_erledigt'], 0)
         self.assertTrue(response.data['einladungstext'])
 
-    def test_erstellt_von_ist_request_user(self):
+    def test_anlage_ohne_arbeitsname_wird_abgelehnt(self):
+        # Arbeitsname ist Pflichtfeld — ohne ihn kein Anlegen.
         response = self.client.post(
             VERSAMMLUNGEN, {'objekt': str(self.objekt.id)}, format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('arbeitsname', response.data)
+
+    def test_erstellt_von_ist_request_user(self):
+        response = self.client.post(
+            VERSAMMLUNGEN,
+            {'objekt': str(self.objekt.id), 'arbeitsname': 'EV 2026'},
+            format='json',
         )
         ev = Eigentuemerversammlung.objects.get(pk=response.data['id'])
         self.assertEqual(ev.erstellt_von, self.user)
@@ -79,6 +89,7 @@ class AnlageUndListeTest(APITestCase):
         vs = f.einheiten_schluessel(self.objekt, [einheit])
         response = self.client.post(VERSAMMLUNGEN, {
             'objekt': str(self.objekt.id),
+            'arbeitsname': 'EV 2026',
             'stimmprinzip': 'verteilerschluessel',
             'stimm_verteilerschluessel': str(vs.id),
         }, format='json')
@@ -92,6 +103,7 @@ class AnlageUndListeTest(APITestCase):
     def test_anlage_mit_prinzip_ohne_schluessel_400(self):
         response = self.client.post(VERSAMMLUNGEN, {
             'objekt': str(self.objekt.id),
+            'arbeitsname': 'EV 2026',
             'stimmprinzip': 'verteilerschluessel',
         }, format='json')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -99,7 +111,9 @@ class AnlageUndListeTest(APITestCase):
 
     def test_anlage_fuer_sev_wird_abgelehnt(self):
         response = self.client.post(
-            VERSAMMLUNGEN, {'objekt': str(f.objekt(typ='SEV').id)}, format='json',
+            VERSAMMLUNGEN,
+            {'objekt': str(f.objekt(typ='SEV').id), 'arbeitsname': 'EV 2026'},
+            format='json',
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('WEG-Objekte', response.data['detail'])

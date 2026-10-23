@@ -29,7 +29,9 @@ class EigentuemerversammlungModelTest(TestCase):
         self.user = f.user()
 
     def test_weg_objekt_ist_zulaessig(self):
-        ev = Eigentuemerversammlung(objekt=f.objekt(), erstellt_von=self.user)
+        ev = Eigentuemerversammlung(
+            objekt=f.objekt(), erstellt_von=self.user, arbeitsname='EV 2026',
+        )
         ev.full_clean()  # darf nicht werfen
 
     def test_sev_objekt_wird_abgelehnt(self):
@@ -40,7 +42,10 @@ class EigentuemerversammlungModelTest(TestCase):
 
     def test_kleingeschriebenes_weg_wird_akzeptiert(self):
         # Ältere Testdaten enthalten 'weg' statt 'WEG' — fachlich dasselbe.
-        ev = Eigentuemerversammlung(objekt=f.objekt(typ='weg'), erstellt_von=self.user)
+        ev = Eigentuemerversammlung(
+            objekt=f.objekt(typ='weg'), erstellt_von=self.user,
+            arbeitsname='EV 2026',
+        )
         ev.full_clean()
 
     def test_str_ohne_termin(self):

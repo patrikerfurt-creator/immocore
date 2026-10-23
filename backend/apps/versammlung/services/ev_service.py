@@ -114,6 +114,16 @@ def erstelle_ev(*, objekt, erstellt_von, arbeitsname='', art='ordentlich',
     maßgebliche GoBD-Textfeld (Snapshot). Beide sind optional — der Ort lässt
     sich auch später in Task 1 (Terminierung) setzen.
     """
+    # Arbeitsname ist Pflichtfeld (blank=False). Die Pflicht zur Eingabe liegt
+    # am API-Serializer; hier wird nur die Daten-Invariante "jede EV hat einen
+    # Arbeitsnamen" gesichert, damit programmatisch (Seed, Import, Tests)
+    # angelegte EVs nicht an full_clean scheitern. Der Ersatzname folgt dem
+    # Muster der Backfill-Migration und ist von Hand überschreibbar.
+    arbeitsname = (arbeitsname or '').strip()
+    if not arbeitsname:
+        datum = timezone.localdate()
+        arbeitsname = f'EV {objekt.objektnummer} {datum:%Y-%m-%d}'
+
     ev = Eigentuemerversammlung(
         objekt=objekt,
         arbeitsname=arbeitsname,
@@ -235,6 +245,60 @@ def _pruefe_task_voraussetzungen(ev, task_nr: int) -> None:
             )
 
 
+def _lege_hausakten_register_an(ev, erstellt_von) -> None:
+    """Legt beim Erledigen von Task 1 die Hausakten-Untergliederung an.
+
+    Delegiert an ``akten_service.sync_ev_unterregister`` (Idempotenz über
+    ``ev.hausakte_register``). Nur beim ERSTEN Anlegen — also solange die EV
+    noch kein Register trägt — entsteht ein Audit-Eintrag; der reine
+    Namens-Nachzug bei Reset+erneutem Erledigen ist keine eigene fachliche
+    Handlung. Lokaler Import: hält die App-Abhängigkeit versammlung -> dokumente
+    eindeutig gerichtet.
+    """
+    from apps.dokumente.services import akten_service
+
+    war_neu = ev.hausakte_register_id is None
+    register = akten_service.sync_ev_unterregister(ev)
+
+    if war_neu:
+        ev.hausakte_register = register
+        ev.save(update_fields=['hausakte_register'])
+        vermerke_ereignis(
+            ev, 'register_erzeugt', erstellt_von,
+            text=f'Hausakte-Register "{register.code} {register.bezeichnung}" '
+                 f'angelegt.',
+        )
+
+
+def lege_einladung_in_hausakte_ab(ev, erstellt_von) -> None:
+    """Legt das Einladungs-PDF in die Hausakten-Untergliederung (16/x) der EV.
+
+    Voraussetzungen (alle drei): Task 3 (Einladung) ist erledigt, ein
+    Einladungs-PDF existiert und die EV hat bereits ihr Register (aus Task 1).
+    Weil die Tasks in beliebiger Folge laufen, wird diese Funktion an mehreren
+    Stellen aufgerufen (Erledigen von Task 3 und Task 1 sowie beim Erzeugen des
+    PDFs); sie ist idempotent — liegt das PDF schon im richtigen Register,
+    passiert nichts.
+
+    Verschoben wird nur der Register-Verweis am Dokument; Datei, Kategorie und
+    Owner (Objekt) bleiben unberührt.
+    """
+    pdf = ev.einladungs_pdf
+    register = ev.hausakte_register
+    if pdf is None or register is None or not ev.task3_einladung_erledigt:
+        return
+    if pdf.register_id == register.id:
+        return
+
+    pdf.register = register
+    pdf.save(update_fields=['register'])
+    vermerke_ereignis(
+        ev, 'einladung_abgelegt', erstellt_von,
+        text=f'Einladung "{pdf.dateiname}" in Hausakte-Register '
+             f'"{register.code} {register.bezeichnung}" abgelegt.',
+    )
+
+
 @transaction.atomic
 def markiere_task_erledigt(ev, task_nr: int, erstellt_von) -> Eigentuemerversammlung:
     """Markiert Task ``task_nr`` (1–5) als erledigt.
@@ -257,6 +321,14 @@ def markiere_task_erledigt(ev, task_nr: int, erstellt_von) -> Eigentuemerversamm
         text=f'Task {task_nr} ({label}) als erledigt markiert.',
         alter_wert='offen', neuer_wert='erledigt',
     )
+
+    if task_nr == 1:
+        _lege_hausakten_register_an(ev, erstellt_von)
+
+    # Einladung ablegen, sobald beide Teile vorliegen — egal in welcher Folge
+    # Task 1 (legt das Register an) und Task 3 (Einladung) erledigt werden.
+    if task_nr in (1, 3):
+        lege_einladung_in_hausakte_ab(ev, erstellt_von)
 
     if ev.status == 'entwurf':
         wechsle_status(ev, 'in_bearbeitung', erstellt_von,
