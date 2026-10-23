@@ -338,6 +338,9 @@ def erzeuge_einladungs_pdf(ev, erstellt_von, anlagen_ids=None) -> Dokument:
         ),
         neuer_wert=dateiname,
     )
+    # Ist Task 3 bereits erledigt (und das Register aus Task 1 vorhanden),
+    # wandert auch eine neu erzeugte Fassung sofort in die Hausakte.
+    ev_service.lege_einladung_in_hausakte_ab(ev, erstellt_von)
     return dokument
 
 

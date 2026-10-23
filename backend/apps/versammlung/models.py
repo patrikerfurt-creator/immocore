@@ -93,9 +93,11 @@ class Eigentuemerversammlung(models.Model):
         related_name='eigentuemerversammlungen',
     )
     arbeitsname = models.CharField(
-        max_length=200, blank=True, default='',
+        max_length=200,
         verbose_name='Arbeitsname',
-        help_text='Interne Bezeichnung, z.B. "EV 2026 ordentlich".',
+        help_text='Interne Bezeichnung, z.B. "EV 2026 ordentlich". Pflichtfeld '
+                  '— wird beim Erledigen von Task 1 zur Bezeichnung der '
+                  'Hausakten-Untergliederung (16/A, 16/B …).',
     )
     art = models.CharField(max_length=15, choices=ART_CHOICES, default='ordentlich')
 
@@ -163,6 +165,17 @@ class Eigentuemerversammlung(models.Model):
     protokoll_pdf = models.OneToOneField(
         'dokumente.Dokument', on_delete=models.SET_NULL, null=True, blank=True,
         related_name='ev_protokoll',
+    )
+    hausakte_register = models.OneToOneField(
+        'dokumente.Aktenregister', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='eigentuemerversammlung',
+        help_text='Die beim Erledigen von Task 1 automatisch angelegte '
+                  'Untergliederung der Hausakte unter Register 16 '
+                  '("Eigentümerversammlungen"), z.B. "16/A". Trägt die EV '
+                  'hier bereits ein Register, wird bei erneutem Erledigen kein '
+                  'zweites angelegt — stattdessen folgt nur die Bezeichnung '
+                  'dem aktuellen Arbeitsnamen. SET_NULL: wird das Register im '
+                  'Admin gelöscht, verliert die EV nur den Verweis.',
     )
 
     erstellt_am = models.DateTimeField(auto_now_add=True)
@@ -906,6 +919,8 @@ class EVEreignis(models.Model):
         ('abstimmung_korrigiert', 'Abstimmung korrigiert'),
         ('beschluss_erzeugt',     'Beschluss in Sammlung aufgenommen'),
         ('vorgang_erzeugt',       'Folge-Vorgang erzeugt'),
+        ('register_erzeugt',      'Hausakte-Register erzeugt'),
+        ('einladung_abgelegt',    'Einladung in Hausakte abgelegt'),
         ('wp_aufgabe_erzeugt',    'Wirtschaftsplan-Aufgabe erzeugt'),
         ('protokoll_erzeugt',     'Protokoll-PDF erzeugt'),
         ('checkout',              'Checkout (Übergabe ans Abstimmtool)'),

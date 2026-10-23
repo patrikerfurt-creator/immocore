@@ -30,6 +30,7 @@ FALSCHEN Eigentuemers — deshalb sollte das fachliche Datum gepflegt sein.
 """
 import logging
 
+from django.core.exceptions import ValidationError
 from django.db.models import Q
 
 from apps.dokumente.models import Aktenregister, Dokument
@@ -41,6 +42,11 @@ logger = logging.getLogger(__name__)
 # Sie duerfen NICHT aus der Akte verschwinden, nur weil niemand sie
 # einsortiert hat — sonst waere die Ablage lueckenhaft, ohne dass es auffaellt.
 OHNE_REGISTER = 'Ohne Register'
+
+# Register der Hausakte, unter dem jede Eigentuemerversammlung eine eigene
+# Untergliederung bekommt ("16/A", "16/B" …). Siehe Seed-Migration
+# dokumente 0013; das Elternregister ist global (objekt=None).
+EV_REGISTER_CODE = '16'
 
 
 def hausakte(objekt) -> Q:
@@ -197,3 +203,95 @@ def nach_registern(dokumente, aktenart: str, objekt=None) -> list[dict]:
             'anzahl': len(ohne),
         })
     return gruppen
+
+
+# ---------------------------------------------------------------------------
+# Untergliederung je Eigentuemerversammlung (16/A, 16/B …)
+# ---------------------------------------------------------------------------
+
+def _suffix_zu_zahl(suffix: str) -> int:
+    """"A"->1, "Z"->26, "AA"->27 … (bijektive Basis 26, wie Tabellenspalten)."""
+    zahl = 0
+    for zeichen in suffix:
+        zahl = zahl * 26 + (ord(zeichen) - ord('A') + 1)
+    return zahl
+
+
+def _zahl_zu_suffix(zahl: int) -> str:
+    """Umkehrung von ``_suffix_zu_zahl``: 1->"A", 26->"Z", 27->"AA"."""
+    zeichen = []
+    while zahl > 0:
+        zahl, rest = divmod(zahl - 1, 26)
+        zeichen.append(chr(ord('A') + rest))
+    return ''.join(reversed(zeichen))
+
+
+def _ev_elternregister() -> Aktenregister:
+    eltern = (Aktenregister.objects
+              .filter(code=EV_REGISTER_CODE, objekt__isnull=True)
+              .first())
+    if eltern is None:
+        raise ValidationError(
+            f'Das Hausakten-Register "{EV_REGISTER_CODE}" '
+            '(Eigentümerversammlungen) fehlt — bitte die Seed-Migration '
+            'dokumente 0013 prüfen.')
+    return eltern
+
+
+def _naechster_suffix(eltern: Aktenregister, objekt) -> str:
+    """Naechster freier Buchstabe unter ``eltern`` fuer dieses Objekt.
+
+    Zaehlt vom hoechsten vorhandenen Suffix aus weiter — Luecken durch
+    geloeschte Register werden bewusst NICHT wieder aufgefuellt, damit ein
+    einmal vergebener Code (und die daran haengenden Dokumente) eindeutig
+    bleibt.
+    """
+    praefix = f'{eltern.code}/'
+    hoechste = 0
+    for register in eltern.unterregister.filter(objekt=objekt):
+        if not register.code.startswith(praefix):
+            continue
+        suffix = register.code[len(praefix):]
+        if suffix and suffix.isalpha() and suffix.isupper():
+            hoechste = max(hoechste, _suffix_zu_zahl(suffix))
+    return _zahl_zu_suffix(hoechste + 1)
+
+
+def sync_ev_unterregister(ev) -> Aktenregister:
+    """Legt die Hausakten-Untergliederung einer EV an oder zieht ihren Namen nach.
+
+    Aufgerufen beim Erledigen von Task 1 (Terminierung). Idempotent ueber
+    ``ev.hausakte_register``:
+
+    * Noch kein Register -> naechstes freies "16/x" fuer das Objekt anlegen,
+      Bezeichnung = Arbeitsname.
+    * Register vorhanden (z.B. nach Reset + erneutem Erledigen) -> KEIN neues
+      anlegen. Nur die Bezeichnung auf den aktuellen Arbeitsnamen nachziehen;
+      bereits in "16/x" abgelegte Dokumente bleiben unberuehrt und erscheinen
+      sofort unter dem neuen Namen, weil sie am Register haengen, nicht am Text.
+
+    Setzt ``ev.hausakte_register`` NICHT selbst — das uebernimmt der Aufrufer
+    (ev_service), damit Flag, Audit-Eintrag und FK in einer Transaktion
+    zusammenbleiben. Gibt das Register zurueck.
+    """
+    bezeichnung = (ev.arbeitsname or '').strip()
+
+    register = ev.hausakte_register
+    if register is not None:
+        if bezeichnung and register.bezeichnung != bezeichnung:
+            register.bezeichnung = bezeichnung
+            register.save(update_fields=['bezeichnung'])
+        return register
+
+    eltern = _ev_elternregister()
+    return Aktenregister.objects.create(
+        code=f'{eltern.code}/{_naechster_suffix(eltern, ev.objekt)}',
+        objekt=ev.objekt,
+        bezeichnung=bezeichnung,
+        aktenart=Aktenregister.AKTENART_HAUS,
+        eltern=eltern,
+        # Gleiche Sortierung wie das Elternregister: die Unterregister
+        # bleiben als Gruppe unter "16" und vor "17"; die Reihenfolge
+        # untereinander ergibt sich aus dem Code.
+        sortierung=eltern.sortierung,
+    )

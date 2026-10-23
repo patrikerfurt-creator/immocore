@@ -341,7 +341,7 @@ class EigentuemerversammlungCreateSerializer(serializers.Serializer):
 
     objekt = serializers.PrimaryKeyRelatedField(queryset=Objekt.objects.all())
     arbeitsname = serializers.CharField(
-        max_length=200, required=False, allow_blank=True, default='',
+        max_length=200, required=True, allow_blank=False,
     )
     ort = serializers.CharField(max_length=255, required=False, allow_blank=True, default='')
     versammlungsort = serializers.PrimaryKeyRelatedField(
@@ -383,7 +383,7 @@ class EigentuemerversammlungUpdateSerializer(serializers.Serializer):
     terminvorschlaege = serializers.ListField(required=False)
 
     arbeitsname = serializers.CharField(
-        max_length=200, required=False, allow_blank=True,
+        max_length=200, required=False, allow_blank=False,
     )
     art = serializers.ChoiceField(
         choices=Eigentuemerversammlung.ART_CHOICES, required=False,
