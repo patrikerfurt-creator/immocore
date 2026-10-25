@@ -5,7 +5,8 @@ import { rechnungenApi } from '../../api/rechnungen'
 import { objekteApi } from '../../api/objekte'
 import { buchhaltungApi } from '../../api/buchhaltung'
 import { wkzApi } from '../../api/wkz'
-import type { AmpelErgebnis, Einheit, Kreditor, Konto, ObjektList, Rechnung } from '../../types'
+import { vorgaengeApi } from '../../api/vorgaenge'
+import type { AmpelErgebnis, Einheit, Kreditor, Konto, ObjektList, Rechnung, VorgangTyp } from '../../types'
 import { Ampelpunkt } from './Ampel'
 
 interface FormState {
@@ -79,6 +80,15 @@ export default function RechnungErfassen() {
     { aufwandskonto: '', betrag: '' }, { aufwandskonto: '', betrag: '' },
   ])
 
+  // Ablehnen & Vorgang erstellen
+  const [vorgangTypen, setVorgangTypen] = useState<VorgangTyp[]>([])
+  const [zeigeVorgang, setZeigeVorgang] = useState(false)
+  const [vorgangBusy, setVorgangBusy] = useState(false)
+  const [vorgangFehler, setVorgangFehler] = useState<string | null>(null)
+  const [vForm, setVForm] = useState({
+    typ: '', betreff: '', beschreibung: '', objekt_id: '', begruendung: '',
+  })
+
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) =>
     setForm(f => ({ ...f, [k]: v }))
 
@@ -86,6 +96,7 @@ export default function RechnungErfassen() {
   useEffect(() => {
     rechnungenApi.kreditoren().then(setKreditoren).catch(() => {})
     objekteApi.list().then(setObjekte).catch(() => {})
+    vorgaengeApi.typenListe().then(setVorgangTypen).catch(() => {})
   }, [])
 
   // Bestehende Rechnung laden
@@ -259,6 +270,62 @@ export default function RechnungErfassen() {
       setFehler(typeof data === 'string' ? data
         : 'Rechnung konnte vor dem Anlegen der WKZ nicht gespeichert werden — bitte Pflichtfelder prüfen.')
     } finally { setBusy(false) }
+  }
+
+  // Rechnung ablehnen (ohne Vorgang) — Begründung per Prompt, dann zurück in die Inbox.
+  const ablehnen = async () => {
+    if (!id) return
+    const grund = window.prompt('Begründung der Ablehnung:')
+    if (grund == null) return
+    setBusy(true); setFehler(null)
+    try {
+      await rechnungenApi.ablehnen(id, grund)
+      navigate('/rechnungen/inbox')
+    } catch (e) {
+      const data = (e as { response?: { data?: { error?: unknown } } }).response?.data?.error
+      setFehler(typeof data === 'string' ? data : 'Ablehnen fehlgeschlagen.')
+    } finally { setBusy(false) }
+  }
+
+  // Dialog „Ablehnen & Vorgang erstellen" öffnen — mit Werten aus der Rechnung vorbelegt.
+  const vorgangDialogOeffnen = () => {
+    const kreditorName = rechnung?.kreditor_name || rechnung?.lieferant_name || ''
+    const nr = form.rechnungsnummer || rechnung?.rechnungsnummer || ''
+    setVForm({
+      typ: '',
+      betreff: ['Rechnungsklärung', kreditorName, nr].filter(Boolean).join(' – '),
+      beschreibung: `Abgelehnte Rechnung${nr ? ` ${nr}` : ''}${kreditorName ? ` von ${kreditorName}` : ''}`
+        + `${form.betrag_brutto ? ` über ${form.betrag_brutto} €` : ''}.`,
+      objekt_id: form.objekt_id || '',
+      begruendung: '',
+    })
+    setVorgangFehler(null)
+    setZeigeVorgang(true)
+  }
+
+  // Ablehnen + Vorgang anlegen (atomar im Backend), danach in den neuen Vorgang springen.
+  const ablehnenUndVorgangAbsenden = async () => {
+    if (!id) return
+    if (!vForm.typ) { setVorgangFehler('Bitte einen Vorgangstyp wählen.'); return }
+    if (!vForm.betreff.trim()) { setVorgangFehler('Bitte einen Betreff angeben.'); return }
+    if (!vForm.objekt_id) { setVorgangFehler('Bitte ein Objekt wählen.'); return }
+    setVorgangBusy(true); setVorgangFehler(null)
+    try {
+      const res = await rechnungenApi.ablehnenUndVorgang(id, {
+        typ: vForm.typ,
+        betreff: vForm.betreff.trim(),
+        beschreibung: vForm.beschreibung.trim() || undefined,
+        objekt_id: vForm.objekt_id,
+        // Kostenverursacher nur mitgeben, wenn er zum gewählten Objekt passt.
+        einheit_id: (rechnung?.kostenverursacher && vForm.objekt_id === form.objekt_id)
+          ? rechnung.kostenverursacher : undefined,
+        begruendung: vForm.begruendung.trim() || undefined,
+      })
+      navigate(`/vorgaenge/${res.vorgang_id}`)
+    } catch (e) {
+      const data = (e as { response?: { data?: { error?: unknown } } }).response?.data?.error
+      setVorgangFehler(typeof data === 'string' ? data : 'Vorgang konnte nicht angelegt werden.')
+    } finally { setVorgangBusy(false) }
   }
 
   const speichern = async (modus: 'entwurf' | 'zur_freigabe') => {
@@ -512,6 +579,22 @@ export default function RechnungErfassen() {
                 className="px-4 py-2 text-sm rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">
           Geprüft → zur Freigabe
         </button>
+
+        {/* Ablehnen — nur bei bestehender Rechnung (sie muss erfasst sein) */}
+        {id && (
+          <div className="ml-auto flex items-center gap-3">
+            <button onClick={ablehnen} disabled={busy}
+                    title="Rechnung ablehnen (ohne Vorgang)"
+                    className="px-3 py-2 text-sm rounded border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-50">
+              Ablehnen
+            </button>
+            <button onClick={vorgangDialogOeffnen} disabled={busy}
+                    title="Rechnung ablehnen und daraus einen Vorgang anlegen (Beleg wird verknüpft)"
+                    className="px-4 py-2 text-sm rounded bg-red-600 text-white hover:bg-red-700 disabled:opacity-50">
+              Ablehnen &amp; Vorgang erstellen
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Wiederkehrende Zahlung (WKZ) aus diesem Beleg — nur bei bestehender Rechnung */}
@@ -538,6 +621,77 @@ export default function RechnungErfassen() {
             „Geprüft → zur Freigabe" abschließt — erst dann verlässt sie den normalen Zahlweg.
             Freigegeben wird dann die WKZ-Vorlage unter „Rechnungsfreigabe".
           </p>
+        </div>
+      )}
+      {/* Dialog: Ablehnen & Vorgang erstellen */}
+      {zeigeVorgang && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+             onClick={() => !vorgangBusy && setZeigeVorgang(false)}>
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg p-5" onClick={e => e.stopPropagation()}>
+            <h2 className="text-lg font-semibold text-gray-800 mb-1">Ablehnen &amp; Vorgang erstellen</h2>
+            <p className="text-xs text-gray-500 mb-4">
+              Die Rechnung wird abgelehnt und ein neuer Vorgang angelegt. Der Rechnungsbeleg (PDF)
+              wird dem Vorgang verknüpft.
+            </p>
+
+            {vorgangFehler && <div className="mb-3 text-sm text-red-600">{vorgangFehler}</div>}
+
+            <div className="flex flex-col gap-3">
+              <label className="block">
+                <span className="text-xs text-gray-500 mb-1 block">Vorgangstyp *</span>
+                <select className={inp} value={vForm.typ}
+                        onChange={e => {
+                          const typId = e.target.value
+                          const typ = vorgangTypen.find(t => t.id === typId)
+                          setVForm(f => ({
+                            ...f, typ: typId,
+                            betreff: f.betreff || (typ ? typ.bezeichnung : ''),
+                          }))
+                        }}>
+                  <option value="">— wählen —</option>
+                  {vorgangTypen.map(t => <option key={t.id} value={t.id}>{t.bezeichnung}</option>)}
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="text-xs text-gray-500 mb-1 block">Objekt *</span>
+                <select className={inp} value={vForm.objekt_id}
+                        onChange={e => setVForm(f => ({ ...f, objekt_id: e.target.value }))}>
+                  <option value="">— wählen —</option>
+                  {objekte.map(o => <option key={o.id} value={o.id}>{o.bezeichnung}</option>)}
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="text-xs text-gray-500 mb-1 block">Betreff *</span>
+                <input className={inp} value={vForm.betreff}
+                       onChange={e => setVForm(f => ({ ...f, betreff: e.target.value }))} />
+              </label>
+
+              <label className="block">
+                <span className="text-xs text-gray-500 mb-1 block">Beschreibung</span>
+                <textarea className={inp} rows={2} value={vForm.beschreibung}
+                          onChange={e => setVForm(f => ({ ...f, beschreibung: e.target.value }))} />
+              </label>
+
+              <label className="block">
+                <span className="text-xs text-gray-500 mb-1 block">Begründung der Ablehnung</span>
+                <textarea className={inp} rows={2} value={vForm.begruendung}
+                          onChange={e => setVForm(f => ({ ...f, begruendung: e.target.value }))} />
+              </label>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 mt-5">
+              <button onClick={() => setZeigeVorgang(false)} disabled={vorgangBusy}
+                      className="px-3 py-2 text-sm rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-50">
+                Abbrechen
+              </button>
+              <button onClick={ablehnenUndVorgangAbsenden} disabled={vorgangBusy}
+                      className="px-4 py-2 text-sm rounded bg-red-600 text-white hover:bg-red-700 disabled:opacity-50">
+                {vorgangBusy ? 'Wird angelegt…' : 'Ablehnen & Vorgang anlegen'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>{/* Ende Formular-Bereich */}
