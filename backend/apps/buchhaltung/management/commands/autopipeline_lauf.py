@@ -11,6 +11,7 @@ Aufruf:
     python manage.py autopipeline_lauf --monat 2025-01 --dry-run
     python manage.py autopipeline_lauf --monat 2025-01 --force
 """
+import calendar
 import traceback
 from datetime import date
 from django.core.management.base import BaseCommand
@@ -18,7 +19,7 @@ from django.contrib.auth import get_user_model
 
 
 class Command(BaseCommand):
-    help = 'Autopipeline (Sollstellungen + Lastschriften) manuell für einen Monat ausführen'
+    help = 'Autopipeline (Sollstellungen + Lastschriften + WKZ) manuell für einen Monat ausführen'
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -44,10 +45,15 @@ class Command(BaseCommand):
                  '(bestehende committete Läufe werden NICHT überschrieben — '
                  'der Service loggt sie nur als übersprungen).',
         )
+        parser.add_argument(
+            '--skip-wkz', action='store_true',
+            help='WKZ-OP-Erzeugung überspringen (nur Sollstellungen + Lastschriften).',
+        )
 
     def handle(self, *args, **options):
         from apps.objekte.models import Objekt
         from apps.buchhaltung.services.auto_pipeline_service import run_objekt
+        from apps.buchhaltung.services.wkz.op_generator_service import erzeuge_faellige_ops
 
         monat_str = options['monat']
         try:
@@ -59,6 +65,11 @@ class Command(BaseCommand):
 
         dry_run     = options['dry_run']
         objekt_nr   = options.get('objekt')
+        skip_wkz    = options['skip_wkz']
+
+        # WKZ-Stichtag = letzter Tag der Periode, damit alle in diesem Monat
+        # fälligen WKZ-OPs erzeugt werden (idempotent über Vorläufe hinweg).
+        wkz_stichtag = date(jahr, mon, calendar.monthrange(jahr, mon)[1])
 
         stichtag_str = options.get('stichtag')
         if stichtag_str:
@@ -98,6 +109,7 @@ class Command(BaseCommand):
         self.stdout.write(f'  Stichtag : {stichtag}')
         self.stdout.write(f'  Objekte  : {len(objekte)}')
         self.stdout.write(f'  User     : {user.username}')
+        self.stdout.write(f'  WKZ      : {"übersprungen" if skip_wkz else f"ja (Stichtag {wkz_stichtag})"}')
         if dry_run:
             self.stdout.write(self.style.WARNING('  --dry-run: keine Buchungen\n'))
 
@@ -117,6 +129,7 @@ class Command(BaseCommand):
             return
 
         erfolg = fehler = uebersprungen = 0
+        wkz_erzeugt = wkz_fehler = 0
 
         for objekt in objekte:
             self.stdout.write(f'  → {objekt.objektnummer} {objekt.bezeichnung} … ', ending='')
@@ -141,8 +154,29 @@ class Command(BaseCommand):
                 self.stderr.write(traceback.format_exc())
                 fehler += 1
 
+            # WKZ-OPs für dieses Objekt erzeugen (unabhängig vom Soll/LS-Ergebnis,
+            # idempotent). Eigene Fehlerbehandlung, damit WKZ Soll/LS nicht kippt.
+            if not skip_wkz:
+                try:
+                    wkz_ergebnis = erzeuge_faellige_ops(stichtag=wkz_stichtag, objekt=objekt)
+                    wkz_erzeugt += wkz_ergebnis.erzeugt
+                    wkz_fehler += len(wkz_ergebnis.fehler)
+                    if wkz_ergebnis.erzeugt or wkz_ergebnis.fehler:
+                        self.stdout.write(
+                            f'      WKZ: {wkz_ergebnis.erzeugt} OP(s) erzeugt'
+                            + (f', {len(wkz_ergebnis.fehler)} Fehler' if wkz_ergebnis.fehler else '')
+                        )
+                except Exception as exc:
+                    self.stdout.write(self.style.ERROR(f'      WKZ FEHLER: {exc}'))
+                    self.stderr.write(traceback.format_exc())
+                    wkz_fehler += 1
+
         self.stdout.write('\n' + '=' * 70)
         self.stdout.write(self.style.SUCCESS(
             f'  Fertig: {erfolg} erfolgreich, {uebersprungen} übersprungen, {fehler} Fehler'
         ))
+        if not skip_wkz:
+            self.stdout.write(self.style.SUCCESS(
+                f'  WKZ:    {wkz_erzeugt} OP(s) erzeugt, {wkz_fehler} Fehler'
+            ))
         self.stdout.write('=' * 70 + '\n')

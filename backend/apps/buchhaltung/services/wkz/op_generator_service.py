@@ -193,10 +193,13 @@ def erzeuge_einzelnen_op(vorlage, periode: Periode) -> 'WiederkehrendeBuchungOP'
 # Hauptlauf
 # ---------------------------------------------------------------------------
 
-def erzeuge_faellige_ops(stichtag: date) -> ErzeugungsErgebnis:
+def erzeuge_faellige_ops(stichtag: date, objekt=None) -> ErzeugungsErgebnis:
     """
     Iteriert über alle aktiven Vorlagen und erzeugt OPs für alle
     Fälligkeiten im Vorlauf-Fenster. Idempotent über Unique-Constraint.
+
+    objekt: Optional — nur Vorlagen dieses Objekts verarbeiten
+            (z.B. für den Autopipeline-Lauf eines einzelnen Objekts).
     """
     from apps.buchhaltung.models import WiederkehrendeBuchungVorlage
     from django.db.models import Q
@@ -208,6 +211,9 @@ def erzeuge_faellige_ops(stichtag: date) -> ErzeugungsErgebnis:
     ).filter(
         Q(gueltig_bis__isnull=True) | Q(gueltig_bis__gte=stichtag)
     ).select_related('objekt', 'kreditor')
+
+    if objekt is not None:
+        aktive_vorlagen = aktive_vorlagen.filter(objekt=objekt)
 
     for vorlage in aktive_vorlagen:
         try:

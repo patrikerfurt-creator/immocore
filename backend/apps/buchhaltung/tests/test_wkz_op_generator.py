@@ -208,3 +208,34 @@ class HauptlaufTest(TestCase):
         op = KreditorOP.objects.filter(kreditor=self.kreditor).first()
         self.assertEqual(op.herkunft, 'wkz_vorlage')
         self.assertIsNone(op.buchung)  # noch keine Buchung (erst bei Bankabgang)
+
+
+class ObjektFilterTest(TestCase):
+    """erzeuge_faellige_ops(objekt=…) verarbeitet nur Vorlagen dieses Objekts."""
+
+    def setUp(self):
+        self.user, self.objekt_a, self.kreditor = _setup()
+        # Zweites Objekt mit eigener Vorlage
+        self.objekt_b = Objekt.objects.create(
+            bezeichnung='Test-WEG-B', objektnummer='G002', objekt_typ='WEG',
+            ort='Frankfurt', verwaltung_seit=date(2020, 1, 1),
+            zahlungsfreigabe_grenzen=[],
+        )
+        wj_b = Wirtschaftsjahr.objects.create(objekt=self.objekt_b, jahr=2026, beginn_monat=1)
+        Konto.objects.create(wirtschaftsjahr=wj_b, kontonummer='50100', kontoname='Wasser',
+                             kontoart='standard', direktes_buchen=False, aktiv=True)
+        _aktive_vorlage(self.objekt_a, self.kreditor, self.user,
+                        erste_faelligkeit=date(2026, 1, 1), vorlauf_tage=7)
+        _aktive_vorlage(self.objekt_b, self.kreditor, self.user,
+                        erste_faelligkeit=date(2026, 1, 1), vorlauf_tage=7)
+
+    def test_nur_gefiltertes_objekt(self):
+        ergebnis = erzeuge_faellige_ops(stichtag=date(2025, 12, 31), objekt=self.objekt_a)
+        self.assertGreater(ergebnis.erzeugt, 0)
+        self.assertTrue(KreditorOP.objects.filter(objekt=self.objekt_a).exists())
+        self.assertFalse(KreditorOP.objects.filter(objekt=self.objekt_b).exists())
+
+    def test_ohne_filter_alle_objekte(self):
+        erzeuge_faellige_ops(stichtag=date(2025, 12, 31))
+        self.assertTrue(KreditorOP.objects.filter(objekt=self.objekt_a).exists())
+        self.assertTrue(KreditorOP.objects.filter(objekt=self.objekt_b).exists())
