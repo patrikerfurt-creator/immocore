@@ -599,28 +599,130 @@ class RechnungViewSet(viewsets.ModelViewSet):
         )
         return Response(RechnungSerializer(rechnung, context={'request': request}).data)
 
-    @action(detail=True, methods=['post'], url_path='ablehnen')
-    def ablehnen(self, request, pk=None):
-        rechnung = self.get_object()
-        if rechnung.status in ('freigegeben', 'bezahlt', 'abgelehnt'):
-            return Response(
-                {'error': f'Ablehnung im Status "{rechnung.status}" nicht möglich'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+    # Status, in denen eine Rechnung nicht mehr abgelehnt werden kann
+    # (bereits freigegeben/bezahlt oder schon abgelehnt).
+    _ABLEHNUNG_GESPERRT = ('freigegeben', 'bezahlt', 'abgelehnt')
+
+    def _rechnung_ablehnen(self, rechnung, user, begruendung):
+        """Gemeinsame Ablehn-Logik: Freigabe-Entscheidung, Status, Log.
+
+        Wird von ``ablehnen`` und ``ablehnen_und_vorgang`` genutzt. Der
+        Aufrufer prüft vorab den Status (``_ABLEHNUNG_GESPERRT``).
+        """
         Freigabe.objects.create(
             rechnung=rechnung,
-            bearbeiter=request.user,
-            rolle=_bestimme_rolle(request.user),
+            bearbeiter=user,
+            rolle=_bestimme_rolle(user),
             entscheidung='abgelehnt',
-            begruendung=request.data.get('begruendung', ''),
+            begruendung=begruendung,
         )
         rechnung.status = 'abgelehnt'
         rechnung.save(update_fields=['status'])
         Verarbeitungslog.objects.create(
             rechnung=rechnung, aktion='Abgelehnt', status='abgelehnt',
-            details=request.data.get('begruendung', ''),
+            details=begruendung,
         )
+
+    @action(detail=True, methods=['post'], url_path='ablehnen')
+    def ablehnen(self, request, pk=None):
+        rechnung = self.get_object()
+        if rechnung.status in self._ABLEHNUNG_GESPERRT:
+            return Response(
+                {'error': f'Ablehnung im Status "{rechnung.status}" nicht möglich'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        self._rechnung_ablehnen(rechnung, request.user, request.data.get('begruendung', ''))
         return Response(RechnungSerializer(rechnung, context={'request': request}).data)
+
+    @action(detail=True, methods=['post'], url_path='ablehnen-und-vorgang')
+    def ablehnen_und_vorgang(self, request, pk=None):
+        """Rechnung ablehnen UND daraus einen Vorgang anlegen — atomar.
+
+        Legt die Ablehnung und den Vorgang in einer Transaktion an und
+        verknüpft die Beleg-PDF der Rechnung mit dem neuen Vorgang
+        (``Dokument.vorgang`` + Verlaufseintrag ``dokument_verknuepft``), sodass
+        sie unter dessen Dokumenten erscheint. Schlägt ein Schritt fehl, wird
+        auch die Ablehnung zurückgerollt.
+
+        Body: ``typ`` (VorgangTyp-ID, Pflicht), ``betreff`` (Pflicht),
+        ``beschreibung``, ``objekt_id``/``einheit_id``/``person_id`` (mind. eines
+        nötig — aus der Rechnung vorbelegt), ``prioritaet``, ``begruendung``.
+        """
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from django.db import transaction
+        from apps.objekte.models import Objekt, Einheit
+        from apps.personen.models import Person
+        from apps.vorgaenge.models import VorgangTyp, VorgangEreignis
+        from apps.vorgaenge.services import vorgang_service
+
+        rechnung = self.get_object()
+        if rechnung.status in self._ABLEHNUNG_GESPERRT:
+            return Response(
+                {'error': f'Ablehnung im Status "{rechnung.status}" nicht möglich'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        betreff = (request.data.get('betreff') or '').strip()
+        typ_id = request.data.get('typ')
+        if not typ_id:
+            return Response({'error': 'Vorgangstyp fehlt'}, status=status.HTTP_400_BAD_REQUEST)
+        if not betreff:
+            return Response({'error': 'Betreff fehlt'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            typ = VorgangTyp.objects.get(id=typ_id)
+        except (VorgangTyp.DoesNotExist, ValueError, DjangoValidationError):
+            return Response({'error': 'Vorgangstyp nicht gefunden'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Kontext aus der Rechnung vorbelegt, per Request überschreibbar.
+        objekt_id = request.data.get('objekt_id') or rechnung.objekt_id
+        einheit_id = request.data.get('einheit_id') or rechnung.kostenverursacher_id
+        person_id = request.data.get('person_id') or None
+        try:
+            objekt = Objekt.objects.get(id=objekt_id) if objekt_id else None
+            einheit = Einheit.objects.get(id=einheit_id) if einheit_id else None
+            person = Person.objects.get(id=person_id) if person_id else None
+        except (Objekt.DoesNotExist, Einheit.DoesNotExist, Person.DoesNotExist,
+                ValueError, DjangoValidationError):
+            return Response({'error': 'Objekt, Einheit oder Person nicht gefunden'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if not (objekt or einheit or person):
+            return Response(
+                {'error': 'Objekt, Einheit oder Person muss gesetzt sein'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            with transaction.atomic():
+                self._rechnung_ablehnen(rechnung, request.user, request.data.get('begruendung', ''))
+                vorgang = vorgang_service.erstelle_vorgang(
+                    typ=typ, betreff=betreff, erstellt_von=request.user,
+                    objekt=objekt, einheit=einheit, person=person,
+                    beschreibung=request.data.get('beschreibung') or None,
+                    prioritaet=request.data.get('prioritaet') or None,
+                )
+                beleg = rechnung.beleg_dokument
+                # Beleg-Dokumente sind kontextfrei (Migration 0007) — die
+                # vorgang-FK ist dann die einzige Kontext-FK und der
+                # Eindeutigkeits-Constraint bleibt gewahrt. Trägt der Beleg
+                # ausnahmsweise schon einen anderen Kontext, wird er nicht
+                # umgehängt (der Vorgang hält die Rechnung trotzdem als Quelle).
+                if beleg is not None and not (beleg.objekt_id or beleg.einheit_id or beleg.person_id):
+                    beleg.vorgang = vorgang
+                    beleg.full_clean()
+                    beleg.save(update_fields=['vorgang'])
+                    VorgangEreignis.objects.create(
+                        vorgang=vorgang, typ='dokument_verknuepft',
+                        text=f"Rechnungsbeleg verknüpft: {beleg.anzeigename}",
+                        erstellt_von=request.user, intern=False,
+                    )
+        except DjangoValidationError as exc:
+            return Response({'error': '; '.join(exc.messages)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            'rechnung': RechnungSerializer(rechnung, context={'request': request}).data,
+            'vorgang_id': str(vorgang.id),
+            'vorgang_nummer': vorgang.nummer,
+        }, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'], url_path='als-neu')
     def als_neu(self, request, pk=None):

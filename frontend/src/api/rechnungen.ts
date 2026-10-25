@@ -31,6 +31,14 @@ export const rechnungenApi = {
     client.post(`/rechnungen/${id}/freigeben/`, data ?? {}).then(r => r.data),
   ablehnen: (id: string, begruendung: string) =>
     client.post(`/rechnungen/${id}/ablehnen/`, { begruendung }).then(r => r.data),
+  ablehnenUndVorgang: (id: string, data: {
+    typ: string; betreff: string; beschreibung?: string;
+    objekt_id?: string; einheit_id?: string; person_id?: string;
+    prioritaet?: string; begruendung?: string
+  }) =>
+    client.post<{ vorgang_id: string; vorgang_nummer: string; rechnung: Rechnung }>(
+      `/rechnungen/${id}/ablehnen-und-vorgang/`, data,
+    ).then(r => r.data),
   alsNeu: (id: string) =>
     client.post(`/rechnungen/${id}/als-neu/`).then(r => r.data),
   buchen: (id: string, data: { objekt_id: string; konto_id: string }) =>
