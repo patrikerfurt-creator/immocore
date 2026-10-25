@@ -105,7 +105,10 @@ class KontoViewSet(viewsets.ModelViewSet):
         buchungen = Buchung.objects.filter(objekt_id=objekt_id)
         if wj_id := request.query_params.get('wirtschaftsjahr'):
             buchungen = buchungen.filter(wirtschaftsjahr_id=wj_id)
-        buchungen = buchungen.exclude(status='storniert')
+        # Stornierte Buchungen bleiben enthalten: Original (Status 'storniert')
+        # UND Storno-Gegenbuchung heben sich im Saldo auf. Würde nur das
+        # Original ausgeblendet, bliebe die Storno-Hälfte stehen und der Saldo
+        # wäre um den Stornobetrag falsch.
 
         soll_ids = set(
             buchungen.exclude(soll_konto__isnull=True)
@@ -168,10 +171,14 @@ class KontoViewSet(viewsets.ModelViewSet):
 
         konto = self.get_object()
 
+        # Stornierte Buchungen bleiben enthalten: Original (Status 'storniert')
+        # und Storno-Gegenbuchung gehören beide ins Kontoblatt und saldieren
+        # auf null. Nur das Original auszublenden würde die Storno-Hälfte stehen
+        # lassen und den Saldo um den Stornobetrag verfälschen.
         qs = Buchung.objects.filter(
             Q(soll_konto=konto) | Q(haben_konto=konto),
             objekt=konto.objekt,
-        ).exclude(status='storniert')
+        )
         if wj_id := request.query_params.get('wirtschaftsjahr'):
             qs = qs.filter(wirtschaftsjahr_id=wj_id)
         buchungen = qs.select_related(
@@ -219,6 +226,10 @@ class KontoViewSet(viewsets.ModelViewSet):
                 'soll': float(soll) if soll else None,
                 'haben': float(haben) if haben else None,
                 'saldo': float(saldo),
+                # Für die Frontend-Kennzeichnung stornierter Buchungen
+                # (Original) bzw. Storno-Gegenbuchungen im Kontoblatt.
+                'status': b.status,
+                'ist_storno': b.storno_von_id is not None,
             })
 
         return Response({
