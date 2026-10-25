@@ -274,9 +274,11 @@ HAUSGELD_IMPORT_QUELLE_ERLAUBT = os.environ.get('HAUSGELD_IMPORT_QUELLE_ERLAUBT'
 from celery.schedules import crontab  # noqa: E402
 
 CELERY_BEAT_SCHEDULE = {
+    # Intervall per Env überschreibbar (Sekunden). Default 7200 = alle 2 h.
+    # Für Testphasen z.B. CAMT_SCAN_INTERVAL_SEC=180 (alle 3 min) setzen.
     'camt-ordner-scan-alle-2h': {
         'task': 'buchhaltung.camt_ordner_scan',
-        'schedule': 7200,
+        'schedule': int(os.environ.get('CAMT_SCAN_INTERVAL_SEC', '7200')),
     },
     'rechnungen-ordner-scan-alle-5min': {
         'task': 'rechnungen.ordner_scan',
