@@ -200,3 +200,73 @@ class KontoauszugStornoTest(TestCase):
     def test_offene_sollstellung_bleibt_unmarkiert(self):
         nach_opos = {p['opos_nr']: p for p in self._auszug()['positionen']}
         self.assertFalse(nach_opos['KS-0001']['storniert'])
+
+
+class SachkontoKontoauszugStornoTest(TestCase):
+    """
+    Sachkonto-Kontoblatt: Originalbuchung (Status 'storniert') UND
+    Storno-Gegenbuchung müssen beide sichtbar bleiben und sich im Saldo
+    aufheben. Blendet man nur das Original aus, bleibt die Storno-Hälfte
+    stehen und der Saldo ist um den Stornobetrag falsch — der Live-Fehler
+    auf Konto 18000 (Storno BU-2C783FC5, +163,61 € zu hoch).
+    """
+
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+        from apps.objekte.models import Objekt, Wirtschaftsjahr
+        from apps.konten.models import Konto
+        from apps.buchhaltung.models import Buchung
+
+        self.user = get_user_model().objects.create_user(username='sk_storno', password='x')
+        self.objekt = Objekt.objects.create(
+            bezeichnung='Test-WEG-SK', objektnummer='SK001', objekt_typ='WEG',
+            ort='Teststadt', verwaltung_seit=date(2020, 1, 1),
+            zahlungsfreigabe_grenzen=[],
+        )
+        self.wj = Wirtschaftsjahr.objects.create(objekt=self.objekt, jahr=2026, beginn_monat=1)
+        self.bank = Konto.objects.create(
+            wirtschaftsjahr=self.wj, kontonummer='18000', kontoname='Bank 1',
+            kontoart='standard', direktes_buchen=True, aktiv=True,
+        )
+        self.kreditor = Konto.objects.create(
+            wirtschaftsjahr=self.wj, kontonummer='13600', kontoname='DCL-Kreditor',
+            kontoart='standard', direktes_buchen=True, aktiv=True,
+        )
+        # Original: Kreditor an Bank (Bank im Haben) — wird storniert.
+        self.original = Buchung.objects.create(
+            objekt=self.objekt, betrag=Decimal('163.61'),
+            soll_konto=self.kreditor, haben_konto=self.bank,
+            buchungsdatum=date(2026, 1, 22), buchungstext='RE.Lohn Hausmeister',
+            belegnr='EB-20260122-E9758034',
+            wirtschaftsjahr=self.wj, status='storniert', erstellt_von=self.user,
+        )
+        # Storno: Bank an Kreditor (Bank im Soll).
+        self.storno = Buchung.objects.create(
+            objekt=self.objekt, betrag=Decimal('163.61'),
+            soll_konto=self.bank, haben_konto=self.kreditor,
+            buchungsdatum=date(2026, 10, 25),
+            buchungstext='Storno: RE.Lohn Hausmeister',
+            wirtschaftsjahr=self.wj, status='festgeschrieben',
+            storno_von=self.original, erstellt_von=self.user,
+        )
+
+    def _auszug(self):
+        from apps.konten.views import KontoViewSet
+        req = APIRequestFactory().get('/')
+        req.user = self.user
+        view = KontoViewSet.as_view({'get': 'kontoauszug'})
+        return view(req, pk=str(self.bank.id)).data
+
+    def test_original_und_storno_sichtbar_und_saldo_korrekt(self):
+        daten = self._auszug()
+        nummern = {p['bu_nr'] for p in daten['positionen']}
+        storno_nr = f'BU-{str(self.storno.id)[:8].upper()}'
+        self.assertIn('EB-20260122-E9758034', nummern, 'Original fehlt im Kontoblatt')
+        self.assertIn(storno_nr, nummern, 'Storno fehlt im Kontoblatt')
+        # Original (Haben 163,61) + Storno (Soll 163,61) heben sich auf.
+        self.assertEqual(daten['saldo_gesamt'], 0.0)
+        # Das Original bleibt als storniert erkennbar.
+        orig = next(p for p in daten['positionen'] if p['bu_nr'] == 'EB-20260122-E9758034')
+        self.assertEqual(orig['status'], 'storniert')
+        storno = next(p for p in daten['positionen'] if p['bu_nr'] == storno_nr)
+        self.assertTrue(storno['ist_storno'])
