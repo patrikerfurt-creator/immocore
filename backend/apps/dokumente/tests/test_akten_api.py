@@ -99,6 +99,41 @@ class HausakteApiTest(AktenApiBasis):
         self.assertEqual(letzte['bezeichnung'], 'Ohne Register')
         self.assertIsNone(letzte['register_id'])
 
+    def _beleg(self, dateiname, register=None):
+        """Kontextloser Rechnungsbeleg (Owner ist die Rechnung)."""
+        beleg = Dokument.objects.create(
+            datei=ContentFile(b'%PDF-1.4 x', name=dateiname),
+            dateiname=dateiname, kategorie='Beleg', dokument_typ='beleg',
+            register=register, hochgeladen_von=self.user)
+        Rechnung.objects.create(objekt=self.objekt, beleg_dokument=beleg)
+        return beleg
+
+    def test_unsortierter_rechnungsbeleg_nicht_in_ohne_register(self):
+        # Belege gehoeren in die Kreditorenakte; unsortiert sollen sie die
+        # Arbeitsliste der Hausakte nicht zudecken.
+        self._beleg('beleg.pdf')
+        self._dokument('echte_mail.pdf', objekt=self.objekt)
+
+        antwort = self.client.get('/api/v1/akten/hausakte/',
+                                  {'objekt': str(self.objekt.id)})
+
+        ohne = next(r for r in antwort.data['register']
+                    if r['bezeichnung'] == 'Ohne Register')
+        namen = [d['dateiname'] for d in ohne['dokumente']]
+        self.assertIn('echte_mail.pdf', namen)
+        self.assertNotIn('beleg.pdf', namen)
+
+    def test_einsortierter_rechnungsbeleg_bleibt_im_register(self):
+        # Wer einen Beleg bewusst in ein Register legt, soll ihn dort behalten.
+        self._beleg('beleg_sortiert.pdf', register=self.wartung)
+
+        antwort = self.client.get('/api/v1/akten/hausakte/',
+                                  {'objekt': str(self.objekt.id)})
+
+        gruppe = next(r for r in antwort.data['register'] if r['code'] == '05')
+        self.assertEqual([d['dateiname'] for d in gruppe['dokumente']],
+                         ['beleg_sortiert.pdf'])
+
     def test_herkunft_zeigt_den_weg_in_die_akte(self):
         # Ohne diese Angabe wirkt die Hausakte wie ein Sammelsurium: man
         # sieht nicht, ob ein Beleg am Objekt oder an einer Wohnung hängt.

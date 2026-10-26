@@ -206,6 +206,16 @@ def _baumreihenfolge(register: list) -> list:
     return geordnet + fehlend
 
 
+def _ist_rechnungsbeleg(dokument) -> bool:
+    """True, wenn an diesem Dokument eine Rechnung haengt (Reverse-OneToOne
+    ``Rechnung.beleg_dokument``). Solche Belege haben ihren Platz in der
+    Kreditorenakte, nicht in der Register-Arbeitsliste der Hausakte."""
+    try:
+        return dokument.rechnung is not None
+    except ObjectDoesNotExist:
+        return False
+
+
 def nach_registern(dokumente, aktenart: str, objekt=None) -> list[dict]:
     """Gruppiert eine Dokumentenmenge nach Registern — die Aktenansicht.
 
@@ -218,7 +228,7 @@ def nach_registern(dokumente, aktenart: str, objekt=None) -> list[dict]:
 
     Dokumente ohne Register kommen am Ende unter ``OHNE_REGISTER``.
     """
-    dokumente = list(dokumente.select_related('register'))
+    dokumente = list(dokumente.select_related('register', 'rechnung'))
 
     register = _baumreihenfolge(list(register_einer_akte(aktenart, objekt)))
 
@@ -227,6 +237,13 @@ def nach_registern(dokumente, aktenart: str, objekt=None) -> list[dict]:
     for dokument in dokumente:
         if dokument.register_id in nach_id:
             nach_id[dokument.register_id].append(dokument)
+        elif _ist_rechnungsbeleg(dokument):
+            # Rechnungsbelege OHNE Register nicht unter "Ohne Register" zeigen:
+            # ihr Platz ist die Kreditorenakte, und in der Arbeitsliste wuerden
+            # die vielen Belege die wirklich unsortierten Schriftstuecke und
+            # Mails zudecken. Ein Beleg, den jemand bewusst in ein Register
+            # gelegt hat, bleibt sichtbar — der erste Zweig oben faengt ihn.
+            continue
         else:
             # Auch Dokumente in einem Register EINER ANDEREN Aktenart landen
             # hier — sie gehen sonst in dieser Sicht verloren.
