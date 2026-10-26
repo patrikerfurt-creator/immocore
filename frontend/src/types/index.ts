@@ -765,6 +765,9 @@ export interface Kreditor {
   gewerke_bezeichnungen: string[]
   ist_handwerker: boolean
   kontakt_person: string
+  /** Register, in das Belege dieses Kreditors automatisch vorgeschlagen werden. */
+  standard_register: string | null
+  standard_register_bezeichnung: string | null
 }
 
 export interface DublettKandidat {

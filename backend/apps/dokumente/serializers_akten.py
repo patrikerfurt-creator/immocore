@@ -83,6 +83,17 @@ class RegisterGruppeSerializer(serializers.Serializer):
         return register.hinweis if register else ''
 
 
+class ObjektGruppeSerializer(serializers.Serializer):
+    """Eine Objektgruppe der Kreditorenakte — die Belege des Kreditors zu einer
+    Liegenschaft. Anders als die Registergruppen gibt es hier keine leeren
+    Gruppen; es erscheinen nur Objekte, zu denen der Kreditor Belege hat."""
+    objekt_id = serializers.CharField(allow_null=True)
+    objektnummer = serializers.CharField()
+    bezeichnung = serializers.CharField()
+    anzahl = serializers.IntegerField()
+    dokumente = AktenDokumentSerializer(many=True)
+
+
 class AktenregisterSerializer(serializers.ModelSerializer):
     """Für das Anlegen objektspezifischer Untergliederung aus der Akte heraus."""
     eltern_bezeichnung = serializers.SerializerMethodField()

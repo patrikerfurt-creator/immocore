@@ -46,6 +46,9 @@ import { SchreibenPruefungPage } from './pages/korrespondenz/schreiben/Schreiben
 import { DruckstapelPage } from './pages/korrespondenz/schreiben/DruckstapelPage'
 import { SerienbriefAssistentPage } from './pages/korrespondenz/serienbrief/SerienbriefAssistentPage'
 import Hausakte from './pages/dokumente/Hausakte'
+import Wohnungsakte from './pages/dokumente/Wohnungsakte'
+import Eigentuemerakte from './pages/dokumente/Eigentuemerakte'
+import Kreditorenakte from './pages/dokumente/Kreditorenakte'
 import { AbrechnungsartenPage } from './pages/stammdaten/AbrechnungsartenPage'
 import { VerteilerschluesselPage } from './pages/stammdaten/VerteilerschluesselPage'
 import { KontenplanPage } from './pages/stammdaten/KontenplanPage'
@@ -149,6 +152,9 @@ export default function App() {
             <Route path="prozesse" element={<ProzessWizard />} />
             <Route path="dokumente" element={<DokumenteListe />} />
             <Route path="dokumente/hausakte" element={<Hausakte />} />
+            <Route path="dokumente/wohnungsakte" element={<Wohnungsakte />} />
+            <Route path="dokumente/eigentuemerakte" element={<Eigentuemerakte />} />
+            <Route path="dokumente/kreditorenakte" element={<Kreditorenakte />} />
             <Route path="vorgaenge" element={<VorgaengeListe />} />
             <Route path="vorgaenge/posteingang" element={<MailPosteingang />} />
             <Route path="vorgaenge/:id" element={<VorgangDetail />} />

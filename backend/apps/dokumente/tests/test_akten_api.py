@@ -22,6 +22,7 @@ from rest_framework.test import APIClient
 from apps.dokumente.models import Aktenregister, Dokument
 from apps.objekte.models import Einheit, Objekt
 from apps.personen.models import EigentumsVerhaeltnis, Person
+from apps.rechnungen.models import Kreditor, Rechnung
 
 User = get_user_model()
 
@@ -303,6 +304,75 @@ class RegistervorschlagApiTest(AktenApiBasis):
             f'/api/v1/dokumente/{dokument.id}/registervorschlag/',
             {'objekt': str(self.objekt.id)})
 
+        self.assertEqual(antwort.status_code, 401)
+
+
+class KreditorakteApiTest(AktenApiBasis):
+    """Die Kreditorenakte: Belege eines Kreditors, nach Objekt gruppiert.
+
+    Belege sind kontextlose Rechnungsbelege (Owner ist die Rechnung); sie
+    werden deshalb per ``Dokument.objects.create`` angelegt, nicht ueber
+    ``full_clean`` — genau wie in der realen Kopplung.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.kreditor = Kreditor.objects.create(name='Muster Handwerk GmbH')
+
+    def _beleg(self, dateiname, kreditor, objekt):
+        dok = Dokument.objects.create(
+            datei=ContentFile(b'%PDF-1.4 x', name=dateiname),
+            dateiname=dateiname, kategorie='Beleg', dokument_typ='beleg',
+            hochgeladen_von=self.user)
+        Rechnung.objects.create(objekt=objekt, kreditor=kreditor, beleg_dokument=dok)
+        return dok
+
+    def test_gruppiert_belege_nach_objekt(self):
+        self._beleg('a1.pdf', self.kreditor, self.objekt)
+        self._beleg('a2.pdf', self.kreditor, self.objekt)
+        self._beleg('b1.pdf', self.kreditor, self.fremdes)
+
+        antwort = self.client.get('/api/v1/akten/kreditorenakte/',
+                                  {'kreditor': str(self.kreditor.id)})
+
+        self.assertEqual(antwort.status_code, 200)
+        self.assertEqual(antwort.data['anzahl_dokumente'], 3)
+        gruppen = antwort.data['objekte']
+        # Nach Objektnummer sortiert: API01 vor API02.
+        self.assertEqual([g['objektnummer'] for g in gruppen], ['API01', 'API02'])
+        self.assertEqual([g['anzahl'] for g in gruppen], [2, 1])
+
+    def test_fremder_kreditor_nicht_enthalten(self):
+        anderer = Kreditor.objects.create(name='Andere Firma')
+        self._beleg('meins.pdf', self.kreditor, self.objekt)
+        self._beleg('fremd.pdf', anderer, self.objekt)
+
+        antwort = self.client.get('/api/v1/akten/kreditorenakte/',
+                                  {'kreditor': str(self.kreditor.id)})
+
+        self.assertEqual(antwort.data['anzahl_dokumente'], 1)
+        namen = [d['dateiname']
+                 for g in antwort.data['objekte'] for d in g['dokumente']]
+        self.assertEqual(namen, ['meins.pdf'])
+
+    def test_beleg_ohne_objekt_landet_in_ohne_objekt(self):
+        self._beleg('kein_objekt.pdf', self.kreditor, None)
+
+        antwort = self.client.get('/api/v1/akten/kreditorenakte/',
+                                  {'kreditor': str(self.kreditor.id)})
+
+        letzte = antwort.data['objekte'][-1]
+        self.assertEqual(letzte['bezeichnung'], 'Ohne Objekt')
+        self.assertIsNone(letzte['objekt_id'])
+
+    def test_ohne_kreditor_parameter_kommt_400(self):
+        self.assertEqual(
+            self.client.get('/api/v1/akten/kreditorenakte/').status_code, 400)
+
+    def test_ohne_anmeldung_kein_zugriff(self):
+        self.client.force_authenticate(None)
+        antwort = self.client.get('/api/v1/akten/kreditorenakte/',
+                                  {'kreditor': str(self.kreditor.id)})
         self.assertEqual(antwort.status_code, 401)
 
 

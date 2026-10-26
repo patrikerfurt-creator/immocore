@@ -19,6 +19,7 @@ from django.test import TestCase, override_settings
 from apps.dokumente.models import Aktenregister, Dokument
 from apps.dokumente.services import akten_service, register_vorschlag_service
 from apps.objekte.models import Objekt
+from apps.rechnungen.models import Kreditor, Rechnung
 
 User = get_user_model()
 
@@ -87,6 +88,30 @@ class RegisterVorschlagTest(TestCase):
             vorschlag = register_vorschlag_service.schlage_register_vor(
                 dokument, self.register)
         self.assertEqual(vorschlag['register'].code, '19')
+        mock_api.assert_not_called()
+
+    # -- Stufe 0: Kreditor-Standardregister --------------------------------
+
+    def test_kreditor_standardregister_schlaegt_ohne_ki_vor(self):
+        # Hat der Kreditor ein Standardregister, endet die Suche sofort —
+        # deterministisch, Konfidenz 1.0, ohne KI-Aufruf.
+        register04 = Aktenregister.objects.get(code='04', objekt__isnull=True)
+        kreditor = Kreditor.objects.create(
+            name='Techem Energy Services GmbH', standard_register=register04)
+        beleg = Dokument.objects.create(
+            datei=ContentFile(b'%PDF-1.4 x', name='techem.pdf'),
+            dateiname='techem.pdf', kategorie='Beleg', dokument_typ='beleg',
+            hochgeladen_von=self.user)
+        Rechnung.objects.create(
+            kreditor=kreditor, objekt=self.objekt, beleg_dokument=beleg)
+
+        with patch('anthropic.Anthropic') as mock_api:
+            vorschlag = register_vorschlag_service.schlage_register_vor(
+                beleg, self.register)
+
+        self.assertEqual(vorschlag['quelle'], 'kreditor')
+        self.assertEqual(vorschlag['register'].code, '04')
+        self.assertEqual(vorschlag['konfidenz'], 1.0)
         mock_api.assert_not_called()
 
     # -- Stufe 2: KI -------------------------------------------------------

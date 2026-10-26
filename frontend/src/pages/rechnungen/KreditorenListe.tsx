@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { rechnungenApi } from '../../api/rechnungen'
 import { handwerkerApi } from '../../api/handwerker'
+import { aktenApi } from '../../api/akten'
 import { Button } from '../../components/ui/Button'
 import { IbanInput } from '../../components/ui/IbanInput'
 import type { Gewerk, Kreditor } from '../../types'
@@ -372,6 +373,14 @@ function KreditorForm({
     queryFn: handwerkerApi.gewerke,
   })
 
+  // Für das Standardregister nur die gemeinsame Hausakten-Gliederung anbieten:
+  // sie gilt über alle Objekte, genau wie der Kreditor.
+  const { data: register = [] } = useQuery({
+    queryKey: ['aktenregister', 'haus'],
+    queryFn: () => aktenApi.registerListe('haus'),
+  })
+  const globaleRegister = register.filter(r => r.objekt === null && r.aktiv)
+
   const ausgewaehlteGewerke = form.gewerke ?? []
   const toggleGewerk = (id: string) =>
     setForm(prev => {
@@ -438,6 +447,25 @@ function KreditorForm({
           <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Ansprechpartner</label>
           <input type="text" value={form.kontakt_person ?? ''} onChange={set('kontakt_person')}
                  className="border rounded-lg px-3 py-2 text-sm w-full" />
+        </div>
+        <div className="col-span-2">
+          <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
+            Standardregister (automatische Belegablage)
+          </label>
+          <select
+            value={form.standard_register ?? ''}
+            onChange={e => setForm(f => ({ ...f, standard_register: e.target.value || null }))}
+            className="border rounded-lg px-3 py-2 text-sm w-full"
+          >
+            <option value="">— keins —</option>
+            {globaleRegister.map(r => (
+              <option key={r.id} value={r.id}>{r.code} {r.bezeichnung}</option>
+            ))}
+          </select>
+          <p className="text-xs text-gray-400 mt-1">
+            Belege dieses Kreditors werden beim Einsortieren automatisch für dieses
+            Register vorgeschlagen (Konfidenz 1.0, ohne KI).
+          </p>
         </div>
       </div>
 

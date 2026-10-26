@@ -30,7 +30,7 @@ FALSCHEN Eigentuemers — deshalb sollte das fachliche Datum gepflegt sein.
 """
 import logging
 
-from django.core.exceptions import ValidationError
+from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db.models import Q
 
 from apps.dokumente.models import Aktenregister, Dokument
@@ -42,6 +42,10 @@ logger = logging.getLogger(__name__)
 # Sie duerfen NICHT aus der Akte verschwinden, nur weil niemand sie
 # einsortiert hat — sonst waere die Ablage lueckenhaft, ohne dass es auffaellt.
 OHNE_REGISTER = 'Ohne Register'
+
+# Gegenstueck fuer die Kreditorenakte: Belege, deren Rechnung kein Objekt
+# traegt. Sollte selten sein, darf aber nicht unsichtbar werden.
+OHNE_OBJEKT = 'Ohne Objekt'
 
 # Register der Hausakte, unter dem jede Eigentuemerversammlung eine eigene
 # Untergliederung bekommt ("16/A", "16/B" …). Siehe Seed-Migration
@@ -97,6 +101,66 @@ def eigentuemerakte(person, *, nur_aktuelle_evs: bool = False):
         filter_ausdruck |= zeitraum
 
     return Dokument.objects.filter(filter_ausdruck).distinct()
+
+
+def kreditorakte(kreditor):
+    """Alle Dokumente eines Kreditors.
+
+    Der einzige Weg, auf dem ein Dokument an einem Kreditor haengt, ist der
+    Rechnungsbeleg: ``Dokument`` ←(beleg_dokument)– ``Rechnung`` –(kreditor)→
+    ``Kreditor``. Deshalb genau dieser eine Lookup — es gibt keinen direkten
+    FK vom Dokument auf den Kreditor.
+    """
+    return (Dokument.objects
+            .filter(rechnung__kreditor=kreditor)
+            .select_related('rechnung', 'rechnung__objekt', 'rechnung__kreditor')
+            .distinct())
+
+
+def nach_objekten(dokumente) -> list[dict]:
+    """Gruppiert die Belege eines Kreditors nach der Liegenschaft ihrer Rechnung.
+
+    Das ist die Sicht der Kreditorenakte: anders als die register-gegliederten
+    Akten gibt es hier keine Register, sondern eine Gruppe je Objekt. Belege
+    ohne Objekt kommen am Ende unter ``OHNE_OBJEKT`` — sie gehen sonst verloren.
+    Nur Objekte mit Belegen erscheinen (keine leeren Gruppen wie bei den
+    Registern, denn ein Kreditor hat mit den meisten Objekten nichts zu tun).
+    """
+    dokumente = list(dokumente)
+    nach_id: dict = {}
+    reihenfolge: list = []
+    ohne: list = []
+    for dokument in dokumente:
+        try:
+            objekt = dokument.rechnung.objekt
+        except ObjectDoesNotExist:
+            objekt = None
+        if objekt is None:
+            ohne.append(dokument)
+            continue
+        if objekt.id not in nach_id:
+            nach_id[objekt.id] = {'objekt': objekt, 'dokumente': []}
+            reihenfolge.append(objekt.id)
+        nach_id[objekt.id]['dokumente'].append(dokument)
+
+    reihenfolge.sort(key=lambda oid: nach_id[oid]['objekt'].objektnummer or '')
+    gruppen = [{
+        'objekt_id': str(nach_id[oid]['objekt'].id),
+        'objektnummer': nach_id[oid]['objekt'].objektnummer or '',
+        'bezeichnung': nach_id[oid]['objekt'].bezeichnung,
+        'dokumente': nach_id[oid]['dokumente'],
+        'anzahl': len(nach_id[oid]['dokumente']),
+    } for oid in reihenfolge]
+
+    if ohne:
+        gruppen.append({
+            'objekt_id': None,
+            'objektnummer': '',
+            'bezeichnung': OHNE_OBJEKT,
+            'dokumente': ohne,
+            'anzahl': len(ohne),
+        })
+    return gruppen
 
 
 def register_einer_akte(aktenart: str, objekt=None):

@@ -22,11 +22,12 @@ from rest_framework.views import APIView
 from apps.dokumente.models import Aktenregister, Dokument
 from apps.dokumente.serializers_akten import (
     AktenregisterSerializer, DokumentVerschiebenSerializer,
-    RegisterGruppeSerializer,
+    ObjektGruppeSerializer, RegisterGruppeSerializer,
 )
 from apps.dokumente.services import akten_service, register_vorschlag_service
 from apps.objekte.models import Einheit, Objekt
 from apps.personen.models import Person
+from apps.rechnungen.models import Kreditor
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,34 @@ class EigentuemerakteView(AkteView):
             Aktenregister.AKTENART_EIGENTUEMER,
             kopf={'person': str(person.id), 'titel': person.name},
         )
+
+
+class KreditorakteView(APIView):
+    """``/api/v1/akten/kreditorenakte/?kreditor=<id>``
+
+    Die Belege eines Kreditors quer ueber alle Objekte, nach Liegenschaft
+    gruppiert. Bewusst OHNE Register und read-only: diese Dokumente sind
+    Rechnungsbelege, die ihren Platz in der jeweiligen Hausakte haben — die
+    Kreditorenakte ist nur eine zweite Sicht darauf, kein eigener Ablageort.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        kreditor_id = request.query_params.get('kreditor')
+        if not kreditor_id:
+            return Response(
+                {'detail': 'Parameter "kreditor" ist erforderlich.'},
+                status=status.HTTP_400_BAD_REQUEST)
+        kreditor = get_object_or_404(Kreditor, pk=kreditor_id)
+
+        gruppen = akten_service.nach_objekten(
+            akten_service.kreditorakte(kreditor))
+        return Response({
+            'kreditor': str(kreditor.id),
+            'titel': kreditor.name,
+            'anzahl_dokumente': sum(g['anzahl'] for g in gruppen),
+            'objekte': ObjektGruppeSerializer(gruppen, many=True).data,
+        })
 
 
 class AktenregisterViewSet(mixins.ListModelMixin,

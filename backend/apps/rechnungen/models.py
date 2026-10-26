@@ -37,6 +37,19 @@ class Kreditor(models.Model):
     )
     ist_handwerker = models.BooleanField(default=False)
     kontakt_person = models.CharField(max_length=200, blank=True)
+    # Standardregister für die automatische Belegablage (Stufe 0 des
+    # Registervorschlags, siehe dokumente/services/register_vorschlag_service).
+    # String-Referenz, um einen zyklischen Import rechnungen<->dokumente zu
+    # vermeiden. SET_NULL: wird das Register entfernt, verliert der Kreditor
+    # nur seine Vorbelegung, bleibt aber bestehen.
+    standard_register = models.ForeignKey(
+        'dokumente.Aktenregister', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='standard_fuer_kreditoren',
+        help_text='Register, in das Belege dieses Kreditors automatisch '
+                  'vorgeschlagen werden (Konfidenz 1.0, ohne KI). Sinnvoll '
+                  'sind die gemeinsamen Hausakten-Register, z.B. '
+                  '"04 Messdienst" für Techem oder "01 Versorger" für Süwag.',
+    )
 
     class Meta:
         verbose_name = 'Kreditor'
