@@ -258,6 +258,54 @@ class DokumentEinsortierenApiTest(AktenApiBasis):
         self.assertIsNone(dokument.register_id)
 
 
+class RegistervorschlagApiTest(AktenApiBasis):
+    """Der Vorschlag-Endpoint — er SCHLAEGT vor, setzt aber nichts.
+
+    Getestet wird die deterministische Dokumenttyp-Stufe (beschluss -> "15"):
+    sie braucht keinen API-Schluessel und keinen Claude-Aufruf.
+    """
+
+    def _beschluss(self, dateiname='beschluss.pdf'):
+        dokument = self._dokument(dateiname, objekt=self.objekt)
+        dokument.dokument_typ = 'beschluss'
+        dokument.save(update_fields=['dokument_typ'])
+        return dokument
+
+    def test_dokumenttyp_regel_schlaegt_register_vor(self):
+        dokument = self._beschluss()
+
+        antwort = self.client.get(
+            f'/api/v1/dokumente/{dokument.id}/registervorschlag/',
+            {'objekt': str(self.objekt.id)})
+
+        self.assertEqual(antwort.status_code, 200)
+        self.assertEqual(antwort.data['quelle'], 'dokumenttyp')
+        self.assertEqual(antwort.data['code'], '15')
+        self.assertIsNotNone(antwort.data['register_id'])
+
+    def test_vorschlag_setzt_das_register_nicht(self):
+        # Vorschlagen, nicht einsortieren: bis jemand "Übernehmen" klickt,
+        # bleibt das Dokument unsortiert.
+        dokument = self._beschluss('beschluss2.pdf')
+
+        self.client.get(
+            f'/api/v1/dokumente/{dokument.id}/registervorschlag/',
+            {'objekt': str(self.objekt.id)})
+
+        dokument.refresh_from_db()
+        self.assertIsNone(dokument.register_id)
+
+    def test_ohne_anmeldung_kein_zugriff(self):
+        dokument = self._beschluss('beschluss3.pdf')
+        self.client.force_authenticate(None)
+
+        antwort = self.client.get(
+            f'/api/v1/dokumente/{dokument.id}/registervorschlag/',
+            {'objekt': str(self.objekt.id)})
+
+        self.assertEqual(antwort.status_code, 401)
+
+
 class AnzeigenameTest(AktenApiBasis):
     """Der Titel ersetzt den Dateinamen in der ANZEIGE — nicht die Datei.
 

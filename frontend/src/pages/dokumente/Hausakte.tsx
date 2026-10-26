@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AktenDokument, aktenApi, RegisterGruppe } from '../../api/akten'
+import { AktenDokument, aktenApi, RegisterGruppe, Registervorschlag } from '../../api/akten'
 import { dokumenteApi } from '../../api/dokumente'
 import { objekteApi } from '../../api/objekte'
 import { Button } from '../../components/ui/Button'
@@ -134,10 +134,67 @@ function UnterregisterFormular({ objektId, eltern, onFertig, onAbbrechen }: {
 
 // ── Dokumentenliste (rechts) ───────────────────────────────────────────────
 
-function DokumentZeile({ dokument, register, aktuellesRegister, onEinsortiert }: {
+const QUELLE_LABEL: Record<Registervorschlag['quelle'], string> = {
+  kreditor: 'Standardregister des Kreditors',
+  dokumenttyp: 'Regel für den Dokumenttyp',
+  ki: 'KI',
+  keine: '',
+}
+
+/**
+ * Der Vorschlag über dem Dropdown. Zwei Fälle:
+ *
+ * - Ein Register vorgeschlagen -> blaue Zeile mit "Übernehmen". Ein Klick
+ *   sortiert ein, ohne die Liste durchsuchen zu müssen.
+ * - Kein sicherer Treffer -> grauer Hinweis mit dem Grund, kein Button. Die
+ *   Leitlinie ist "vorschlagen, nicht einsortieren": lieber unsortiert als
+ *   falsch abgelegt.
+ */
+function VorschlagHinweis({ vorschlag, uebernehmen, beschaeftigt }: {
+  vorschlag: Registervorschlag
+  uebernehmen: () => void
+  beschaeftigt: boolean
+}) {
+  if (vorschlag.register_id) {
+    return (
+      <div className="flex items-start justify-between gap-2 rounded border border-blue-200 bg-blue-50 px-2 py-1.5">
+        <div className="text-xs text-blue-900">
+          <span className="mr-1">🔮</span>
+          Vorschlag: <strong>{vorschlag.code} {vorschlag.bezeichnung}</strong>
+          {vorschlag.begruendung && (
+            <span className="text-blue-700"> — {vorschlag.begruendung}</span>
+          )}
+          <span className="mt-0.5 block text-[10px] text-blue-600">
+            {QUELLE_LABEL[vorschlag.quelle]}
+            {vorschlag.konfidenz !== null &&
+              ` · Konfidenz ${Math.round(vorschlag.konfidenz * 100)} %`}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={uebernehmen}
+          disabled={beschaeftigt}
+          className="shrink-0 rounded bg-blue-600 px-2 py-1 text-xs text-white hover:bg-blue-700 disabled:opacity-50"
+        >
+          Übernehmen
+        </button>
+      </div>
+    )
+  }
+
+  const grund = vorschlag.fehler || vorschlag.begruendung || 'Kein eindeutiger Treffer.'
+  return (
+    <p className="rounded border border-gray-200 bg-gray-50 px-2 py-1.5 text-xs text-gray-500">
+      <span className="mr-1">🔮</span>Kein sicherer Vorschlag — {grund}
+    </p>
+  )
+}
+
+function DokumentZeile({ dokument, register, aktuellesRegister, objektId, onEinsortiert }: {
   dokument: AktenDokument
   register: RegisterGruppe[]
   aktuellesRegister: RegisterGruppe
+  objektId: string
   onEinsortiert: () => void
 }) {
   const [offen, setOffen] = useState(false)
@@ -148,6 +205,19 @@ function DokumentZeile({ dokument, register, aktuellesRegister, onEinsortiert }:
       aktenApi.einsortieren(dokument.id, registerId),
     onSuccess: () => { setOffen(false); onEinsortiert() },
     onError: (f) => setFehler(fehlertext(f, 'Das Einsortieren ist fehlgeschlagen.')),
+  })
+
+  // Der Vorschlag wird nur geholt, wenn das Einsortier-Feld offen ist UND das
+  // Dokument noch kein Register hat — für ein bereits einsortiertes Dokument
+  // ist die aktuelle Zuordnung der bessere Vorgabewert, und die KI-Stufe soll
+  // nicht ohne Not Geld kosten. staleTime: der Vorschlag ändert sich während
+  // der Sitzung nicht, also kein zweiter Aufruf beim erneuten Öffnen.
+  const vorschlagAktiv = offen && !aktuellesRegister.register_id
+  const { data: vorschlag, isFetching: vorschlagLaedt } = useQuery({
+    queryKey: ['registervorschlag', dokument.id, objektId],
+    queryFn: () => aktenApi.registervorschlag(dokument.id, objektId),
+    enabled: vorschlagAktiv,
+    staleTime: Infinity,
   })
 
   return (
@@ -180,7 +250,17 @@ ${dokument.ist_mail ? 'Als Textvorschau öffnen' : 'Öffnen'}`}
       </div>
 
       {offen && (
-        <div className="mt-1.5 flex items-center gap-2">
+        <div className="mt-1.5 flex flex-col gap-2">
+          {vorschlagAktiv && vorschlagLaedt && (
+            <p className="text-xs text-gray-400">Vorschlag wird ermittelt…</p>
+          )}
+          {vorschlagAktiv && vorschlag && !vorschlagLaedt && (
+            <VorschlagHinweis
+              vorschlag={vorschlag}
+              uebernehmen={() => mutation.mutate(vorschlag.register_id)}
+              beschaeftigt={mutation.isPending}
+            />
+          )}
           <select
             className="border rounded px-2 py-1 text-xs flex-1"
             defaultValue={aktuellesRegister.register_id ?? ''}
@@ -338,6 +418,7 @@ export default function Hausakte() {
                           dokument={d}
                           register={gruppen}
                           aktuellesRegister={gewaehlt}
+                          objektId={objektId}
                           onEinsortiert={neuLaden}
                         />
                       ))}

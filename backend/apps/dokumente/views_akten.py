@@ -24,7 +24,7 @@ from apps.dokumente.serializers_akten import (
     AktenregisterSerializer, DokumentVerschiebenSerializer,
     RegisterGruppeSerializer,
 )
-from apps.dokumente.services import akten_service
+from apps.dokumente.services import akten_service, register_vorschlag_service
 from apps.objekte.models import Einheit, Objekt
 from apps.personen.models import Person
 
@@ -157,6 +157,49 @@ class AktenregisterViewSet(mixins.ListModelMixin,
             return Response({'detail': ' '.join(exc.messages)},
                             status=status.HTTP_400_BAD_REQUEST)
         return super().handle_exception(exc)
+
+
+class RegistervorschlagView(APIView):
+    """``GET /api/v1/dokumente/<id>/registervorschlag/?objekt=<id>&aktenart=haus``
+
+    Schlaegt ein Register vor, SETZT es aber nicht (siehe
+    ``register_vorschlag_service``: vorschlagen, nicht einsortieren). Gedacht
+    fuer den Moment, in dem jemand ein Dokument aus "Ohne Register" einsortieren
+    will — die Oberflaeche ruft das lazy pro Dokument auf.
+
+    Bewusst NICHT in der Aktenantwort mitgeliefert: die KI-Stufe kostet bei
+    jedem Aufruf, und eine Akte mit zwanzig unsortierten Mails wuerde sonst
+    zwanzig Claude-Anfragen ausloesen, bevor jemand auch nur eine einsortiert.
+
+    ``objekt`` bestimmt, welche Registerliste gilt (gemeinsame Gliederung plus
+    die Untergliederung dieses Objekts). Er kommt aus der Oberflaeche, weil er
+    sich aus dem Dokument allein nicht zuverlaessig ableiten laesst — eine frisch
+    importierte Mail hat noch gar keinen Objektbezug.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        dokument = get_object_or_404(Dokument, pk=pk)
+        objekt_id = request.query_params.get('objekt')
+        aktenart = request.query_params.get(
+            'aktenart', Aktenregister.AKTENART_HAUS)
+        objekt = (get_object_or_404(Objekt, pk=objekt_id)
+                  if objekt_id else None)
+
+        register = list(akten_service.register_einer_akte(aktenart, objekt))
+        ergebnis = register_vorschlag_service.schlage_register_vor(
+            dokument, register)
+
+        treffer = ergebnis['register']
+        return Response({
+            'register_id': str(treffer.id) if treffer else None,
+            'code': treffer.code if treffer else '',
+            'bezeichnung': treffer.bezeichnung if treffer else '',
+            'quelle': ergebnis['quelle'],
+            'konfidenz': ergebnis['konfidenz'],
+            'begruendung': ergebnis['begruendung'],
+            'fehler': ergebnis['fehler'],
+        })
 
 
 class DokumentEinsortierenView(APIView):

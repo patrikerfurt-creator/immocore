@@ -154,13 +154,22 @@ def _baue_prompt(dokument, register: list) -> str:
 
 def _ueber_ki(dokument, register: list, nach_code: dict, ergebnis: dict) -> dict:
     """Stufe 2 — wirft nie; ein Fehler landet als Text in ``fehler``."""
+    from django.conf import settings
+
+    api_key = getattr(settings, 'ANTHROPIC_API_KEY', None)
+    if not api_key:
+        # Ohne Schluessel steht Stufe 2 nicht zur Verfuegung. Das ist KEINE
+        # Panne, die der Nutzer als rohen Fehler sehen sollte: die
+        # deterministischen Stufen (Kreditor, Dokumenttyp) greifen weiter, nur
+        # fuer freie Korrespondenz gibt es dann keinen Vorschlag. Deshalb als
+        # ruhige begruendung, NICHT als fehler.
+        ergebnis['begruendung'] = (
+            'Für freie Korrespondenz gibt es keinen automatischen Vorschlag '
+            '(KI nicht konfiguriert).')
+        return ergebnis
+
     try:
         import anthropic
-        from django.conf import settings
-
-        api_key = getattr(settings, 'ANTHROPIC_API_KEY', None)
-        if not api_key:
-            raise RuntimeError('ANTHROPIC_API_KEY nicht konfiguriert')
 
         modell = getattr(settings, 'ANTHROPIC_MODEL', 'claude-sonnet-4-5')
         client = anthropic.Anthropic(api_key=api_key)

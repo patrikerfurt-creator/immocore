@@ -52,6 +52,18 @@ export interface Akte {
   person?: string
 }
 
+export interface Registervorschlag {
+  /** null, wenn nichts Sicheres gefunden wurde — dann steht der Grund in begruendung/fehler. */
+  register_id: string | null
+  code: string
+  bezeichnung: string
+  /** Woher der Vorschlag stammt (siehe register_vorschlag_service). */
+  quelle: 'kreditor' | 'dokumenttyp' | 'ki' | 'keine'
+  konfidenz: number | null
+  begruendung: string
+  fehler: string
+}
+
 export interface UnterregisterEingabe {
   code: string
   bezeichnung: string
@@ -87,4 +99,12 @@ export const aktenApi = {
   einsortieren: (dokumentId: string, registerId: string | null) =>
     client.post(`/dokumente/${dokumentId}/einsortieren/`, { register: registerId })
       .then(r => r.data),
+
+  /** Schlägt ein Register vor, ohne es zu setzen. Lazy aufrufen (die
+   *  KI-Stufe kostet) — gedacht für den Moment des Einsortierens. */
+  registervorschlag: (dokumentId: string, objektId: string, aktenart = 'haus'):
+    Promise<Registervorschlag> =>
+    client.get(`/dokumente/${dokumentId}/registervorschlag/`, {
+      params: { objekt: objektId, aktenart },
+    }).then(r => r.data),
 }

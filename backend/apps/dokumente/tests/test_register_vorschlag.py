@@ -169,6 +169,22 @@ class RegisterVorschlagTest(TestCase):
         self.assertIsNone(vorschlag['register'])
         self.assertIn('API nicht erreichbar', vorschlag['fehler'])
 
+    @override_settings(ANTHROPIC_API_KEY='')
+    def test_ohne_api_key_ruhiger_hinweis_statt_fehler(self):
+        # Fehlt der Schluessel, soll die Oberflaeche keinen rohen RuntimeError
+        # sehen, sondern einen ruhigen Hinweis — und die KI gar nicht erst
+        # angesprochen werden.
+        dokument = self._dokument('freie_korrespondenz.pdf')
+
+        with patch('anthropic.Anthropic') as mock_api:
+            vorschlag = register_vorschlag_service.schlage_register_vor(
+                dokument, self.register)
+
+        self.assertIsNone(vorschlag['register'])
+        self.assertEqual(vorschlag['fehler'], '')
+        self.assertIn('nicht konfiguriert', vorschlag['begruendung'])
+        mock_api.assert_not_called()
+
     def test_ohne_register_kein_vorschlag(self):
         dokument = self._dokument('z.pdf')
         vorschlag = register_vorschlag_service.schlage_register_vor(dokument, [])
