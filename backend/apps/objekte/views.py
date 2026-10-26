@@ -252,6 +252,66 @@ class ObjektViewSet(viewsets.ModelViewSet):
             status=status.HTTP_201_CREATED if angelegt else status.HTTP_200_OK,
         )
 
+    @action(detail=True, methods=['post'], url_path='mea-vorschau')
+    def mea_vorschau(self, request, pk=None):
+        """MEA-Excel hochladen → Vorschau (Zuordnung je Einheit). Kein DB-Commit.
+
+        Erwartet multipart-Feld ``datei`` (.xls oder .xlsx). Die MEA-Werte werden
+        über die Flächennummer den vorhandenen Einheiten zugeordnet; es werden
+        keine Einheiten angelegt. Berechtigung wie der Einheiten-Massenimport
+        (angemeldete Nutzer).
+        """
+        from .mea_import import mea_vorschau
+
+        objekt = self.get_object()
+        datei = request.FILES.get('datei')
+        if not datei:
+            return Response({'error': 'Datei fehlt (Feldname: datei).'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        name = datei.name.lower()
+        if not (name.endswith('.xls') or name.endswith('.xlsx') or name.endswith('.xlsm')):
+            return Response({'error': 'Nur .xls- oder .xlsx-Dateien werden unterstützt.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if datei.size > 10 * 1024 * 1024:
+            return Response({'error': 'Datei zu groß (max. 10 MB).'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            result = mea_vorschau(objekt, datei.read(), datei.name)
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:  # noqa: BLE001 - defensiv, Datei ist Fremddaten
+            return Response({'error': f'Fehler beim Verarbeiten der Datei: {exc}'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(result)
+
+    @action(detail=True, methods=['post'], url_path='mea-commit')
+    def mea_commit(self, request, pk=None):
+        """Geprüfte Vorschau-Zeilen übernehmen → MEA-Werte (Schlüssel 010) setzen.
+
+        Body: { rows: [...] } — die Zeilen aus ``mea-vorschau``. Es werden nur
+        Zeilen mit status=='ok' geschrieben. Berechtigung wie der
+        Einheiten-Massenimport (angemeldete Nutzer).
+        """
+        from .mea_import import mea_commit
+
+        objekt = self.get_object()
+        rows = request.data.get('rows')
+        if not isinstance(rows, list) or not rows:
+            return Response({'error': 'rows fehlt — Datei zuerst mit mea-vorschau prüfen.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            result = mea_commit(objekt, rows, request.user)
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:  # noqa: BLE001
+            return Response({'error': f'Import fehlgeschlagen: {exc}'},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return Response(result)
+
 
 class EingangViewSet(viewsets.ModelViewSet):
     serializer_class = EingangSerializer

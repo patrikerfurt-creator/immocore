@@ -11,6 +11,7 @@ django-storages==1.14.4
 WeasyPrint==65.1
 anthropic>=0.49.0
 openpyxl>=3.1.0
+xlrd>=2.0.1          # Lesen alter .xls-Exporte (z. B. iX-Haus MEA-Export)
 schwifty>=2024.1.0
 holidays>=0.46
 PyMuPDF>=1.24
