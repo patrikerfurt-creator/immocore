@@ -42,14 +42,60 @@ export interface RegisterGruppe {
   dokumente: AktenDokument[]
 }
 
+/** Die register-gegliederten Akten. Die Kreditorenakte gehört bewusst NICHT
+ *  dazu — sie hat keine Register, sondern gruppiert nach Objekt (s.u.). */
+export type Aktenart = 'haus' | 'wohnung' | 'eigentuemer'
+
 export interface Akte {
   titel: string
-  aktenart: 'haus' | 'wohnung' | 'eigentuemer'
+  aktenart: Aktenart
   anzahl_dokumente: number
   register: RegisterGruppe[]
   objekt?: string
   einheit?: string
   person?: string
+}
+
+/** Eine Objektgruppe der Kreditorenakte: alle Belege des Kreditors, die zu
+ *  diesem Objekt gehören. */
+export interface ObjektGruppe {
+  /** null bei der Sammelgruppe "Ohne Objekt". */
+  objekt_id: string | null
+  objektnummer: string
+  bezeichnung: string
+  anzahl: number
+  dokumente: AktenDokument[]
+}
+
+export interface Kreditorenakte {
+  titel: string
+  kreditor: string
+  anzahl_dokumente: number
+  objekte: ObjektGruppe[]
+}
+
+export interface Registervorschlag {
+  /** null, wenn nichts Sicheres gefunden wurde — dann steht der Grund in begruendung/fehler. */
+  register_id: string | null
+  code: string
+  bezeichnung: string
+  /** Woher der Vorschlag stammt (siehe register_vorschlag_service). */
+  quelle: 'kreditor' | 'dokumenttyp' | 'ki' | 'keine'
+  konfidenz: number | null
+  begruendung: string
+  fehler: string
+}
+
+/** Ein Register-Eintrag aus der Stammdatenliste (für Auswahl-Dropdowns, z.B.
+ *  das Standardregister eines Kreditors). */
+export interface AktenregisterEintrag {
+  id: string
+  code: string
+  bezeichnung: string
+  aktenart: string
+  /** null = gemeinsame Gliederung (gilt für alle Objekte). */
+  objekt: string | null
+  aktiv: boolean
 }
 
 export interface UnterregisterEingabe {
@@ -76,6 +122,17 @@ export const aktenApi = {
       params: { person: personId, ...(nurAktuelle ? { nur_aktuelle: 1 } : {}) },
     }).then(r => r.data),
 
+  /** Belege eines Kreditors, nach Objekt gruppiert (read-only). */
+  kreditorenakte: (kreditorId: string): Promise<Kreditorenakte> =>
+    client.get('/akten/kreditorenakte/', { params: { kreditor: kreditorId } })
+      .then(r => r.data),
+
+  /** Listet Register einer Aktenart (für Auswahl-Dropdowns). Ohne Objektfilter
+   *  kommen alle zurück; der Aufrufer filtert bei Bedarf auf `objekt === null`
+   *  (die gemeinsame Gliederung). */
+  registerListe: (aktenart: Aktenart = 'haus'): Promise<AktenregisterEintrag[]> =>
+    client.get('/aktenregister/', { params: { aktenart } }).then(r => r.data),
+
   /** Legt eine objektspezifische Untergliederung an ("05/A Hebeanlage"). */
   unterregisterAnlegen: (eingabe: UnterregisterEingabe) =>
     client.post('/aktenregister/', eingabe).then(r => r.data),
@@ -87,4 +144,16 @@ export const aktenApi = {
   einsortieren: (dokumentId: string, registerId: string | null) =>
     client.post(`/dokumente/${dokumentId}/einsortieren/`, { register: registerId })
       .then(r => r.data),
+
+  /** Schlägt ein Register vor, ohne es zu setzen. Lazy aufrufen (die
+   *  KI-Stufe kostet) — gedacht für den Moment des Einsortierens. `objektId`
+   *  ist nur in den objektbezogenen Akten (haus/wohnung) gesetzt; die
+   *  Eigentümerakte ruft ohne Objekt auf, was der Endpoint unterstützt. */
+  registervorschlag: (
+    dokumentId: string,
+    opts: { aktenart: Aktenart; objektId?: string },
+  ): Promise<Registervorschlag> =>
+    client.get(`/dokumente/${dokumentId}/registervorschlag/`, {
+      params: { aktenart: opts.aktenart, ...(opts.objektId ? { objekt: opts.objektId } : {}) },
+    }).then(r => r.data),
 }
