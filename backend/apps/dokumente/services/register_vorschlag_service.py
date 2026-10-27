@@ -92,11 +92,18 @@ def _ueber_dokumenttyp(dokument, register_nach_code: dict):
     return register_nach_code.get(code) if code else None
 
 
-def schlage_register_vor(dokument, register: list) -> dict:
+def schlage_register_vor(dokument, register: list, zusatztext: str = '') -> dict:
     """Ermittelt einen Registervorschlag für ein Dokument.
 
     ``register`` ist die Liste der in dieser Akte gültigen Register (inkl.
     der objektspezifischen Untergliederung).
+
+    ``zusatztext`` ist optionaler Inhalt aus der Datei selbst (z.B. der
+    extrahierte PDF-Text beim manuellen Upload). Er fliesst nur in die
+    KI-Stufe ein — bei einer importierten Mail steckt der Inhalt dagegen
+    bereits in ``mail_import``. ``dokument`` darf hier ungespeichert sein:
+    die Kreditor-Stufe greift dann über die (nicht vorhandene) Rechnung ins
+    Leere und die Suche landet bei der KI.
 
     Rückgabe immer vollständig:
     ``{register, quelle, konfidenz, begruendung, fehler}`` — ``register``
@@ -123,10 +130,10 @@ def schlage_register_vor(dokument, register: list) -> dict:
                 'begruendung': f'Feste Zuordnung fuer Typ '
                                f'"{dokument.get_dokument_typ_display()}".'}
 
-    return _ueber_ki(dokument, register, nach_code, ergebnis)
+    return _ueber_ki(dokument, register, nach_code, ergebnis, zusatztext)
 
 
-def _baue_prompt(dokument, register: list) -> str:
+def _baue_prompt(dokument, register: list, zusatztext: str = '') -> str:
     zeilen = []
     for r in register:
         zeile = f'- {r.code}: {r.bezeichnung}'
@@ -147,12 +154,18 @@ def _baue_prompt(dokument, register: list) -> str:
         if protokoll.body_auszug:
             beschreibung.append(
                 f'Textauszug:\n{protokoll.body_auszug[:KI_TEXT_LAENGE]}')
+    elif zusatztext:
+        # Manueller Upload: der Inhalt kommt aus der Datei selbst, nicht aus
+        # einer Mail. Nur verwenden, wenn keine Mailherkunft vorliegt — sonst
+        # stuenden zwei Textquellen nebeneinander.
+        beschreibung.append(f'Textauszug:\n{zusatztext[:KI_TEXT_LAENGE]}')
 
     return ('Registerliste:\n' + '\n'.join(zeilen)
             + '\n\nDokument:\n' + '\n'.join(beschreibung))
 
 
-def _ueber_ki(dokument, register: list, nach_code: dict, ergebnis: dict) -> dict:
+def _ueber_ki(dokument, register: list, nach_code: dict, ergebnis: dict,
+              zusatztext: str = '') -> dict:
     """Stufe 2 — wirft nie; ein Fehler landet als Text in ``fehler``."""
     from django.conf import settings
 
@@ -178,7 +191,7 @@ def _ueber_ki(dokument, register: list, nach_code: dict, ergebnis: dict) -> dict
             max_tokens=1000,
             system=_SYSTEM_PROMPT,
             messages=[{'role': 'user',
-                       'content': _baue_prompt(dokument, register)}],
+                       'content': _baue_prompt(dokument, register, zusatztext)}],
         )
         roh = next((b.text for b in antwort.content
                     if getattr(b, 'type', None) == 'text'), '')
