@@ -56,13 +56,17 @@ const katalogeItems: NavItemDef[] = [
   { to: '/kataloge/versammlungsorte', label: 'Versammlungsorte', icon: '📍' },
 ]
 
+// Dokumentenmanagement — eigene aufklappbare Gruppe "DMS".
+const dmsItems: NavItemDef[] = [
+  { to: '/dokumente',                 label: 'Dokumente',      icon: '📁', objektAware: true },
+  { to: '/dokumente/hausakte',        label: 'Hausakte',       icon: '🗂️', objektAware: true },
+  { to: '/dokumente/wohnungsakte',    label: 'Wohnungsakte',   icon: '🏠', objektAware: true },
+  { to: '/dokumente/eigentuemerakte', label: 'Eigentümerakte', icon: '👤' },
+  { to: '/dokumente/kreditorenakte',  label: 'Kreditorenakte', icon: '🧾' },
+]
+
 const otherItems: NavItemDef[] = [
   { to: '/prozesse',        label: 'Prozesse',    icon: '⚙️' },
-  { to: '/dokumente',       label: 'Dokumente',   icon: '📁', objektAware: true },
-  { to: '/dokumente/hausakte', label: 'Hausakte', icon: '🗂️', objektAware: true },
-  { to: '/dokumente/wohnungsakte', label: 'Wohnungsakte', icon: '🏠', objektAware: true },
-  { to: '/dokumente/eigentuemerakte', label: 'Eigentümerakte', icon: '👤' },
-  { to: '/dokumente/kreditorenakte', label: 'Kreditorenakte', icon: '🧾' },
   { to: '/vorgaenge',       label: 'Vorgänge',    icon: '🗒️', objektAware: true },
   { to: '/vorgaenge/posteingang', label: 'Mail-Posteingang', icon: '📬' },
   { to: '/handwerker/auftraege', label: 'Handwerkeraufträge', icon: '🔧' },
@@ -80,6 +84,7 @@ const zahlungsverkehrPaths = zahlungsverkehrItems.map(i => i.to)
 const abrechnungWpPaths = abrechnungWpItems.map(i => i.to)
 const katalogePaths = katalogeItems.map(i => i.to)
 const korrespondenzPaths = ['/korrespondenz']
+const dmsPaths = dmsItems.map(i => i.to)
 
 function resolvedTo(item: NavItemDef, selectedId: string | null) {
   if (item.objektAware && selectedId) {
@@ -159,6 +164,7 @@ export function Sidebar() {
   const isInAbrechnungWp = abrechnungWpPaths.some(p => location.pathname.startsWith(p))
   const isInKataloge = katalogePaths.some(p => location.pathname.startsWith(p))
   const isInKorrespondenz = korrespondenzPaths.some(p => location.pathname.startsWith(p))
+  const isInDms = dmsPaths.some(p => location.pathname.startsWith(p))
 
   const [stammdatenOpen, setStammdatenOpen] = useState(isInStammdaten)
   const [buchhaltungOpen, setBuchhaltungOpen] = useState(isInBuchhaltung)
@@ -166,6 +172,7 @@ export function Sidebar() {
   const [abrechnungWpOpen, setAbrechnungWpOpen] = useState(isInAbrechnungWp)
   const [katalogeOpen, setKatalogeOpen] = useState(isInKataloge)
   const [korrespondenzOpen, setKorrespondenzOpen] = useState(isInKorrespondenz)
+  const [dmsOpen, setDmsOpen] = useState(isInDms)
 
   const { selectedId } = useObjektStore()
 
@@ -304,6 +311,30 @@ export function Sidebar() {
           {korrespondenzOpen && (
             <div>
               {korrespondenzItems.map(item => (
+                <SidebarLink key={item.to} item={item} selectedId={selectedId} indent />
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <button
+            onClick={() => setDmsOpen(o => !o)}
+            className={`w-full flex items-center justify-between px-5 py-2.5 text-sm transition-colors ${
+              isInDms
+                ? 'text-white font-medium'
+                : 'text-primary-200 hover:bg-primary-800 hover:text-white'
+            }`}
+          >
+            <span className="flex items-center gap-3">
+              <span className="text-base">📁</span>
+              DMS
+            </span>
+            <span className="text-xs text-primary-400">{dmsOpen ? '▲' : '▼'}</span>
+          </button>
+          {dmsOpen && (
+            <div>
+              {dmsItems.map(item => (
                 <SidebarLink key={item.to} item={item} selectedId={selectedId} indent />
               ))}
             </div>
