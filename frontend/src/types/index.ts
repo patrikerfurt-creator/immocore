@@ -1090,6 +1090,8 @@ export interface VorgangEreignis {
 export interface VorgangDokument {
   id: string
   dateiname: string
+  titel: string
+  anzeigename: string
   kategorie: string
   dokument_typ: string
   beschreibung: string

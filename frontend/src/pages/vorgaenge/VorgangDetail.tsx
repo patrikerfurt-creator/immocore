@@ -1249,9 +1249,12 @@ export function VorgangDetail() {
                       type="button"
                       onClick={() => (istMail ? dokumenteApi.openMailVorschau(d.id) : dokumenteApi.openDatei(d.id))}
                       className="text-left text-blue-700 hover:underline truncate"
-                      title={istMail ? `${d.dateiname} als Textvorschau oeffnen` : `${d.dateiname} oeffnen`}
+                      // Angezeigt wird der sprechende Name (Titel/KI-Betreff);
+                      // der rohe Dateiname — bei Mail-Importen die
+                      // Graph-Message-ID — steht nur noch im Tooltip.
+                      title={`${d.dateiname}\n${istMail ? 'als Textvorschau oeffnen' : 'oeffnen'}`}
                     >
-                      {d.dateiname} {d.version > 1 && <span className="text-gray-400">(v{d.version})</span>}
+                      {d.anzeigename} {d.version > 1 && <span className="text-gray-400">(v{d.version})</span>}
                     </button>
                     <span className="flex items-center gap-3 whitespace-nowrap">
                       {istMail && (
