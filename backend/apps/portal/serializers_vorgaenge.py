@@ -76,6 +76,12 @@ class PortalVorgangDetailSerializer(PortalVorgangListSerializer):
         return PortalVorgangEreignisSerializer(ereignisse, many=True).data
 
 
+class PortalVorgangAntwortSerializer(serializers.Serializer):
+    """Eingabe für ``POST /portal/vorgaenge/<id>/antwort/`` — die Rückantwort
+    des Eigentümers auf einen bestehenden Vorgang."""
+    text = serializers.CharField(max_length=5000, trim_whitespace=True)
+
+
 class PortalVorgangCreateSerializer(serializers.Serializer):
     """Eingabe-Validierung für ``POST /portal/vorgaenge/`` — reine Formprüfung
     (Pflichtfelder, UUID-Format). Die fachlichen Regeln (Typ aktiv/portal_-

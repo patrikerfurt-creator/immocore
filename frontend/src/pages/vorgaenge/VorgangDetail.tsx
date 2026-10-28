@@ -10,7 +10,7 @@ import { Badge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import type {
   HandwerkerauftragCreatePayload, HandwerkerauftragDetail, Kreditor, VorgangDetail as VorgangDetailTyp,
-  VorgangPrioritaet, VorgangStatus, VorgangZeiteintragCreatePayload,
+  VorgangEreignis, VorgangPrioritaet, VorgangStatus, VorgangZeiteintragCreatePayload,
 } from '../../types'
 import { HWA_STATUS_LABEL, fehlerText as hwaFehlerText } from '../handwerker/shared'
 import { SchreibenErstellenButton } from '../korrespondenz/schreiben/SchreibenErstellenDialog'
@@ -63,11 +63,80 @@ const EREIGNIS_LABEL: Record<string, string> = {
   handwerker_abgelehnt: 'Handwerker: Auftrag abgelehnt',
   handwerker_abgeschlossen: 'Handwerker: Auftrag abgeschlossen',
   handwerker_abgelaufen: 'Handwerker: Auftragsbestätigung abgelaufen',
+  mail_eingegangen: 'E-Mail eingegangen',
+  schreiben_erstellt: 'Schreiben erstellt',
+  schreiben_versendet: 'Schreiben versendet',
+  antwort_freigegeben: 'Antwort fürs Portal freigegeben',
+  mail_antwort_gesendet: 'Mail-Antwort an Kunde gesendet',
+  portal_antwort: 'Antwort über Portal (Kunde)',
 }
 
-// Vorgang gilt als „gerade erst angelegt“, solange auto-generierte Vorschläge
-// per Celery typischerweise fertig sein sollten — nur für den UI-Hinweis relevant.
-const GERADE_ERSTELLT_SCHWELLE_MS = 15 * 60 * 1000
+// Welche Ereignisse sind Teil der Konversation (Chat) — und auf welcher Seite?
+// „eingehend" = vom Kunden (links), „ausgehend" = von uns (rechts). Alles
+// andere ist interne Aktivität und landet im einklappbaren Aktivitätsbereich.
+const CHAT_EINGEHEND = new Set(['mail_eingegangen', 'portal_antwort'])
+const CHAT_AUSGEHEND = new Set([
+  'antwort_freigegeben', 'antwort_vorschlag_freigegeben',
+  'mail_antwort_gesendet', 'schreiben_versendet',
+])
+
+// Beschriftung der Chat-Sprechblasen je Ereignistyp.
+const CHAT_LABEL: Record<string, string> = {
+  mail_eingegangen: 'E-Mail vom Kunden',
+  portal_antwort: 'Antwort über Portal (Kunde)',
+  antwort_freigegeben: 'Antwort — fürs Portal freigegeben',
+  antwort_vorschlag_freigegeben: 'Antwort — fürs Portal freigegeben',
+  mail_antwort_gesendet: 'Mail-Antwort an den Kunden',
+  schreiben_versendet: 'Schreiben versendet',
+  kommentar: 'Für den Eigentümer sichtbarer Hinweis',
+}
+
+// Gehört ein Ereignis in den Chat-Verlauf? (Konversation vs. interne Aktivität)
+// Ein ``kommentar`` zählt nur dann zur Konversation, wenn er bewusst
+// eigentümer-sichtbar (``intern=false``) gespeichert wurde.
+function istKonversation(e: VorgangEreignis): boolean {
+  return CHAT_EINGEHEND.has(e.typ) || CHAT_AUSGEHEND.has(e.typ) || (e.typ === 'kommentar' && !e.intern)
+}
+
+// Eine Sprechblase im Chat. ``ausgehend`` = von uns (rechts), sonst vom Kunden
+// (links). ``originalMailDokId`` blendet bei eingegangenen Mails den Link zur
+// Original-.eml im DMS ein.
+function ChatBubble({
+  ausgehend, label, datum, autor, originalMailDokId, children,
+}: {
+  ausgehend: boolean
+  label: string
+  datum: string
+  autor?: string | null
+  originalMailDokId?: string | null
+  children: ReactNode
+}) {
+  return (
+    <div className={`flex ${ausgehend ? 'justify-end' : 'justify-start'}`}>
+      <div
+        className={`max-w-[85%] rounded-lg border px-3 py-2 ${
+          ausgehend ? 'bg-primary-50 border-primary-100' : 'bg-gray-50 border-gray-200'
+        }`}
+      >
+        <div className="flex items-center gap-2 flex-wrap text-xs text-gray-400 mb-1">
+          <span className="font-medium text-gray-600">{label}</span>
+          <span>{datum}</span>
+          {autor && <span>· {autor}</span>}
+        </div>
+        <div className="text-sm text-gray-700">{children}</div>
+        {originalMailDokId && (
+          <button
+            type="button"
+            onClick={() => dokumenteApi.openMailVorschau(originalMailDokId)}
+            className="mt-1 text-xs text-primary-600 hover:underline"
+          >
+            Original-Mail öffnen
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
 
 function DATUM(s: string | null) {
   return s ? new Date(s).toLocaleString('de-DE') : '–'
@@ -715,22 +784,76 @@ function Klappbox({
   )
 }
 
+// Trennt bei importierten Mails den neu geschriebenen Teil von der zitierten
+// Vorkorrespondenz. Jede Antwortmail zitiert die komplette bisherige Konversation;
+// ohne Trennung steht dieselbe Ursprungsnachricht im Verlauf mehrfach voll
+// ausgeschrieben. zitat ist null, wenn keine zitierte Historie erkannt wurde.
+function zitatTrennen(text: string): { neu: string; zitat: string | null } {
+  // Gängige Zitat-/Weiterleitungs-Marker verschiedener Mailprogramme.
+  const marker: RegExp[] = [
+    /-{2,}\s*Ursprüngliche Nachricht\s*-{2,}/i,
+    /-{2,}\s*Original Message\s*-{2,}/i,
+    /-{2,}\s*Weitergeleitete Nachricht\s*-{2,}/i,
+    /-{2,}\s*Forwarded message\s*-{2,}/i,
+    // "Am 16.10.26 um 10:17 schrieb …" (GMX/Apple/Thunderbird), mit oder ohne Doppelpunkt.
+    /\n\s*Am .{1,160}? schrieb\b/i,
+    /\n\s*On .{1,160}? wrote\b/i,
+    // Klassisch zitierte Zeilen mit vorangestelltem ">".
+    /\n>/,
+  ]
+  let idx = -1
+  for (const re of marker) {
+    const m = text.match(re)
+    if (m && m.index != null && (idx === -1 || m.index < idx)) idx = m.index
+  }
+  // Kein Marker oder Marker ganz am Anfang (nichts Neues davor) → nicht trennen.
+  if (idx <= 0) return { neu: text, zitat: null }
+  const neu = text.slice(0, idx).trimEnd()
+  const zitat = text.slice(idx).trim()
+  if (!neu) return { neu: text, zitat: null }
+  return { neu, zitat }
+}
+
+// Ereignistext im Verlauf: neuer Mail-Text direkt, zitierte Historie erst auf
+// Klick. whitespace-pre-wrap erhält außerdem die Zeilenumbrüche der Mail.
+function EreignisText({ text }: { text: string }) {
+  const [offen, setOffen] = useState(false)
+  const { neu, zitat } = zitatTrennen(text)
+  return (
+    <div className="text-gray-600 mt-0.5">
+      <p className="whitespace-pre-wrap">{neu}</p>
+      {zitat && (
+        <div className="mt-1">
+          <button
+            type="button"
+            onClick={() => setOffen(o => !o)}
+            className="text-xs text-primary-600 hover:underline"
+          >
+            {offen ? '▲ Zitierte Mail-Historie ausblenden' : '▼ Zitierte Mail-Historie anzeigen'}
+          </button>
+          {offen && (
+            <div className="mt-1 border-l-2 border-gray-200 pl-3 text-xs text-gray-400 whitespace-pre-wrap">
+              {zitat}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function VorgangDetail() {
   const { id } = useParams<{ id: string }>()
   const qc = useQueryClient()
   const fileRef = useRef<HTMLInputElement>(null)
 
-  const [kommentarText, setKommentarText] = useState('')
-  // Default IMMER false (Patrik-Entscheidung): ein Kommentar ist ohne
-  // bewusstes Anhaken rein intern — ein Versehen bedeutet dadurch höchstens
-  // "Eigentümer sieht etwas nicht", nie das Gegenteil.
-  const [kommentarSichtbar, setKommentarSichtbar] = useState(false)
+  // Ein gemeinsames Eingabefeld für die Antwort am Ende des Chats — der
+  // „Antwortvorschlag erzeugen"-Button füllt es, die Buttons „Freigeben" /
+  // „Per Mail senden" / „Interner Vermerk" verschicken seinen Inhalt.
+  const [composerText, setComposerText] = useState('')
   const [zielStatus, setZielStatus] = useState<VorgangStatus | null>(null)
   const [wiedervorlageDatum, setWiedervorlageDatum] = useState('')
   const [uploadHinweis, setUploadHinweis] = useState<string | null>(null)
-  const [vorschlagText, setVorschlagText] = useState('')
-  const [verwerfenGrund, setVerwerfenGrund] = useState('')
-  const [kopiertHinweis, setKopiertHinweis] = useState(false)
   const [portalVorschauOffen, setPortalVorschauOffen] = useState(false)
 
   const { data: vorgang, isLoading, error } = useQuery({
@@ -744,20 +867,6 @@ export function VorgangDetail() {
     queryFn: () => mitarbeiterApi.list(),
   })
 
-  const { data: vorgangTypen } = useQuery({
-    queryKey: ['vorgang-typen'],
-    queryFn: () => vorgaengeApi.typenListe(),
-  })
-
-  // Editierbaren Text mit dem aktuellen Vorschlag aus dem Backend abgleichen —
-  // löst nur bei tatsächlicher Textänderung vom Server neu aus, damit laufende
-  // Eingaben durch Hintergrund-Refetches nicht überschrieben werden.
-  useEffect(() => {
-    if (vorgang?.antwort_vorschlag) {
-      setVorschlagText(vorgang.antwort_vorschlag.text)
-    }
-  }, [vorgang?.antwort_vorschlag?.id, vorgang?.antwort_vorschlag?.text])
-
   const statusMutation = useMutation({
     mutationFn: (payload: { status: VorgangStatus; wiedervorlage_am?: string }) =>
       vorgaengeApi.statusWechseln(id!, payload.status, undefined, payload.wiedervorlage_am),
@@ -768,15 +877,14 @@ export function VorgangDetail() {
     },
   })
 
+  // Interner Vermerk: immer rein intern (sichtbar=false) — der Eigentümer
+  // bekommt ihn NIE zu sehen. Die eigentümer-sichtbare Kommunikation läuft
+  // über „Freigeben" / „Per Mail senden".
   const kommentarMutation = useMutation({
-    mutationFn: (payload: { text: string; sichtbar: boolean }) =>
-      vorgaengeApi.kommentieren(id!, payload.text, payload.sichtbar),
+    mutationFn: (text: string) => vorgaengeApi.kommentieren(id!, text, false),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['vorgang', id] })
-      setKommentarText('')
-      // Sichtbarkeit NICHT beibehalten — sonst könnte der nächste Kommentar
-      // unbemerkt ebenfalls für den Eigentümer sichtbar werden.
-      setKommentarSichtbar(false)
+      setComposerText('')
     },
   })
 
@@ -809,33 +917,23 @@ export function VorgangDetail() {
     },
   })
 
+  // „Antwortvorschlag erzeugen" füllt nur das Eingabefeld — der Mitarbeiter
+  // entscheidet danach, ob und wie (Portal/Mail) er antwortet.
   const vorschlagGenerierenMutation = useMutation({
     mutationFn: () => vorgaengeApi.antwortVorschlagGenerieren(id!),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['vorgang', id] }),
-  })
-
-  const vorschlagBearbeitenMutation = useMutation({
-    mutationFn: (text: string) => vorgaengeApi.antwortVorschlagBearbeiten(id!, text),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['vorgang', id] }),
-  })
-
-  // Freigeben speichert vorher automatisch noch nicht gespeicherte Textänderungen,
-  // damit ein Klick auf „Freigeben“ nie ungewollt eine ältere Fassung übernimmt.
-  const vorschlagFreigebenMutation = useMutation({
-    mutationFn: async () => {
-      if (vorgang?.antwort_vorschlag && vorschlagText !== vorgang.antwort_vorschlag.text) {
-        await vorgaengeApi.antwortVorschlagBearbeiten(id!, vorschlagText)
-      }
-      return vorgaengeApi.antwortVorschlagFreigeben(id!)
+    onSuccess: (vorschlag) => {
+      qc.invalidateQueries({ queryKey: ['vorgang', id] })
+      if (vorschlag?.text) setComposerText(vorschlag.text)
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['vorgang', id] }),
   })
 
-  const vorschlagVerwerfenMutation = useMutation({
-    mutationFn: (grund?: string) => vorgaengeApi.antwortVorschlagVerwerfen(id!, grund),
+  // Antwort an den Kunden: Freigabe fürs Portal oder direkte Mail.
+  const antwortMutation = useMutation({
+    mutationFn: (payload: { text: string; kanal: 'mail' | 'portal' }) =>
+      vorgaengeApi.antwortSenden(id!, payload.text, payload.kanal),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['vorgang', id] })
-      setVerwerfenGrund('')
+      setComposerText('')
     },
   })
 
@@ -843,19 +941,15 @@ export function VorgangDetail() {
   if (error || !vorgang) return <p className="p-4 text-red-600">Fehler beim Laden.</p>
 
   const erlaubteZiele = ERLAUBTE_UEBERGAENGE[vorgang.status] ?? []
-  const vorschlagBusy =
-    vorschlagGenerierenMutation.isPending ||
-    vorschlagBearbeitenMutation.isPending ||
-    vorschlagFreigebenMutation.isPending ||
-    vorschlagVerwerfenMutation.isPending
-  const aktuellerTyp = vorgangTypen?.find(t => t.id === vorgang.typ)
-  const geradeErstellt = Date.now() - new Date(vorgang.erstellt_am).getTime() < GERADE_ERSTELLT_SCHWELLE_MS
+  const antwortBusy = antwortMutation.isPending || vorschlagGenerierenMutation.isPending || kommentarMutation.isPending
 
-  function vorschlagKopieren(text: string) {
-    navigator.clipboard.writeText(text)
-    setKopiertHinweis(true)
-    setTimeout(() => setKopiertHinweis(false), 2000)
-  }
+  // Chat = Konversation (Sprechblasen) getrennt von interner Aktivität.
+  const konversation = vorgang.ereignisse.filter(istKonversation)
+  const internEreignisse = vorgang.ereignisse.filter(e => !istKonversation(e))
+  // Die Original-.eml der ersten Mail (für den Link an der ersten Sprechblase).
+  const ersteMailDok = [...vorgang.dokumente]
+    .filter(d => /\.(eml|msg)$/i.test(d.dateiname))
+    .sort((a, b) => a.hochgeladen_am.localeCompare(b.hochgeladen_am))[0]
 
   function statusKlick(ziel: VorgangStatus) {
     if (ziel === 'wiedervorlage') {
@@ -918,135 +1012,101 @@ export function VorgangDetail() {
         {/* ── Hauptspalte ── */}
         <div className="lg:col-span-2 space-y-5">
 
+      {/* Chat-Verlauf: Konversation als Sprechblasen, Antwort-Eingabe unten */}
       <div className="bg-white rounded-lg border border-gray-200 p-5">
-        <h2 className="font-medium text-gray-800">{vorgang.betreff}</h2>
-        {vorgang.beschreibung && <p className="text-sm text-gray-600 whitespace-pre-wrap mt-2">{vorgang.beschreibung}</p>}
-      </div>
+        <h2 className="font-medium text-gray-800 mb-1">{vorgang.betreff}</h2>
+        <p className="text-xs text-gray-400 mb-4">Konversation mit dem Kunden</p>
 
-      {/* Antwortvorschlag (KI) */}
-      <div className="bg-white rounded-lg border border-gray-200 p-5">
-        <h2 className="font-medium text-gray-800 mb-3">Antwortvorschlag</h2>
+        <div className="space-y-3">
+          {/* Erste Nachricht: die Beschreibung/ursprüngliche Mail */}
+          <ChatBubble
+            ausgehend={false}
+            label="Ursprüngliche Nachricht"
+            datum={DATUM(vorgang.erstellt_am)}
+            autor={vorgang.person_name}
+            originalMailDokId={ersteMailDok?.id}
+          >
+            {vorgang.beschreibung
+              ? <EreignisText text={vorgang.beschreibung} />
+              : <span className="text-gray-400">Keine Beschreibung.</span>}
+          </ChatBubble>
 
-        {!vorgang.antwort_vorschlag && (
-          <div className="space-y-3">
-            {aktuellerTyp?.antwort_vorschlag_aktiv && geradeErstellt && (
-              <p className="text-sm text-gray-500 bg-gray-50 border border-gray-200 rounded px-3 py-2">
-                Für diesen Vorgangstyp wird automatisch ein KI-Antwortvorschlag erzeugt (per Hintergrund-Job).
-                Das kann kurz dauern.{' '}
-                <button
-                  className="text-primary-600 hover:underline"
-                  onClick={() => qc.invalidateQueries({ queryKey: ['vorgang', id] })}
-                >
-                  Aktualisieren
-                </button>
-              </p>
-            )}
+          {konversation.map(e => {
+            const ausgehend = CHAT_AUSGEHEND.has(e.typ) || e.typ === 'kommentar'
+            const istEingehendeMail = e.typ === 'mail_eingegangen'
+            return (
+              <ChatBubble
+                key={e.id}
+                ausgehend={ausgehend}
+                label={CHAT_LABEL[e.typ] ?? (EREIGNIS_LABEL[e.typ] ?? e.typ)}
+                datum={DATUM(e.erstellt_am)}
+                autor={e.erstellt_von_name}
+                originalMailDokId={istEingehendeMail ? e.dokument : null}
+              >
+                {istEingehendeMail
+                  ? (e.text && <EreignisText text={e.text} />)
+                  : <p className="whitespace-pre-wrap">{e.text}</p>}
+              </ChatBubble>
+            )
+          })}
+        </div>
+
+        {/* Composer: beantwortet immer die letzte Nachricht */}
+        <div className="border-t border-gray-100 pt-4 mt-4">
+          <textarea
+            className="w-full rounded border border-gray-300 px-3 py-2 text-sm h-28 resize-y"
+            placeholder="Antwort an den Kunden schreiben – oder einen Antwortvorschlag erzeugen lassen…"
+            value={composerText}
+            disabled={antwortBusy}
+            onChange={e => setComposerText(e.target.value)}
+          />
+          <div className="flex flex-wrap items-center gap-2 mt-2">
             <Button
               size="sm"
-              disabled={vorschlagBusy}
+              variant="secondary"
+              disabled={antwortBusy}
               onClick={() => vorschlagGenerierenMutation.mutate()}
             >
-              {vorschlagGenerierenMutation.isPending ? 'Wird erzeugt…' : 'Antwortvorschlag erzeugen'}
+              {vorschlagGenerierenMutation.isPending ? 'Erzeuge…' : '✨ Antwortvorschlag erzeugen'}
             </Button>
-            {vorschlagGenerierenMutation.isError && (
-              <p className="text-red-600 text-sm">
-                {fehlerText(vorschlagGenerierenMutation.error, 'Erzeugung fehlgeschlagen.')}
-              </p>
-            )}
-          </div>
-        )}
-
-        {vorgang.antwort_vorschlag?.status === 'fehlgeschlagen' && (
-          <div className="space-y-3">
-            <p className="text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2 text-sm">
-              Erzeugung des Antwortvorschlags fehlgeschlagen
-              {vorgang.antwort_vorschlag.fehler ? `: ${vorgang.antwort_vorschlag.fehler}` : '.'}
-            </p>
+            <div className="flex-1" />
             <Button
               size="sm"
-              disabled={vorschlagBusy}
-              onClick={() => vorschlagGenerierenMutation.mutate()}
+              variant="ghost"
+              disabled={!composerText.trim() || antwortBusy}
+              onClick={() => kommentarMutation.mutate(composerText)}
             >
-              {vorschlagGenerierenMutation.isPending ? 'Wird erzeugt…' : 'Erneut versuchen'}
+              Interner Vermerk
             </Button>
-            {vorschlagGenerierenMutation.isError && (
-              <p className="text-red-600 text-sm">
-                {fehlerText(vorschlagGenerierenMutation.error, 'Erzeugung fehlgeschlagen.')}
-              </p>
-            )}
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={!composerText.trim() || antwortBusy}
+              onClick={() => antwortMutation.mutate({ text: composerText, kanal: 'mail' })}
+            >
+              Per Mail senden
+            </Button>
+            <Button
+              size="sm"
+              disabled={!composerText.trim() || antwortBusy}
+              onClick={() => antwortMutation.mutate({ text: composerText, kanal: 'portal' })}
+            >
+              Fürs Portal freigeben
+            </Button>
           </div>
-        )}
-
-        {vorgang.antwort_vorschlag?.status === 'entwurf' && (
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">
-                KI-Entwurf — bitte vor Verwendung prüfen
-              </span>
-              {vorgang.antwort_vorschlag.modell && (
-                <span className="text-xs text-gray-400">Modell: {vorgang.antwort_vorschlag.modell}</span>
+          <p className="text-xs text-gray-400 mt-1">
+            „Fürs Portal freigeben" zeigt die Antwort dem Eigentümer im Portal. „Per Mail senden"
+            schickt sie direkt per E-Mail (für Kunden ohne Portal-Zugang). „Interner Vermerk" bleibt rein intern.
+          </p>
+          {(antwortMutation.isError || vorschlagGenerierenMutation.isError || kommentarMutation.isError) && (
+            <p className="text-red-600 text-sm mt-1">
+              {fehlerText(
+                antwortMutation.error ?? vorschlagGenerierenMutation.error ?? kommentarMutation.error,
+                'Aktion fehlgeschlagen.',
               )}
-            </div>
-            <textarea
-              className="w-full rounded border border-gray-300 px-3 py-2 text-sm h-40 resize-y"
-              value={vorschlagText}
-              disabled={vorschlagBusy}
-              onChange={e => setVorschlagText(e.target.value)}
-            />
-            <div className="flex flex-wrap items-center gap-2">
-              <Button size="sm" disabled={vorschlagBusy} onClick={() => vorschlagFreigebenMutation.mutate()}>
-                Freigeben
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                disabled={vorschlagBusy || vorschlagText === vorgang.antwort_vorschlag.text}
-                onClick={() => vorschlagBearbeitenMutation.mutate(vorschlagText)}
-              >
-                Änderungen speichern
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                disabled={vorschlagBusy}
-                onClick={() => vorschlagGenerierenMutation.mutate()}
-              >
-                Neu generieren
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => vorschlagKopieren(vorschlagText)}>
-                {kopiertHinweis ? 'Kopiert!' : 'Kopieren'}
-              </Button>
-            </div>
-            <div className="flex items-center gap-2 pt-1 border-t border-gray-100">
-              <input
-                type="text"
-                placeholder="Grund für Verwerfen (optional)"
-                className="rounded border border-gray-300 px-2 py-1 text-xs flex-1"
-                value={verwerfenGrund}
-                disabled={vorschlagBusy}
-                onChange={e => setVerwerfenGrund(e.target.value)}
-              />
-              <Button
-                size="sm"
-                variant="danger"
-                disabled={vorschlagBusy}
-                onClick={() => vorschlagVerwerfenMutation.mutate(verwerfenGrund || undefined)}
-              >
-                Verwerfen
-              </Button>
-            </div>
-            {(vorschlagFreigebenMutation.isError || vorschlagBearbeitenMutation.isError ||
-              vorschlagVerwerfenMutation.isError || vorschlagGenerierenMutation.isError) && (
-              <p className="text-red-600 text-sm">
-                {fehlerText(
-                  vorschlagFreigebenMutation.error ?? vorschlagBearbeitenMutation.error ??
-                    vorschlagVerwerfenMutation.error ?? vorschlagGenerierenMutation.error,
-                  'Aktion fehlgeschlagen.',
-                )}
-              </p>
-            )}
-          </div>
-        )}
+            </p>
+          )}
+        </div>
       </div>
 
       {/* Handwerkeraufträge (Hauptspalte: das Anlage-Formular braucht Breite) */}
@@ -1055,81 +1115,28 @@ export function VorgangDetail() {
       {/* Zeiterfassung (optionale Sonderkosten) */}
       <ZeiterfassungSection vorgang={vorgang} mitarbeiter={mitarbeiter} />
 
-      {/* Verlauf & Kommentar: Composer oben, Zeitleiste darunter */}
-      <div className="bg-white rounded-lg border border-gray-200 p-5">
-        <h2 className="font-medium text-gray-800 mb-3">Verlauf &amp; Kommentar</h2>
-
-        <div className="mb-4">
-          <textarea
-            className="w-full rounded border border-gray-300 px-3 py-2 text-sm h-20 resize-none"
-            placeholder="Kommentar hinzufügen…"
-            value={kommentarText}
-            onChange={e => setKommentarText(e.target.value)}
-          />
-          <div className="flex items-center justify-between gap-3 mt-2 flex-wrap">
-            <label className="flex items-center gap-2 text-sm text-gray-600">
-              <input
-                type="checkbox"
-                checked={kommentarSichtbar}
-                onChange={e => setKommentarSichtbar(e.target.checked)}
-              />
-              Für Eigentümer sichtbar
-            </label>
-            <Button
-              size="sm"
-              disabled={!kommentarText.trim() || kommentarMutation.isPending}
-              onClick={() => kommentarMutation.mutate({ text: kommentarText, sichtbar: kommentarSichtbar })}
-            >
-              Kommentar speichern
-            </Button>
-          </div>
-          <p className="text-xs text-gray-400 mt-1">
-            {kommentarSichtbar
-              ? 'Dieser Kommentar wird für den Eigentümer sichtbar (sobald es ein Eigentümer-Portal gibt).'
-              : 'Nicht angehakt = rein intern. Der Eigentümer bekommt diesen Kommentar NIE zu sehen.'}
-          </p>
-        </div>
-
-        <ul className="space-y-3 border-t border-gray-100 pt-4">
-          {vorgang.ereignisse.map(e => (
+      {/* Aktivität (intern): Status, Zuweisung, Dokumente, KI-Entwürfe usw. —
+          bewusst getrennt vom Chat, standardmäßig eingeklappt. */}
+      <Klappbox titel="Aktivität (intern)">
+        <ul className="space-y-3">
+          {internEreignisse.map(e => (
             <li key={e.id} className="text-sm border-l-2 border-gray-200 pl-3">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-medium text-gray-700">{EREIGNIS_LABEL[e.typ] ?? e.typ}</span>
-                {e.intern ? (
-                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-500">
-                    Intern
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700">
-                    Für Eigentümer sichtbar
-                  </span>
-                )}
                 <span className="text-gray-400 text-xs">{DATUM(e.erstellt_am)}</span>
                 {e.erstellt_von_name && <span className="text-gray-400 text-xs">— {e.erstellt_von_name}</span>}
               </div>
-              {e.typ === 'antwort_vorschlag_freigegeben' && e.text ? (
-                <div className="mt-1 bg-green-50 border border-green-200 rounded p-3">
-                  <p className="text-gray-700 whitespace-pre-wrap">{e.text}</p>
-                  <button
-                    className="mt-2 text-xs text-primary-600 hover:underline"
-                    onClick={() => navigator.clipboard.writeText(e.text ?? '')}
-                  >
-                    Text kopieren
-                  </button>
-                </div>
-              ) : (
-                e.text && <p className="text-gray-600 mt-0.5">{e.text}</p>
-              )}
+              {e.text && <EreignisText text={e.text} />}
               {(e.alter_wert || e.neuer_wert) && (
                 <p className="text-gray-400 text-xs mt-0.5">{e.alter_wert ?? '–'} → {e.neuer_wert ?? '–'}</p>
               )}
             </li>
           ))}
-          {vorgang.ereignisse.length === 0 && (
-            <li className="text-sm text-gray-400">Noch keine Ereignisse.</li>
+          {internEreignisse.length === 0 && (
+            <li className="text-sm text-gray-400">Keine internen Ereignisse.</li>
           )}
         </ul>
-      </div>
+      </Klappbox>
         </div>
 
         {/* ── Seitenleiste: Steuerung & Nebeninfos ── */}

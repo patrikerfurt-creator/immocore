@@ -18,10 +18,11 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from apps.vorgaenge.models import VorgangTyp
-from apps.vorgaenge.services import vorgang_service
+from apps.vorgaenge.services import antwort_service, vorgang_service
 
 from .auth import IstPortalNutzer, PortalSessionAuthentication
 from .serializers_vorgaenge import (
+    PortalVorgangAntwortSerializer,
     PortalVorgangCreateSerializer,
     PortalVorgangDetailSerializer,
     PortalVorgangListSerializer,
@@ -123,3 +124,35 @@ class PortalVorgangDetailView(APIView):
         vorgaenge = vorgang_service.portal_sichtbare_vorgaenge(person)
         vorgang = get_object_or_404(vorgaenge, pk=vorgang_id)
         return Response(PortalVorgangDetailSerializer(vorgang).data)
+
+
+class PortalVorgangAntwortView(APIView):
+    """``POST /api/v1/portal/vorgaenge/<id>/antwort/`` — Rückantwort des
+    Eigentümers auf einen bestehenden, für ihn sichtbaren Vorgang.
+
+    Scoping wie bei der Detailansicht: nur über ``portal_sichtbare_vorgaenge``
+    erreichbare Vorgänge; ein fremder/nicht freigegebener Vorgang liefert 404
+    (nie 403 — die Existenz soll nicht bestätigt werden). Gedrosselt gegen
+    Missbrauch, analog zum Anlegen."""
+
+    authentication_classes = [PortalSessionAuthentication]
+    permission_classes = [IstPortalNutzer]
+    throttle_scope = 'portal_vorgang_erstellen'
+    throttle_classes = [ScopedRateThrottle]
+
+    def post(self, request, vorgang_id):
+        person = request.portal_zugang.person
+        vorgaenge = vorgang_service.portal_sichtbare_vorgaenge(person)
+        vorgang = get_object_or_404(vorgaenge, pk=vorgang_id)
+
+        eingabe = PortalVorgangAntwortSerializer(data=request.data)
+        eingabe.is_valid(raise_exception=True)
+
+        antwort_service.portal_antwort(
+            vorgang, eingabe.validated_data['text'],
+            erstellt_von=vorgang_service.portal_system_user(),
+        )
+        return Response(
+            PortalVorgangDetailSerializer(vorgang).data,
+            status=status.HTTP_201_CREATED,
+        )

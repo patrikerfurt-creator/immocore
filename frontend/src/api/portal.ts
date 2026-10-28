@@ -314,6 +314,12 @@ export async function vorgangAnlegen(werte: NeuerVorgang): Promise<PortalVorgang
   return data
 }
 
+// Rückantwort des Eigentümers auf einen bestehenden Vorgang.
+export async function vorgangAntworten(id: string, text: string): Promise<PortalVorgangDetail> {
+  const { data } = await portalClient.post<PortalVorgangDetail>(`/vorgaenge/${id}/antwort/`, { text })
+  return data
+}
+
 // ---------------------------------------------------------------------------
 // Interner Bereich (Mitarbeiter-JWT) — Portal-Zugänge verwalten
 // ---------------------------------------------------------------------------
