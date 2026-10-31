@@ -6,7 +6,7 @@
 | **Git-Branch** | `main` |
 | **Git-HEAD** | `3fb630d` — *fix(handwerker): Auftragsversand verweigern, wenn in Produktion kein SMTP konfiguriert ist* |
 | **Remote-Stand** | `origin/main` = `3fb630d` (synchron) |
-| **Live-Server** | 87.106.219.148, deployt auf Stand `3fb630d` |
+| **Live-Server** | 192.168.161.50, deployt auf Stand `3fb630d` |
 | **Testsuite** | 718 Tests, alle grün |
 | **Django-Apps** | 13 Projekt-Apps unter `backend/apps/` |
 | **Modelle** | 87 |
@@ -2021,7 +2021,7 @@ Ausgelesen per Django-Introspektion aus der laufenden Konfiguration (`django.app
 ## 2. Migrationsstand
 
 Ausgabe von `python manage.py showmigrations` auf der **produktiven**
-Datenbank (Live-Server 87.106.219.148, `docker-compose.prod.yml`).
+Datenbank (Live-Server 192.168.161.50, `docker-compose.prod.yml`).
 
 - **Angewendet: 180**
 - **Offen: 0**

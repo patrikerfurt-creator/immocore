@@ -788,6 +788,19 @@ KATEGORIE_MAIL = 'E-Mail Posteingang'
 KATEGORIE_ANHANG = 'E-Mail Anhang'
 
 
+def original_mail_dokument(protokoll: MailImportProtokoll):
+    """Das im DMS abgelegte Original der Mail (die ``.eml``/``.msg``) zu diesem
+    Protokoll — für den „Original-Mail öffnen"-Link der Chat-Ansicht. ``None``,
+    wenn die Ablage (noch) nicht erfolgt ist."""
+    from apps.dokumente.models import Dokument
+    return (
+        Dokument.objects
+        .filter(mail_import=protokoll, kategorie=KATEGORIE_MAIL)
+        .order_by('hochgeladen_am')
+        .first()
+    )
+
+
 def _lege_im_dms_ab(protokoll: MailImportProtokoll, parsed: ParsedMail,
                     benutzer, vorgang: Vorgang | None = None) -> int:
     """Legt die Mail selbst UND ihre Anhänge als Dokumente ab.
@@ -908,7 +921,12 @@ def verarbeite_mail(parsed: ParsedMail, *, anlegen: bool = True) -> MailImportPr
         protokoll.einheit = bestehender.einheit
         protokoll.zuordnung_quelle = 'email_exakt'
         protokoll.posteingang_status = 'automatisch'
+        protokoll.save()
         if anlegen:
+            # Erst ablegen, dann das Ereignis mit dem abgelegten Original
+            # verknüpfen (``dokument``) — so kann die Chat-Ansicht je Mail
+            # direkt auf die Original-.eml verlinken.
+            _lege_im_dms_ab(protokoll, parsed, benutzer, vorgang=bestehender)
             # intern=True: der Text stammt von aussen und kann Angaben zu
             # Dritten enthalten — im Portal sichtbar wird er nur, wenn ein
             # Mitarbeiter ihn bewusst dorthin stellt.
@@ -917,10 +935,8 @@ def verarbeite_mail(parsed: ParsedMail, *, anlegen: bool = True) -> MailImportPr
                 text=f"E-Mail von {parsed.absender_email}: "
                      f"{parsed.betreff_bereinigt}\n\n{parsed.body}"[:5000],
                 erstellt_von=benutzer, intern=True,
+                dokument=original_mail_dokument(protokoll),
             )
-        protokoll.save()
-        if anlegen:
-            _lege_im_dms_ab(protokoll, parsed, benutzer, vorgang=bestehender)
         return protokoll
 
     # --- 3. Stufe 1 -----------------------------------------------------

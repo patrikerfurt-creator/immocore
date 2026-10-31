@@ -15,6 +15,7 @@ from .views import (
 from .views_konto import PortalFaelligkeitenView, PortalSaldoView
 from .views_verwaltung import PortalZugangViewSet
 from .views_vorgaenge import (
+    PortalVorgangAntwortView,
     PortalVorgaengeView,
     PortalVorgangDetailView,
     PortalVorgangTypenView,
@@ -55,6 +56,8 @@ urlpatterns = router.urls + [
     path('portal/vorgaenge/', PortalVorgaengeView.as_view(), name='portal-vorgaenge'),
     path('portal/vorgaenge/<uuid:vorgang_id>/', PortalVorgangDetailView.as_view(),
          name='portal-vorgang-detail'),
+    path('portal/vorgaenge/<uuid:vorgang_id>/antwort/', PortalVorgangAntwortView.as_view(),
+         name='portal-vorgang-antwort'),
 
     # Konto-Reiter (Spec Portal-Erweiterung v1.1, Kap. 6/7). Bewusst ohne
     # ID im Pfad: die Zuordnung kommt ausschließlich aus der Sitzung, damit

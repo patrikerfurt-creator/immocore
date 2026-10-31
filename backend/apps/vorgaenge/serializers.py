@@ -51,7 +51,7 @@ class VorgangEreignisSerializer(serializers.ModelSerializer):
         model = VorgangEreignis
         fields = [
             'id', 'typ', 'text', 'alter_wert', 'neuer_wert', 'intern',
-            'erstellt_am', 'erstellt_von', 'erstellt_von_name',
+            'dokument', 'erstellt_am', 'erstellt_von', 'erstellt_von_name',
         ]
         read_only_fields = fields
 

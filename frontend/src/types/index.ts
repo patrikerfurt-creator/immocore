@@ -1017,6 +1017,8 @@ export type VorgangEreignisTyp =
   | 'antwort_vorschlag_freigegeben' | 'antwort_vorschlag_verworfen'
   | 'handwerker_beauftragt' | 'handwerker_angenommen' | 'handwerker_abgelehnt'
   | 'handwerker_abgeschlossen' | 'handwerker_abgelaufen'
+  | 'mail_eingegangen' | 'schreiben_erstellt' | 'schreiben_versendet'
+  | 'antwort_freigegeben' | 'mail_antwort_gesendet' | 'portal_antwort'
 
 export interface VorgangTyp {
   id: string
@@ -1082,6 +1084,8 @@ export interface VorgangEreignis {
   neuer_wert: string | null
   /** true (Default) = nur intern sichtbar; false = für den Eigentümer sichtbar. */
   intern: boolean
+  /** Optionales DMS-Dokument (z.B. Original-.eml einer eingegangenen Mail). */
+  dokument: string | null
   erstellt_am: string
   erstellt_von: number | null
   erstellt_von_name: string | null

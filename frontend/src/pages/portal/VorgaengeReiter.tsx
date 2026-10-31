@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   meineVorgaenge,
   vorgangAnlegen,
+  vorgangAntworten,
   vorgangDetail,
   vorgangTypen,
   NeuerVorgang,
@@ -104,7 +105,51 @@ function VorgangListe({
   )
 }
 
+// Nachrichten der Verwaltung an den Eigentümer — im Portal linksbündig. Die
+// eigenen Nachrichten des Eigentümers (portal_antwort + die ursprüngliche
+// Beschreibung) stehen rechts.
+const PORTAL_VON_VERWALTUNG = new Set([
+  'antwort_freigegeben', 'antwort_vorschlag_freigegeben',
+  'mail_antwort_gesendet', 'schreiben_versendet',
+])
+
+function PortalBubble({ eigen, text, label, datum }: {
+  eigen: boolean; text: string; label: string; datum: string
+}) {
+  return (
+    <div className={`flex ${eigen ? 'justify-end' : 'justify-start'}`}>
+      <div className={`max-w-[85%] rounded-[10px] border px-3.5 py-2.5 ${
+        eigen ? 'bg-portal-brand-soft border-portal-brand-soft' : 'bg-white border-portal-line'
+      }`}>
+        <div className="flex items-center gap-2 flex-wrap text-[11px] text-portal-soft mb-1">
+          <span className="font-medium text-portal-ink">{label}</span>
+          <span>{datum}</span>
+        </div>
+        <p className="text-[13.5px] text-portal-ink whitespace-pre-wrap">{text}</p>
+      </div>
+    </div>
+  )
+}
+
 function VorgangDetailAnsicht({ vorgang, onZurueck }: { vorgang: PortalVorgangDetail; onZurueck: () => void }) {
+  const queryClient = useQueryClient()
+  const [antwortText, setAntwortText] = useState('')
+  const [fehler, setFehler] = useState('')
+
+  const antwortMutation = useMutation({
+    mutationFn: (text: string) => vorgangAntworten(vorgang.id, text),
+    onSuccess: (aktualisiert) => {
+      queryClient.setQueryData(['portal', 'vorgang', vorgang.id], aktualisiert)
+      queryClient.invalidateQueries({ queryKey: ['portal', 'vorgaenge'] })
+      setAntwortText('')
+    },
+    onError: (e) => setFehler(apiFehler(e, 'Ihre Antwort konnte nicht gesendet werden.')),
+  })
+
+  const nachrichten = [...vorgang.ereignisse].sort((a, b) => a.erstellt_am.localeCompare(b.erstellt_am))
+  // Nach dem Abschluss ist keine weitere Rückantwort mehr sinnvoll.
+  const antwortMoeglich = !['erledigt', 'storniert'].includes(vorgang.status)
+
   return (
     <div className="mt-4">
       <button onClick={onZurueck} className="text-[13px] font-medium text-portal-brand hover:underline mb-3">
@@ -122,32 +167,53 @@ function VorgangDetailAnsicht({ vorgang, onZurueck }: { vorgang: PortalVorgangDe
           </div>
           <StatusBadge status={vorgang.status} />
         </div>
-
-        {vorgang.beschreibung && (
-          <p className="text-[13.5px] text-portal-ink mt-3 whitespace-pre-wrap">{vorgang.beschreibung}</p>
-        )}
       </div>
 
       <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-portal-soft mt-6 mb-2">
         Verlauf
       </p>
-      {vorgang.ereignisse.length === 0 ? (
-        <p className="px-5 py-4 text-[13.5px] text-portal-soft bg-white border border-dashed border-portal-line rounded-[10px]">
-          Zu diesem Vorgang liegt noch kein Verlauf vor.
-        </p>
-      ) : (
-        <div className="bg-white border border-portal-line rounded-[10px] divide-y divide-portal-line">
-          {[...vorgang.ereignisse]
-            .sort((a, b) => a.erstellt_am.localeCompare(b.erstellt_am))
-            .map((e, i) => (
-              <div key={i} className="px-4 py-2.5">
-                <div className="flex justify-between gap-3 text-[11.5px] text-portal-soft">
-                  <span className="font-medium text-portal-ink">{e.typ_anzeige}</span>
-                  <span>{formatDatum(e.erstellt_am)}</span>
-                </div>
-                {e.text && <p className="text-[13.5px] text-portal-ink mt-1">{e.text}</p>}
-              </div>
-            ))}
+      <div className="space-y-2.5">
+        {/* Erste Nachricht: das ursprüngliche Anliegen des Eigentümers */}
+        {vorgang.beschreibung && (
+          <PortalBubble eigen label="Ihr Anliegen" datum={formatDatum(vorgang.erstellt_am)} text={vorgang.beschreibung} />
+        )}
+        {nachrichten.map((e, i) => {
+          if (!e.text) return null
+          const vonVerwaltung = PORTAL_VON_VERWALTUNG.has(e.typ)
+          return (
+            <PortalBubble
+              key={i}
+              eigen={!vonVerwaltung}
+              label={vonVerwaltung ? 'Verwaltung' : 'Ihre Nachricht'}
+              datum={formatDatum(e.erstellt_am)}
+              text={e.text}
+            />
+          )
+        })}
+      </div>
+
+      {/* Antwort-Composer */}
+      {antwortMoeglich && (
+        <div className="mt-4 bg-white border border-portal-line rounded-[10px] px-5 py-4">
+          <label className="text-sm font-medium text-portal-ink">Antwort an die Verwaltung</label>
+          <textarea
+            value={antwortText}
+            onChange={e => { setAntwortText(e.target.value); setFehler('') }}
+            rows={3}
+            placeholder="Ihre Nachricht…"
+            className="mt-1 w-full rounded border px-3 py-2 text-sm outline-none transition border-portal-line focus:border-portal-brand focus:ring-1 focus:ring-portal-brand"
+          />
+          {fehler && <p className="text-sm text-portal-debit mt-1">{fehler}</p>}
+          <div className="flex justify-end mt-2">
+            <Button
+              variant="portal"
+              size="sm"
+              disabled={antwortMutation.isPending || !antwortText.trim()}
+              onClick={() => antwortMutation.mutate(antwortText)}
+            >
+              {antwortMutation.isPending ? 'Wird gesendet…' : 'Antwort senden'}
+            </Button>
+          </div>
         </div>
       )}
     </div>

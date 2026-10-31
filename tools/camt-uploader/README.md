@@ -74,7 +74,7 @@ Get-ScheduledTask -TaskName 'IMMOCORE CAMT53 Uploader' | Get-ScheduledTaskInfo
 Get-Content .\logs\camt_uploader.log -Tail 30 -Wait
 
 # Serverseitig prüfen, ob Dateien ankommen / importiert werden
-ssh -i C:\Users\maurer\.ssh\strato_server_key patrik@87.106.219.148 `
+ssh -i C:\Users\maurer\.ssh\strato_server_key patrik@192.168.161.50 `
     "ls -l ~/immocore/CamtDAT ~/immocore/CamtDAT/archiv | tail"
 ```
 
