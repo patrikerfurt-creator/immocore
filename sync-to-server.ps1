@@ -6,7 +6,7 @@
 
 $SSH_KEY    = "$env:USERPROFILE\.ssh\strato_server_key"
 $SSH_USER   = "patrik"
-$SSH_HOST   = "87.106.219.148"
+$SSH_HOST   = "192.168.161.50"
 
 $LOKALE_ORDNER = @{
     "CamtDAT"    = @{

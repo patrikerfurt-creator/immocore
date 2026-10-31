@@ -237,7 +237,7 @@ const MAX_FAELLIGKEITEN_SEITEN = 50
 export async function meineFaelligkeiten(): Promise<PortalFaelligkeit[]> {
   const alle: PortalFaelligkeit[] = []
   // Seiten selbst durchzählen statt `next` zu folgen: DRF baut dort eine
-  // ABSOLUTE URL aus dem Request (auf Live z.B. http://87.106.219.148/…).
+  // ABSOLUTE URL aus dem Request (auf Live z.B. http://192.168.161.50/…).
   // Der Browser läuft auf einer anderen Origin — der Folgeaufruf scheitert
   // und riss vorher die ganze Abfrage mit, sodass gar keine Fälligkeit
   // erschien. Mit einer relativen URL greift wieder der Portal-Client
