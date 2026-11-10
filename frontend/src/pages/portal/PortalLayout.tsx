@@ -1,5 +1,9 @@
+import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { Navigate, NavLink, Outlet, useNavigate } from 'react-router-dom'
-import { abmelden, getPortalToken } from '../../api/portal'
+import { abmelden, getPortalToken, sepaMandatStatus } from '../../api/portal'
+import { Button } from '../../components/ui/Button'
+import { SepaMandatDialog } from './SepaMandatDialog'
 
 /**
  * Rahmen des Eigentümer-Portals.
@@ -14,8 +18,17 @@ import { abmelden, getPortalToken } from '../../api/portal'
  */
 export function PortalLayout() {
   const navigate = useNavigate()
+  const [dialogOffen, setDialogOffen] = useState(false)
+  const angemeldet = Boolean(getPortalToken())
 
-  if (!getPortalToken()) {
+  // Nur mit Sitzung abfragen; ohne Token leitet das Layout ohnehin zur Anmeldung um.
+  const sepaStatus = useQuery({
+    queryKey: ['portal', 'sepa-mandat'],
+    queryFn: sepaMandatStatus,
+    enabled: angemeldet,
+  })
+
+  if (!angemeldet) {
     return <Navigate to="/portal/login" replace />
   }
 
@@ -30,6 +43,17 @@ export function PortalLayout() {
         ? 'bg-portal-brand-soft text-portal-brand'
         : 'text-portal-soft hover:text-portal-ink'
     }`
+
+  // Während des Ladens und bei Fehlern bleibt der Button mit neutralem Label stehen.
+  const sepaLabel =
+    sepaStatus.data?.kopfzeile_aktion === 'aendern'
+      ? 'SEPA-Lastschriftmandat ändern'
+      : 'SEPA-Lastschriftmandat'
+
+  function handleSepaKlick() {
+    if (!sepaStatus.data) sepaStatus.refetch()
+    setDialogOffen(true)
+  }
 
   return (
     <div className="min-h-screen bg-portal-paper text-portal-ink">
@@ -49,6 +73,9 @@ export function PortalLayout() {
               <NavLink to="/portal/einheiten" className={linkClass}>Meine Einheiten</NavLink>
               <NavLink to="/portal/daten" className={linkClass}>Meine Daten</NavLink>
             </nav>
+            <Button type="button" variant="portal-secondary" size="sm" onClick={handleSepaKlick}>
+              {sepaLabel}
+            </Button>
             <button
               onClick={handleAbmelden}
               className="text-[13px] text-portal-soft hover:text-portal-ink underline"
@@ -62,6 +89,10 @@ export function PortalLayout() {
           <Outlet />
         </main>
       </div>
+
+      {dialogOffen && sepaStatus.data && (
+        <SepaMandatDialog status={sepaStatus.data} onClose={() => setDialogOffen(false)} />
+      )}
     </div>
   )
 }

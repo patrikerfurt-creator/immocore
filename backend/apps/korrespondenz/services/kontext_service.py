@@ -247,8 +247,12 @@ def _gruppe_bank(r: _Refs) -> dict:
 def _gruppe_ev(r: _Refs) -> dict:
     if r.person is None:
         return {}
-    mandat = r.person.sepa_mandat
-    vorhanden = bool(mandat is not None and mandat.aktiv)
+    from apps.personen.services.sepa_mandat import mandat_fuer_ev, sammelmandat_fuer_person
+    if r.ev is not None:
+        mandat = mandat_fuer_ev(r.ev)
+    else:
+        mandat = sammelmandat_fuer_person(r.person)
+    vorhanden = mandat is not None
     return {
         'beginn': r.ev.beginn if r.ev is not None else None,
         'sepa_mandat_vorhanden': vorhanden,

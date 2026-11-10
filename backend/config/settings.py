@@ -140,6 +140,9 @@ REST_FRAMEWORK = {
         # Kap. 5.3). Zählt je Portal-Identität, weil ``PortalNutzer.pk``
         # gesetzt und ``is_authenticated`` True ist — nicht je IP.
         'portal_vorgang_erstellen': '20/day',
+        # SEPA-Mandat aus dem Portal anfordern (löst einen Mailversand aus):
+        # je Portal-Identität, nicht je IP.
+        'portal_sepa_mandat': '5/hour',
     },
     # Bewusst KEIN globales 'DEFAULT_PAGINATION_CLASS' — würde die
     # Antwortform ALLER bestehenden Endpunkte ändern (Frontend erwartet
@@ -201,6 +204,9 @@ MS_GRAPH_SENDER = os.environ.get('MS_GRAPH_SENDER', 'info@demme-immobilien.de')
 # EMAIL_*-Variablen. So bleiben info@ (Graph, Handwerker/EV) und noreply@ (SMTP,
 # Portal) sauber getrennt. Siehe apps/portal/services/mail_service.py.
 PORTAL_FROM_EMAIL = os.environ.get('PORTAL_FROM_EMAIL', 'noreply@immospace.cloud')
+# Verwalter als Vertreter der Zahlungsempfänger im SEPA-Mandatstext des Portals
+# (templates/email/sepa_mandat_text.txt).
+PORTAL_VERWALTER_NAME = os.environ.get('PORTAL_VERWALTER_NAME', 'Demme Immobilien Verwaltung GmbH')
 
 # Modul Vorlagen & Korrespondenz, Anbindung Mahnwesen (Spec 9.1). Solange False,
 # verhält sich der Mahnlauf exakt wie bisher (keine Schreiben, keine Prüfung, kein

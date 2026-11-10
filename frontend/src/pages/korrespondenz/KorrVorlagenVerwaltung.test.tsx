@@ -162,6 +162,26 @@ describe('Vorlagen-Detail (Versionen)', () => {
     await waitFor(() => expect(versionAnlegen).toHaveBeenCalledWith('v1', { basis_version: 'ver2' }))
   })
 
+  it('fragt für die allererste Version den Betreff ab (keine Basisversion vorhanden)', async () => {
+    versionen.mockResolvedValue([])
+    versionAnlegen.mockResolvedValue({ ...VER1, status: 'entwurf', betreff: 'Einladung zur ETV' })
+    vi.spyOn(window, 'prompt').mockReturnValue('  Einladung zur ETV ')
+    rendere('/korrespondenz/vorlagen/v1')
+    await userEvent.click(await screen.findByRole('button', { name: '+ Neue Version' }))
+    expect(window.prompt).toHaveBeenCalledWith('Betreff der ersten Version:', 'ETV-Einladung')
+    await waitFor(() => expect(versionAnlegen).toHaveBeenCalledWith('v1', { betreff: 'Einladung zur ETV' }))
+    expect(await screen.findByText('Neue Version als Entwurf angelegt.')).toBeInTheDocument()
+  })
+
+  it('legt ohne Betreff keine erste Version an', async () => {
+    versionen.mockResolvedValue([])
+    vi.spyOn(window, 'prompt').mockReturnValue('')
+    rendere('/korrespondenz/vorlagen/v1')
+    await userEvent.click(await screen.findByRole('button', { name: '+ Neue Version' }))
+    expect(await screen.findByText('Ohne Betreff kann keine Version angelegt werden.')).toBeInTheDocument()
+    expect(versionAnlegen).not.toHaveBeenCalled()
+  })
+
   it('bietet die Briefbogen-Auswahl nur, wenn die Briefbögen ladbar sind (Admin)', async () => {
     rendere('/korrespondenz/vorlagen/v1')
     await screen.findByRole('region', { name: 'Stammdaten' })

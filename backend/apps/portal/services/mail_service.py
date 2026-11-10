@@ -19,8 +19,11 @@ from ..models import (
     EINLADUNG_GUELTIG_STUNDEN,
     EMAIL_BESTAETIGUNG_GUELTIG_STUNDEN,
     MAGIC_LINK_GUELTIG_MINUTEN,
+    SEPA_MANDAT_BESTAETIGUNG_GUELTIG_STUNDEN,
+    PortalSepaMandatAenderung,
     PortalToken,
 )
+from .sepa_mandat_text import geltungsbereich_text_fuer_antrag, maskiere_iban
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +79,10 @@ def anmelde_url(token: PortalToken) -> str:
 
 def email_bestaetigung_url(token: PortalToken) -> str:
     return f'{settings.FRONTEND_BASE_URL.rstrip("/")}/portal/email-bestaetigen/{token.token}'
+
+
+def sepa_mandat_url(token: PortalToken) -> str:
+    return f'{settings.FRONTEND_BASE_URL.rstrip("/")}/portal/sepa-mandat/bestaetigen/{token.token}'
 
 
 def _portal_connection():
@@ -152,5 +159,53 @@ def versende_email_bestaetigung(token: PortalToken) -> None:
             'link': email_bestaetigung_url(token),
             'neue_email': token.ziel_email,
             'gueltig_stunden': EMAIL_BESTAETIGUNG_GUELTIG_STUNDEN,
+        },
+    )
+
+
+def versende_sepa_mandat_link(pending: PortalSepaMandatAenderung) -> None:
+    """Bestätigungslink für ein SEPA-Mandat.
+
+    Geht an ``pending.empfaenger_email`` (die EIGENE Adresse der Person, nicht
+    die eines Zustellungsbevollmächtigten — dieser ist nicht Kontoinhaber).
+    Der Mandatstext steht vollständig in der Mail, identisch zur Bestätigungsseite.
+    """
+    _sende(
+        betreff='Bitte bestätigen Sie Ihr SEPA-Lastschriftmandat',
+        vorlage='portal_sepa_mandat',
+        empfaenger=pending.empfaenger_email,
+        kontext={
+            'person': pending.person,
+            'name': pending.kontoinhaber_name,
+            'url': sepa_mandat_url(pending.token),
+            'mandatstext': pending.mandatstext,
+            'mandatsreferenz': pending.mandatsreferenz,
+            'iban_maskiert': maskiere_iban(pending.iban),
+            'geltungsbereich_text': geltungsbereich_text_fuer_antrag(pending),
+            'aenderung': pending.aktion == PortalSepaMandatAenderung.AKTION_AENDERUNG,
+            'gueltig_stunden': SEPA_MANDAT_BESTAETIGUNG_GUELTIG_STUNDEN,
+        },
+    )
+
+
+def versende_sepa_mandat_bestaetigung(pending: PortalSepaMandatAenderung) -> None:
+    """Bestätigung nach wirksamem Mandat (Nachweis für den Eigentümer)."""
+    aenderung = pending.aktion == PortalSepaMandatAenderung.AKTION_AENDERUNG
+    _sende(
+        betreff=(
+            'Ihr SEPA-Lastschriftmandat wurde geändert' if aenderung
+            else 'Ihr SEPA-Lastschriftmandat wurde erteilt'
+        ),
+        vorlage='portal_sepa_mandat_bestaetigt',
+        empfaenger=pending.empfaenger_email,
+        kontext={
+            'person': pending.person,
+            'name': pending.kontoinhaber_name,
+            'mandatstext': pending.mandatstext,
+            'mandatsreferenz': pending.mandatsreferenz,
+            'iban_maskiert': maskiere_iban(pending.iban),
+            'bestaetigt_am': pending.bestaetigt_am,
+            'glaeubiger': pending.abgedeckte_glaeubiger,
+            'aenderung': aenderung,
         },
     )

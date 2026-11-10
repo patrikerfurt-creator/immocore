@@ -16,9 +16,12 @@ class PersonAdminForm(forms.ModelForm):
 
 @admin.register(SEPAMandat)
 class SEPAMandatAdmin(admin.ModelAdmin):
-    list_display = ['mandatsreferenz', 'iban', 'unterzeichnet_am', 'aktiv']
-    list_filter = ['aktiv']
-    search_fields = ['mandatsreferenz', 'iban']
+    list_display = ['mandatsreferenz', 'iban', 'person', 'eigentumsverhaeltnis',
+                    'quelle', 'unterzeichnet_am', 'aktiv']
+    list_filter = ['aktiv', 'quelle']
+    search_fields = ['mandatsreferenz', 'iban', 'person__nachname', 'person__vorname',
+                     'person__firmenname']
+    raw_id_fields = ['person', 'eigentumsverhaeltnis']
     ordering = ['-unterzeichnet_am']
 
 

@@ -29,13 +29,54 @@ class SEPAMandat(models.Model):
         help_text='FRST = Erstlastschrift, RCUR = Folgelastschrift',
     )
 
+    QUELLE_VERWALTUNG = 'verwaltung'
+    QUELLE_PORTAL = 'portal'
+    QUELLE_CHOICES = [
+        (QUELLE_VERWALTUNG, 'Verwaltung'),
+        (QUELLE_PORTAL, 'Portal (Magic Link)'),
+    ]
+
+    person = models.ForeignKey(
+        'Person', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='sepa_mandate', verbose_name='Mandatsgeber',
+    )
+    eigentumsverhaeltnis = models.ForeignKey(
+        'EigentumsVerhaeltnis', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='sepa_mandate',
+        help_text='Leer = Sammelmandat für alle Einheiten des Mandatsgebers; '
+                  'gesetzt = nur diese Einheit.',
+    )
+    quelle = models.CharField(
+        max_length=20, choices=QUELLE_CHOICES, default=QUELLE_VERWALTUNG,
+    )
+
     class Meta:
         verbose_name = 'SEPA-Mandat'
         verbose_name_plural = 'SEPA-Mandate'
         ordering = ['-unterzeichnet_am']
+        constraints = [
+            models.CheckConstraint(
+                name='ck_mandat_ev_braucht_person',
+                check=Q(eigentumsverhaeltnis__isnull=True) | Q(person__isnull=False),
+            ),
+            models.UniqueConstraint(
+                fields=['eigentumsverhaeltnis'],
+                condition=Q(aktiv=True, eigentumsverhaeltnis__isnull=False),
+                name='uniq_aktives_mandat_je_ev',
+            ),
+            models.UniqueConstraint(
+                fields=['person'],
+                condition=Q(aktiv=True, eigentumsverhaeltnis__isnull=True),
+                name='uniq_aktives_sammelmandat_je_person',
+            ),
+        ]
 
     def __str__(self):
         return f"{self.mandatsreferenz} ({self.iban})"
+
+    @property
+    def ist_sammelmandat(self) -> bool:
+        return self.eigentumsverhaeltnis_id is None
 
 
 def erster_listenwert(liste, schluessel: tuple[str, ...]) -> str:

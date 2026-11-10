@@ -98,8 +98,13 @@ class IbanPruefungBeimSpeichernTest(APITestCase):
         response = self.client.patch(BANK_URL, {'iban': 'DE89'})
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
-    def test_gueltige_iban_wird_gespeichert(self):
+    def test_gueltige_iban_wird_in_der_personenliste_gespeichert(self):
+        """K2: das Mandat bleibt unangetastet, nur ``Person.ibans`` wird gepflegt."""
+        alt = self.mandat.iban
         response = self.client.patch(BANK_URL, {'iban': GUELTIGE_IBAN})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data['mandat_aktualisiert'])
         self.mandat.refresh_from_db()
-        self.assertEqual(self.mandat.iban, GUELTIGE_IBAN)
+        self.person.refresh_from_db()
+        self.assertEqual(self.mandat.iban, alt)
+        self.assertEqual(self.person.ibans[0], GUELTIGE_IBAN)

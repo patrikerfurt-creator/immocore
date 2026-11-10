@@ -1477,10 +1477,11 @@ class LastschriftLaufViewSet(viewsets.ModelViewSet):
         # ── Hausgeld-Nebenbuch ─────────────────────────────────────────
         if hg_lauf_id:
             from .models import HausgeldSollstellungslauf
+            from apps.personen.services.sepa_mandat import mandate_fuer_evs
             try:
                 hg_lauf = HausgeldSollstellungslauf.objects.prefetch_related(
                     'sollstellungen__splits__bankkonto_ziel',
-                    'sollstellungen__eigentumsverhaeltnis__person__sepa_mandat',
+                    'sollstellungen__eigentumsverhaeltnis__person',
                     'sollstellungen__eigentumsverhaeltnis__einheit',
                 ).get(id=hg_lauf_id, objekt=objekt)
             except HausgeldSollstellungslauf.DoesNotExist:
@@ -1504,15 +1505,19 @@ class LastschriftLaufViewSet(viewsets.ModelViewSet):
 
             # Gruppierung nach EV: alle OPOS einer Person → ein Einzug
             ev_map: dict = {}
-            for ss in hg_lauf.sollstellungen.filter(
+            offene_sollstellungen = list(hg_lauf.sollstellungen.filter(
                 status_cached__in=('offen', 'teilbezahlt'), storniert_am__isnull=True
             ).select_related(
-                'eigentumsverhaeltnis__person__sepa_mandat',
+                'eigentumsverhaeltnis__person',
                 'eigentumsverhaeltnis__einheit', 'objekt',
-            ).prefetch_related('splits__bankkonto_ziel'):
+            ).prefetch_related('splits__bankkonto_ziel'))
+            mandate = mandate_fuer_evs(
+                [ss.eigentumsverhaeltnis for ss in offene_sollstellungen]
+            )
+            for ss in offene_sollstellungen:
                 person = ss.eigentumsverhaeltnis.person
-                mandat = getattr(person, 'sepa_mandat', None)
-                if not mandat or not mandat.aktiv:
+                mandat = mandate.get(ss.eigentumsverhaeltnis_id)
+                if not mandat:
                     ohne_mandat.append({'sollstellung_id': str(ss.id), 'grund': 'Kein aktives SEPA-Mandat'})
                     continue
 

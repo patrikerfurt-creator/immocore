@@ -50,20 +50,32 @@ def _mea_werte(objekt_ids: list) -> dict:
     return ergebnis
 
 
+def aktive_evs(person: Person):
+    """Aktuelle Eigentumsverhältnisse einer Person (Portal-Definition).
+
+    ``beginn <= heute`` und (``ende`` leer oder ``ende >= heute``): ein
+    Voreigentümer sieht nach dem Verkauf nichts mehr, ein EV mit künftigem
+    Ende zählt noch. Abweichend von ``EigentumsVerhaeltnis.ist_aktiv``
+    (``ende is None``) — diese eine Definition gilt für Einheitenansicht,
+    SEPA-Mandat-Auswahl und die erneute Prüfung beim Bestätigen.
+    """
+    heute = timezone.localdate()
+    return (
+        EigentumsVerhaeltnis.objects
+        .filter(person=person, beginn__lte=heute)
+        .filter(Q(ende__isnull=True) | Q(ende__gte=heute))
+        .select_related('einheit', 'einheit__objekt', 'person')
+        .order_by('einheit__objekt__bezeichnung', 'einheit__einheit_nr')
+    )
+
+
 def meine_einheiten(person: Person) -> list[dict]:
     """WEG-Karten mit ihren Einheiten (Mockup-Struktur, Spec Kap. 6.1).
 
     Nur AKTUELLE Eigentumsverhältnisse: ``ende`` leer oder in der Zukunft.
     Ein Voreigentümer soll nach dem Verkauf keine Einheitsdaten mehr sehen.
     """
-    heute = timezone.localdate()
-    verhaeltnisse = (
-        EigentumsVerhaeltnis.objects
-        .filter(person=person, beginn__lte=heute)
-        .filter(Q(ende__isnull=True) | Q(ende__gte=heute))
-        .select_related('einheit', 'einheit__objekt')
-        .order_by('einheit__objekt__bezeichnung', 'einheit__einheit_nr')
-    )
+    verhaeltnisse = aktive_evs(person)
 
     objekt_ids = {ev.einheit.objekt_id for ev in verhaeltnisse}
     mea = _mea_werte(list(objekt_ids))

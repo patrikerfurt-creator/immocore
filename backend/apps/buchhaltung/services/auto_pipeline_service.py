@@ -162,16 +162,24 @@ def _filtere_lastschrift_kandidaten(sollstellungslauf):
 
     Returns: (kandidaten, ausgeschlossen) — beide Listen von HausgeldSollstellung.
     """
+    from apps.personen.services.sepa_mandat import mandate_fuer_evs
+
     kandidaten = []
     ausgeschlossen = []
 
-    for sollstellung in sollstellungslauf.sollstellungen.filter(
-        sollstellungs_typ='hausgeld'
-    ).select_related('eigentumsverhaeltnis__person__sepa_mandat', 'eigentumsverhaeltnis__einheit'):
+    sollstellungen = list(
+        sollstellungslauf.sollstellungen.filter(
+            sollstellungs_typ='hausgeld'
+        ).select_related('eigentumsverhaeltnis__person', 'eigentumsverhaeltnis__einheit')
+    )
+    mandate = mandate_fuer_evs([s.eigentumsverhaeltnis for s in sollstellungen])
+
+    for sollstellung in sollstellungen:
         ev = sollstellung.eigentumsverhaeltnis
         person = ev.person
+        mandat = mandate.get(ev.id)
 
-        if not person.sepa_mandat:
+        if not mandat:
             ausgeschlossen.append({
                 'ev_id': str(ev.id),
                 'name': person.name,
@@ -181,7 +189,7 @@ def _filtere_lastschrift_kandidaten(sollstellungslauf):
             })
             continue
 
-        if person.sepa_mandat.sequence_type != 'RCUR':
+        if mandat.sequence_type != 'RCUR':
             ausgeschlossen.append({
                 'ev_id': str(ev.id),
                 'name': person.name,
@@ -191,7 +199,7 @@ def _filtere_lastschrift_kandidaten(sollstellungslauf):
             })
             continue
 
-        if not person.sepa_mandat.iban:
+        if not mandat.iban:
             ausgeschlossen.append({
                 'ev_id': str(ev.id),
                 'name': person.name,

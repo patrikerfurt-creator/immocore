@@ -78,6 +78,7 @@ import { PortalLayout } from './pages/portal/PortalLayout'
 import { PortalLogin } from './pages/portal/PortalLogin'
 import { PortalAnmelden } from './pages/portal/PortalAnmelden'
 import { PortalEmailBestaetigen } from './pages/portal/PortalEmailBestaetigen'
+import { PortalSepaMandatBestaetigen } from './pages/portal/PortalSepaMandatBestaetigen'
 import { MeineEinheiten } from './pages/portal/MeineEinheiten'
 import { MeineDaten } from './pages/portal/MeineDaten'
 
@@ -103,6 +104,7 @@ export default function App() {
           <Route path="/portal/login" element={<PortalLogin />} />
           <Route path="/portal/anmelden/:token" element={<PortalAnmelden />} />
           <Route path="/portal/email-bestaetigen/:token" element={<PortalEmailBestaetigen />} />
+          <Route path="/portal/sepa-mandat/bestaetigen/:token" element={<PortalSepaMandatBestaetigen />} />
           <Route path="/portal" element={<PortalLayout />}>
             <Route index element={<Navigate to="/portal/einheiten" replace />} />
             <Route path="einheiten" element={<MeineEinheiten />} />

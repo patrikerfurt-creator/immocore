@@ -481,3 +481,105 @@ class AutoPipelineAuditUserTest(_VollePipelineMixin, TestCase):
         self.assertEqual(lauf.erstellt_von.username, 'immocore-autopilot')
         for ss in HausgeldSollstellung.objects.filter(objekt=self.objekt, periode=self.PERIODE):
             self.assertEqual(ss.erstellt_von.username, 'immocore-autopilot')
+
+
+# ---------------------------------------------------------------------------
+# Mandats-Resolver im Einzug (Portal-SEPA-Mandat, Phase 3)
+# ---------------------------------------------------------------------------
+
+class EinzugMandatResolverTest(TestCase):
+    """Vorfilter und commite_lastschriftlauf lösen das Mandat je EV auf."""
+
+    PERIODE = date(2026, 4, 1)
+
+    def setUp(self):
+        self.user = _create_autopilot_user()
+        self.objekt = _create_test_objekt()
+        self.bk = _create_test_bankkonto(self.objekt)
+        self.lauf = HausgeldSollstellungslauf.objects.create(
+            objekt=self.objekt, typ='hausgeld_monat', periode=self.PERIODE,
+            status='commited', lauf_quelle='autopilot', erstellt_von=self.user,
+        )
+
+    def _mandat(self, referenz, iban, person=None, ev=None, aktiv=True):
+        from apps.personen.models import SEPAMandat
+        return SEPAMandat.objects.create(
+            mandatsreferenz=referenz, iban=iban, bic='COBADEFF',
+            unterzeichnet_am=date(2024, 1, 15), sequence_type='RCUR',
+            aktiv=aktiv, person=person, eigentumsverhaeltnis=ev,
+        )
+
+    def _ev_mit_sollstellung(self, person, nr):
+        from apps.buchhaltung.services.opos_nr_service import naechste_opos_nr
+        ev = _create_ev(person, _create_einheit(self.objekt, einheit_nr=nr))
+        ss = HausgeldSollstellung.objects.create(
+            objekt=self.objekt, eigentumsverhaeltnis=ev,
+            sollstellungs_typ='hausgeld', ba=None, periode=self.PERIODE,
+            faellig_am=self.PERIODE, opos_nr=naechste_opos_nr(self.objekt),
+            soll_betrag=Decimal('250.00'), ist_betrag=Decimal('0'),
+            status_cached='offen', erstellt_von=self.user,
+            sollstellungslauf=self.lauf,
+        )
+        return ev, ss
+
+    def test_einheitenmandat_und_sammelmandat_je_ev(self):
+        from apps.buchhaltung.services.auto_pipeline_service import _filtere_lastschrift_kandidaten
+        person = _create_person()
+        ev1, _ = self._ev_mit_sollstellung(person, 'WE01')
+        ev2, _ = self._ev_mit_sollstellung(person, 'WE02')
+        self._mandat('M-EV1', 'DE89370400440532013001', person=person, ev=ev1)
+        self._mandat('M-SAMMEL', 'DE89370400440532013002', person=person)
+
+        kandidaten, ausgeschlossen = _filtere_lastschrift_kandidaten(self.lauf)
+        self.assertEqual(ausgeschlossen, [])
+        self.assertEqual(len(kandidaten), 2)
+
+        from apps.buchhaltung.services.sepa_lastschrift import commite_lastschriftlauf
+        lauf = commite_lastschriftlauf(
+            self.objekt, self.PERIODE, kandidaten, self.user, lauf_quelle='autopilot')
+        je_einheit = {p['verwendungszweck'].split(' - ')[1]: p for p in lauf.positionen}
+        self.assertEqual(je_einheit['WE01']['mandatsreferenz'], 'M-EV1')
+        self.assertEqual(je_einheit['WE01']['schuldner_iban'], 'DE89370400440532013001')
+        self.assertEqual(je_einheit['WE02']['mandatsreferenz'], 'M-SAMMEL')
+        self.assertEqual(je_einheit['WE02']['schuldner_iban'], 'DE89370400440532013002')
+
+    def test_ev_ohne_mandat_wird_ausgeschlossen(self):
+        from apps.buchhaltung.services.auto_pipeline_service import _filtere_lastschrift_kandidaten
+        person = _create_person()
+        ev, _ = self._ev_mit_sollstellung(person, 'WE01')
+
+        kandidaten, ausgeschlossen = _filtere_lastschrift_kandidaten(self.lauf)
+        self.assertEqual(kandidaten, [])
+        self.assertEqual([a['warnung_typ'] for a in ausgeschlossen], ['kein_sepa_mandat'])
+        self.assertEqual(ausgeschlossen[0]['ev_id'], str(ev.id))
+        self.assertTrue(ausgeschlossen[0]['nachricht'].endswith('SEPA-Mandat fehlt'))
+
+    def test_inaktives_mandat_wird_ausgeschlossen(self):
+        from apps.buchhaltung.services.auto_pipeline_service import _filtere_lastschrift_kandidaten
+        mandat = _create_sepa_mandat()
+        mandat.aktiv = False
+        mandat.save()
+        person = _create_person(sepa_mandat=mandat)  # Legacy-Verknüpfung
+        self._ev_mit_sollstellung(person, 'WE01')
+
+        kandidaten, ausgeschlossen = _filtere_lastschrift_kandidaten(self.lauf)
+        self.assertEqual(kandidaten, [])
+        self.assertEqual([a['warnung_typ'] for a in ausgeschlossen], ['kein_sepa_mandat'])
+
+    def test_commite_ueberspringt_kandidat_ohne_mandat(self):
+        from apps.buchhaltung.services.sepa_lastschrift import commite_lastschriftlauf
+        mit = _create_person(nachname='MitMandat')
+        ohne = _create_person(nachname='OhneMandat')
+        self._mandat('M-MIT', 'DE89370400440532013003', person=mit)
+        _, ss_mit = self._ev_mit_sollstellung(mit, 'WE01')
+        _, ss_ohne = self._ev_mit_sollstellung(ohne, 'WE02')
+
+        with self.assertLogs('apps.buchhaltung.services.sepa_lastschrift', level='WARNING') as cm:
+            lauf = commite_lastschriftlauf(
+                self.objekt, self.PERIODE, [ss_ohne, ss_mit], self.user,
+                lauf_quelle='autopilot',
+            )
+        self.assertTrue(any('OhneMandat' in m for m in cm.output))
+        self.assertEqual(lauf.anzahl_positionen, 1)
+        self.assertEqual(lauf.positionen[0]['mandatsreferenz'], 'M-MIT')
+        self.assertEqual(lauf.positionen[0]['sollstellung_ids'], [str(ss_mit.id)])

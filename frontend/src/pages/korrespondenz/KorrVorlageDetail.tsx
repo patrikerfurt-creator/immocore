@@ -5,7 +5,7 @@ import { briefboegenApi, vorlagenApi, vorlagenVersionenApi } from '../../api/kor
 import { objekteApi } from '../../api/objekte'
 import { Badge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
-import type { Vorlage, VorlagenKanal, VorlagenVersion } from '../../types'
+import type { Vorlage, VorlagenKanal, VorlagenVersion, VorlagenVersionPayload } from '../../types'
 import { ANLASS_LABEL, KANAL_LABEL, VERSION_STATUS_LABEL, fehlerMeldung } from './konstanten'
 
 function datum(s: string | null | undefined) {
@@ -66,11 +66,9 @@ export function KorrVorlageDetail() {
   })
 
   // Neue Version = Kopie der jüngsten Version (basis_version); freigegebene Versionen bleiben unverändert.
+  // Die allererste Version hat keine Basis - das Backend verlangt dafür einen Betreff.
   const neueVersion = useMutation({
-    mutationFn: () => {
-      const juengste = [...(versionen ?? [])].sort((a, b) => b.version - a.version)[0]
-      return vorlagenApi.versionAnlegen(id!, juengste ? { basis_version: juengste.id } : {})
-    },
+    mutationFn: (payload: VorlagenVersionPayload) => vorlagenApi.versionAnlegen(id!, payload),
     onSuccess: () => {
       invalidieren()
       setMeldung({ art: 'ok', text: 'Neue Version als Entwurf angelegt.' })
@@ -86,6 +84,20 @@ export function KorrVorlageDetail() {
     },
     onError: e => setMeldung({ art: 'fehler', text: fehlerMeldung(e, 'Freigabe fehlgeschlagen.') }),
   })
+
+  function neueVersionAnlegen() {
+    const juengste = [...(versionen ?? [])].sort((a, b) => b.version - a.version)[0]
+    if (juengste) {
+      neueVersion.mutate({ basis_version: juengste.id })
+      return
+    }
+    const betreff = window.prompt('Betreff der ersten Version:', vorlage?.bezeichnung ?? '')?.trim()
+    if (!betreff) {
+      if (betreff === '') setMeldung({ art: 'fehler', text: 'Ohne Betreff kann keine Version angelegt werden.' })
+      return
+    }
+    neueVersion.mutate({ betreff })
+  }
 
   function freigabe(v: VorlagenVersion) {
     if (window.confirm(
@@ -169,7 +181,7 @@ export function KorrVorlageDetail() {
       <section className="bg-white border border-gray-200 rounded-lg" aria-label="Versionen">
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
           <h2 className="font-semibold">Versionen</h2>
-          <Button type="button" variant="secondary" disabled={neueVersion.isPending} onClick={() => neueVersion.mutate()}>
+          <Button type="button" variant="secondary" disabled={neueVersion.isPending} onClick={neueVersionAnlegen}>
             + Neue Version
           </Button>
         </div>

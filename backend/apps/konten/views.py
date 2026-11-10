@@ -8,6 +8,7 @@ from rest_framework.response import Response
 from .models import Abrechnungsart, Konto, Personenkonto, Unterkonto
 from .serializers import AbrechnungsartSerializer, KontoSerializer, PersonenkontoSerializer, UnterkontoSerializer
 from .services import kontenrahmen_anlegen
+from apps.personen.services.sepa_mandat import mandate_fuer_evs
 
 
 class AbrechnungsartViewSet(viewsets.ModelViewSet):
@@ -264,7 +265,7 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         qs = Personenkonto.objects.select_related(
-            'objekt', 'eigentuemer', 'eigentuemer__sepa_mandat', 'vertrag'
+            'objekt', 'eigentuemer', 'vertrag'
         ).prefetch_related('unterkonten')
         p = self.request.query_params
         if p.get('objekt'):
@@ -293,12 +294,13 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
         pks = (
             Personenkonto.objects
             .filter(objekt_id=objekt_id)
-            .select_related('eigentuemer', 'eigentuemer__sepa_mandat', 'vertrag__einheit')
+            .select_related('eigentuemer', 'vertrag__person', 'vertrag__einheit')
             .order_by('kontonummer')
         )
 
         wj_id = request.query_params.get('wirtschaftsjahr')
         salden = saldi_je_personenkonto(pks, wirtschaftsjahr_id=wj_id)
+        mandate = mandate_fuer_evs([pk.vertrag for pk in pks])
 
         result = []
         for pk in pks:
@@ -317,7 +319,7 @@ class PersonenkontoViewSet(viewsets.ReadOnlyModelViewSet):
                 'einheit_nr': einheit_nr,
                 'status': pk.status,
                 'saldo_offen': float(saldo),
-                'sepa_mandat': _sepa_mandat_data(pk.eigentuemer.sepa_mandat),
+                'sepa_mandat': _sepa_mandat_data(mandate.get(pk.vertrag_id)),
             })
 
         return Response(result)

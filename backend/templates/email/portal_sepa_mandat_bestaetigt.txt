@@ -1,0 +1,24 @@
+{% autoescape off %}Ihr SEPA-Lastschriftmandat wurde {% if aenderung %}geändert{% else %}erteilt{% endif %}
+
+{% if person.briefanrede %}{{ person.briefanrede }}{% else %}Sehr geehrte Damen und Herren,{% endif %}
+{% if person.briefanrede2 %}{{ person.briefanrede2 }}{% endif %}
+
+Sie haben Ihr SEPA-Lastschriftmandat am {{ bestaetigt_am|date:"d.m.Y" }} um {{ bestaetigt_am|date:"H:i" }} Uhr verbindlich {% if aenderung %}geändert{% else %}erteilt{% endif %}.
+
+Mandatsreferenz: {{ mandatsreferenz }}
+Konto: {{ iban_maskiert }}
+Zahlungsempfänger:
+{% for g in glaeubiger %}- {{ g.bezeichnung }}, Gläubiger-Identifikationsnummer {{ g.glaeubiger_id }}
+{% endfor %}
+Bitte bewahren Sie diese E-Mail als Nachweis auf.
+
+Mandatstext:
+------------------------------------------------------------
+{{ mandatstext }}
+------------------------------------------------------------
+
+Wenn Sie dieses Mandat nicht erteilt haben, wenden Sie sich bitte umgehend an die Verwaltung.
+
+Mit freundlichen Grüßen
+Demme Immobilien Verwaltung GmbH
+{% endautoescape %}

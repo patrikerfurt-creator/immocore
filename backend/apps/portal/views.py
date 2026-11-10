@@ -29,10 +29,21 @@ from .serializers import (
     KontaktAenderungSerializer,
     MagicLinkAnfrageSerializer,
     MeineDatenSerializer,
+    SepaMandatAnfordernSerializer,
+    SepaMandatBestaetigenSerializer,
     TokenSerializer,
     WegKarteSerializer,
 )
-from .services import einheiten_service, mail_service, stammdaten_service, zugang_service
+from .services import (
+    einheiten_service,
+    iban_service,
+    mail_service,
+    sepa_mandat_service,
+    stammdaten_service,
+    zugang_service,
+)
+from .services.request_info import client_ip
+from .services.sepa_mandat_service import SepaMandatFehler
 from .services.stammdaten_service import StammdatenFehler
 from .services.zugang_service import RateLimitErreicht, TokenUngueltig, ZugangGesperrt
 
@@ -219,34 +230,7 @@ class IbanPruefenView(APIView):
     permission_classes = [IstPortalNutzer]
 
     def get(self, request):
-        roh = (request.query_params.get('iban') or '').replace(' ', '').upper()
-        if not roh:
-            return Response({'valid': False, 'error': 'Keine IBAN angegeben'})
-
-        try:
-            from schwifty import IBAN
-            iban = IBAN(roh)
-        except ImportError:
-            # Ohne die optionale Abhängigkeit keine Aussage vortäuschen.
-            return Response({'valid': True, 'iban': roh, 'bic': '', 'bank_name': ''})
-        except Exception:
-            # Bewusst ohne die Original-Fehlermeldung: die ist englisch und
-            # technisch, im Portal steht ein Eigentümer davor.
-            return Response({'valid': False, 'error': 'Diese IBAN ist ungültig.'})
-
-        bic = ''
-        bank_name = ''
-        try:
-            bic_obj = iban.bic
-            if bic_obj:
-                bic = str(bic_obj)
-                bank_name = getattr(bic_obj, 'bank_name', '') or ''
-        except Exception:
-            pass
-
-        return Response({
-            'valid': True, 'iban': str(iban), 'bic': bic, 'bank_name': bank_name,
-        })
+        return Response(iban_service.pruefe_iban(request.query_params.get('iban') or ''))
 
 
 class EmailAendernView(APIView):
@@ -311,3 +295,112 @@ class EmailBestaetigenView(APIView):
             'detail': 'Ihre neue E-Mail-Adresse ist jetzt aktiv.',
             'email': zugang_service.person_email(person),
         })
+
+
+class SepaMandatStatusView(APIView):
+    """``GET /api/v1/portal/sepa-mandat/`` — Geltungsbereiche, Aktion, offene Anfrage."""
+
+    authentication_classes = [PortalSessionAuthentication]
+    permission_classes = [IstPortalNutzer]
+
+    def get(self, request):
+        return Response(sepa_mandat_service.status_fuer_zugang(request.portal_zugang))
+
+
+class SepaMandatAnfordernView(APIView):
+    """``POST /api/v1/portal/sepa-mandat/anfordern/`` — stößt die Mandatserteilung
+    bzw. -änderung an. Es wird KEIN Mandat geschrieben, nur der Bestätigungslink
+    an die eigene E-Mail-Adresse versendet."""
+
+    authentication_classes = [PortalSessionAuthentication]
+    permission_classes = [IstPortalNutzer]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'portal_sepa_mandat'
+
+    def post(self, request):
+        serializer = SepaMandatAnfordernSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        daten = serializer.validated_data
+
+        ip, _forwarded = client_ip(request)
+        try:
+            antrag = sepa_mandat_service.stosse_mandat_an(
+                request.portal_zugang,
+                daten['schluessel'], daten['iban'], daten['bic'],
+                ip=ip,
+                user_agent=request.META.get('HTTP_USER_AGENT', ''),
+                session_id=request.portal_session.id,
+            )
+        except SepaMandatFehler as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except mail_service.VersandNichtKonfiguriert as exc:
+            return Response(
+                {'detail': str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+        except Exception:
+            # Antrag und Token sind zurückgerollt; der Eigentümer kann es erneut versuchen.
+            logger.exception('Portal: SEPA-Mandat-Link konnte nicht versendet werden.')
+            return Response(
+                {'detail': 'Die E-Mail konnte nicht versendet werden. '
+                           'Bitte versuchen Sie es später erneut.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        maskiert = sepa_mandat_service.maskiere_email(antrag.empfaenger_email)
+        return Response({
+            'detail': f'Wir haben Ihnen eine E-Mail an {maskiert} gesendet. '
+                      f'Bitte bestätigen Sie das Mandat über den Link.',
+            'empfaenger_email_maskiert': maskiert,
+            'gueltig_bis': antrag.token.gueltig_bis,
+        })
+
+
+class SepaMandatVorschauView(APIView):
+    """``GET /api/v1/portal/sepa-mandat/bestaetigen/<token>/`` — Mandatstext zur
+    Bestätigungsseite. Verbraucht den Token NICHT (Mail-Scanner rufen Links ab)."""
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'portal_auth'
+
+    def get(self, request, token):
+        try:
+            return Response(sepa_mandat_service.vorschau(token))
+        except (TokenUngueltig, ZugangGesperrt):
+            return Response(
+                {'detail': _UNGUELTIGER_LINK}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+
+class SepaMandatBestaetigenView(APIView):
+    """``POST /api/v1/portal/sepa-mandat/bestaetigen/`` — Body ``token`` und
+    ``kontoinhaber_erklaerung``. Wirksam wird das Mandat erst mit diesem POST."""
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'portal_auth'
+
+    def post(self, request):
+        serializer = SepaMandatBestaetigenSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        daten = serializer.validated_data
+
+        ip, forwarded_roh = client_ip(request)
+        try:
+            mandat = sepa_mandat_service.bestaetige_mandat(
+                daten['token'],
+                ip=ip,
+                user_agent=request.META.get('HTTP_USER_AGENT', ''),
+                forwarded_roh=forwarded_roh,
+                kontoinhaber_erklaerung=daten['kontoinhaber_erklaerung'],
+            )
+        except SepaMandatFehler as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except (TokenUngueltig, ZugangGesperrt):
+            return Response(
+                {'detail': _UNGUELTIGER_LINK}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+        return Response(sepa_mandat_service.bestaetigungs_antwort(mandat))

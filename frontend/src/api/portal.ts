@@ -156,6 +156,8 @@ export async function ibanPruefen(iban: string): Promise<IbanCheckResult> {
 export interface BankverbindungAntwort extends PortalMeineDaten {
   mandat_aktualisiert: boolean
   mandatsreferenz: string | null
+  /** Seit K2 ändert die Bankverbindung das Mandat nicht mehr; der Server erklärt den Weg. */
+  hinweis?: string
 }
 
 export async function bankverbindungSpeichern(
@@ -175,6 +177,120 @@ export async function emailAendern(email: string): Promise<{ detail: string; ema
 /** Anonym — der Bestätigungslink wird oft im neuen Postfach geöffnet. */
 export async function emailBestaetigen(token: string): Promise<{ detail: string; email: string }> {
   const { data } = await axios.post('/api/v1/portal/meine-daten/email/bestaetigen/', { token })
+  return data
+}
+
+// ---------------------------------------------------------------------------
+// SEPA-Lastschriftmandat (Portal-Flow mit Bestätigungslink)
+// ---------------------------------------------------------------------------
+
+export type SepaMandatAktion = 'erteilen' | 'aendern'
+
+export interface SepaMandatInfo {
+  mandatsreferenz: string
+  iban_maskiert: string
+  bic: string
+  unterzeichnet_am: string
+  quelle: 'verwaltung' | 'portal'
+}
+
+/** Sammelmandat über alle Einheiten. */
+export interface SepaGeltungsbereichAlle {
+  schluessel: 'alle'
+  ev_id: null
+  bezeichnung: string
+  aktion: SepaMandatAktion
+  mandat: SepaMandatInfo | null
+}
+
+/** Mandat für eine einzelne Einheit (Schlüssel `ev:<uuid>`). */
+export interface SepaGeltungsbereichEinheit {
+  schluessel: string
+  ev_id: string
+  bezeichnung: string
+  objekt_bezeichnung: string
+  einheit_nr: string
+  lage: string
+  aktion: SepaMandatAktion
+  mandat: SepaMandatInfo | null
+  wirksam_ueber: 'einheit' | 'alle' | 'keins'
+}
+
+export type SepaGeltungsbereich = SepaGeltungsbereichAlle | SepaGeltungsbereichEinheit
+
+export function istSammelbereich(b: SepaGeltungsbereich): b is SepaGeltungsbereichAlle {
+  return b.schluessel === 'alle'
+}
+
+export interface SepaMandatStatus {
+  kann_erteilen: boolean
+  hinderungsgrund: string | null
+  empfaenger_email_maskiert: string | null
+  kopfzeile_aktion: SepaMandatAktion
+  auswahl_noetig: boolean
+  geltungsbereiche: SepaGeltungsbereich[]
+  offene_anfrage: {
+    schluessel: string
+    aktion: SepaMandatAktion
+    erstellt_am: string
+    gueltig_bis: string | null
+  } | null
+}
+
+export interface SepaMandatAnfordernAntwort {
+  detail: string
+  empfaenger_email_maskiert: string
+  gueltig_bis: string
+}
+
+export interface SepaMandatVorschau {
+  mandatstext: string
+  mandatsreferenz: string
+  iban_maskiert: string
+  bic: string
+  geltungsbereich: 'alle' | 'einheit'
+  geltungsbereich_text: string
+  aktion: SepaMandatAktion
+  kontoinhaber_name: string
+  gueltig_bis: string
+}
+
+export interface SepaMandatBestaetigenAntwort {
+  detail: string
+  mandatsreferenz: string
+  geltungsbereich_text: string
+  aktion: SepaMandatAktion
+}
+
+export async function sepaMandatStatus(): Promise<SepaMandatStatus> {
+  const { data } = await portalClient.get<SepaMandatStatus>('/sepa-mandat/')
+  return data
+}
+
+export async function sepaMandatAnfordern(
+  werte: { schluessel: string; iban: string; bic?: string },
+): Promise<SepaMandatAnfordernAntwort> {
+  const { data } = await portalClient.post<SepaMandatAnfordernAntwort>('/sepa-mandat/anfordern/', werte)
+  return data
+}
+
+/** Anonym und nicht verbrauchend — der Link wird oft in einem Browser ohne Portal-Sitzung geöffnet. */
+export async function sepaMandatVorschau(token: string): Promise<SepaMandatVorschau> {
+  const { data } = await axios.get<SepaMandatVorschau>(
+    `/api/v1/portal/sepa-mandat/bestaetigen/${encodeURIComponent(token)}/`,
+  )
+  return data
+}
+
+/** Anonym. Dieser POST ist der Zustimmungszeitpunkt (Entscheid b: kein Auto-Bestätigen). */
+export async function sepaMandatBestaetigen(
+  token: string,
+  kontoinhaberErklaerung: boolean,
+): Promise<SepaMandatBestaetigenAntwort> {
+  const { data } = await axios.post<SepaMandatBestaetigenAntwort>(
+    '/api/v1/portal/sepa-mandat/bestaetigen/',
+    { token, kontoinhaber_erklaerung: kontoinhaberErklaerung },
+  )
   return data
 }
 

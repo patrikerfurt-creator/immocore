@@ -17,6 +17,7 @@ from ..models import (
     EINLADUNG_GUELTIG_STUNDEN,
     EMAIL_BESTAETIGUNG_GUELTIG_STUNDEN,
     MAGIC_LINK_GUELTIG_MINUTEN,
+    SEPA_MANDAT_BESTAETIGUNG_GUELTIG_STUNDEN,
     SESSION_GUELTIG_STUNDEN,
     PortalSession,
     PortalToken,
@@ -226,9 +227,48 @@ def erzeuge_email_bestaetigung(zugang: PortalZugang, neue_email: str) -> PortalT
     )
 
 
+@transaction.atomic
+def erzeuge_sepa_mandat_token(zugang: PortalZugang) -> PortalToken:
+    """Bestätigungs-Token für ein SEPA-Mandat (24 h), ältere werden entwertet."""
+    _entwerte_offene_token(zugang, PortalToken.TYP_SEPA_MANDAT)
+    return _erzeuge_token(
+        zugang,
+        PortalToken.TYP_SEPA_MANDAT,
+        timezone.now() + timedelta(hours=SEPA_MANDAT_BESTAETIGUNG_GUELTIG_STUNDEN),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Token einlösen
 # ---------------------------------------------------------------------------
+
+def _pruefe_gueltig(tok: PortalToken | None) -> PortalToken:
+    """Gemeinsame Gültigkeitsprüfung von ``pruefe_token`` und ``loese_token_ein``.
+
+    Der Fehlertext ist bewusst für alle Fälle identisch — er darf nicht
+    verraten, ob ein Token existiert, abgelaufen oder schon benutzt ist.
+    """
+    if tok is None or not tok.ist_gueltig():
+        raise TokenUngueltig('Dieser Link ist ungültig oder abgelaufen.')
+    if not tok.zugang.aktiv:
+        raise ZugangGesperrt('Dieser Zugang ist nicht aktiv.')
+    return tok
+
+
+def pruefe_token(token_wert: str, erwartete_typen: tuple[str, ...]) -> PortalToken:
+    """Prüft einen Token, OHNE ihn zu verbrauchen (kein ``select_for_update``).
+
+    Für lesende Vorschauen: Mail-Scanner und Link-Vorschauen rufen solche
+    Endpunkte ab, der Einmal-Token darf dadurch nicht verbraucht werden.
+    Wirft ``TokenUngueltig`` bzw. ``ZugangGesperrt``.
+    """
+    tok = (
+        PortalToken.objects
+        .select_related('zugang', 'zugang__person')
+        .filter(token=(token_wert or '').strip(), typ__in=erwartete_typen)
+        .first()
+    )
+    return _pruefe_gueltig(tok)
 
 @transaction.atomic
 def loese_token_ein(token_wert: str, erwartete_typen: tuple[str, ...]) -> PortalToken:
@@ -246,10 +286,7 @@ def loese_token_ein(token_wert: str, erwartete_typen: tuple[str, ...]) -> Portal
         .filter(token=(token_wert or '').strip(), typ__in=erwartete_typen)
         .first()
     )
-    if tok is None or not tok.ist_gueltig():
-        raise TokenUngueltig('Dieser Link ist ungültig oder abgelaufen.')
-    if not tok.zugang.aktiv:
-        raise ZugangGesperrt('Dieser Zugang ist nicht aktiv.')
+    _pruefe_gueltig(tok)
 
     tok.verbraucht_am = timezone.now()
     tok.save(update_fields=['verbraucht_am'])
