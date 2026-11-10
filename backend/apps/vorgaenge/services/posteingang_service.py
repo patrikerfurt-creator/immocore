@@ -148,11 +148,14 @@ def ordne_vorgang_zu(protokoll: MailImportProtokoll, vorgang: Vorgang, *,
     """
     _pruefe_bearbeitbar(protokoll)
 
+    from apps.vorgaenge.services.mail_import_service import original_mail_dokument
+
     VorgangEreignis.objects.create(
         vorgang=vorgang, typ='mail_eingegangen',
         text=f"E-Mail von {protokoll.absender}: {protokoll.betreff}\n\n"
              f"{protokoll.body_auszug}"[:5000],
         erstellt_von=benutzer, intern=True,
+        dokument=original_mail_dokument(protokoll),
     )
 
     protokoll.vorgang = vorgang

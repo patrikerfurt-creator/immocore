@@ -22,6 +22,7 @@ from rest_framework.test import APIClient
 from apps.dokumente.models import Aktenregister, Dokument
 from apps.objekte.models import Einheit, Objekt
 from apps.personen.models import EigentumsVerhaeltnis, Person
+from apps.rechnungen.models import Kreditor, Rechnung
 
 User = get_user_model()
 
@@ -97,6 +98,41 @@ class HausakteApiTest(AktenApiBasis):
         letzte = antwort.data['register'][-1]
         self.assertEqual(letzte['bezeichnung'], 'Ohne Register')
         self.assertIsNone(letzte['register_id'])
+
+    def _beleg(self, dateiname, register=None):
+        """Kontextloser Rechnungsbeleg (Owner ist die Rechnung)."""
+        beleg = Dokument.objects.create(
+            datei=ContentFile(b'%PDF-1.4 x', name=dateiname),
+            dateiname=dateiname, kategorie='Beleg', dokument_typ='beleg',
+            register=register, hochgeladen_von=self.user)
+        Rechnung.objects.create(objekt=self.objekt, beleg_dokument=beleg)
+        return beleg
+
+    def test_unsortierter_rechnungsbeleg_nicht_in_ohne_register(self):
+        # Belege gehoeren in die Kreditorenakte; unsortiert sollen sie die
+        # Arbeitsliste der Hausakte nicht zudecken.
+        self._beleg('beleg.pdf')
+        self._dokument('echte_mail.pdf', objekt=self.objekt)
+
+        antwort = self.client.get('/api/v1/akten/hausakte/',
+                                  {'objekt': str(self.objekt.id)})
+
+        ohne = next(r for r in antwort.data['register']
+                    if r['bezeichnung'] == 'Ohne Register')
+        namen = [d['dateiname'] for d in ohne['dokumente']]
+        self.assertIn('echte_mail.pdf', namen)
+        self.assertNotIn('beleg.pdf', namen)
+
+    def test_einsortierter_rechnungsbeleg_bleibt_im_register(self):
+        # Wer einen Beleg bewusst in ein Register legt, soll ihn dort behalten.
+        self._beleg('beleg_sortiert.pdf', register=self.wartung)
+
+        antwort = self.client.get('/api/v1/akten/hausakte/',
+                                  {'objekt': str(self.objekt.id)})
+
+        gruppe = next(r for r in antwort.data['register'] if r['code'] == '05')
+        self.assertEqual([d['dateiname'] for d in gruppe['dokumente']],
+                         ['beleg_sortiert.pdf'])
 
     def test_herkunft_zeigt_den_weg_in_die_akte(self):
         # Ohne diese Angabe wirkt die Hausakte wie ein Sammelsurium: man
@@ -256,6 +292,123 @@ class DokumentEinsortierenApiTest(AktenApiBasis):
         self.assertEqual(antwort.status_code, 400)
         dokument.refresh_from_db()
         self.assertIsNone(dokument.register_id)
+
+
+class RegistervorschlagApiTest(AktenApiBasis):
+    """Der Vorschlag-Endpoint — er SCHLAEGT vor, setzt aber nichts.
+
+    Getestet wird die deterministische Dokumenttyp-Stufe (beschluss -> "15"):
+    sie braucht keinen API-Schluessel und keinen Claude-Aufruf.
+    """
+
+    def _beschluss(self, dateiname='beschluss.pdf'):
+        dokument = self._dokument(dateiname, objekt=self.objekt)
+        dokument.dokument_typ = 'beschluss'
+        dokument.save(update_fields=['dokument_typ'])
+        return dokument
+
+    def test_dokumenttyp_regel_schlaegt_register_vor(self):
+        dokument = self._beschluss()
+
+        antwort = self.client.get(
+            f'/api/v1/dokumente/{dokument.id}/registervorschlag/',
+            {'objekt': str(self.objekt.id)})
+
+        self.assertEqual(antwort.status_code, 200)
+        self.assertEqual(antwort.data['quelle'], 'dokumenttyp')
+        self.assertEqual(antwort.data['code'], '15')
+        self.assertIsNotNone(antwort.data['register_id'])
+
+    def test_vorschlag_setzt_das_register_nicht(self):
+        # Vorschlagen, nicht einsortieren: bis jemand "Übernehmen" klickt,
+        # bleibt das Dokument unsortiert.
+        dokument = self._beschluss('beschluss2.pdf')
+
+        self.client.get(
+            f'/api/v1/dokumente/{dokument.id}/registervorschlag/',
+            {'objekt': str(self.objekt.id)})
+
+        dokument.refresh_from_db()
+        self.assertIsNone(dokument.register_id)
+
+    def test_ohne_anmeldung_kein_zugriff(self):
+        dokument = self._beschluss('beschluss3.pdf')
+        self.client.force_authenticate(None)
+
+        antwort = self.client.get(
+            f'/api/v1/dokumente/{dokument.id}/registervorschlag/',
+            {'objekt': str(self.objekt.id)})
+
+        self.assertEqual(antwort.status_code, 401)
+
+
+class KreditorakteApiTest(AktenApiBasis):
+    """Die Kreditorenakte: Belege eines Kreditors, nach Objekt gruppiert.
+
+    Belege sind kontextlose Rechnungsbelege (Owner ist die Rechnung); sie
+    werden deshalb per ``Dokument.objects.create`` angelegt, nicht ueber
+    ``full_clean`` — genau wie in der realen Kopplung.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.kreditor = Kreditor.objects.create(name='Muster Handwerk GmbH')
+
+    def _beleg(self, dateiname, kreditor, objekt):
+        dok = Dokument.objects.create(
+            datei=ContentFile(b'%PDF-1.4 x', name=dateiname),
+            dateiname=dateiname, kategorie='Beleg', dokument_typ='beleg',
+            hochgeladen_von=self.user)
+        Rechnung.objects.create(objekt=objekt, kreditor=kreditor, beleg_dokument=dok)
+        return dok
+
+    def test_gruppiert_belege_nach_objekt(self):
+        self._beleg('a1.pdf', self.kreditor, self.objekt)
+        self._beleg('a2.pdf', self.kreditor, self.objekt)
+        self._beleg('b1.pdf', self.kreditor, self.fremdes)
+
+        antwort = self.client.get('/api/v1/akten/kreditorenakte/',
+                                  {'kreditor': str(self.kreditor.id)})
+
+        self.assertEqual(antwort.status_code, 200)
+        self.assertEqual(antwort.data['anzahl_dokumente'], 3)
+        gruppen = antwort.data['objekte']
+        # Nach Objektnummer sortiert: API01 vor API02.
+        self.assertEqual([g['objektnummer'] for g in gruppen], ['API01', 'API02'])
+        self.assertEqual([g['anzahl'] for g in gruppen], [2, 1])
+
+    def test_fremder_kreditor_nicht_enthalten(self):
+        anderer = Kreditor.objects.create(name='Andere Firma')
+        self._beleg('meins.pdf', self.kreditor, self.objekt)
+        self._beleg('fremd.pdf', anderer, self.objekt)
+
+        antwort = self.client.get('/api/v1/akten/kreditorenakte/',
+                                  {'kreditor': str(self.kreditor.id)})
+
+        self.assertEqual(antwort.data['anzahl_dokumente'], 1)
+        namen = [d['dateiname']
+                 for g in antwort.data['objekte'] for d in g['dokumente']]
+        self.assertEqual(namen, ['meins.pdf'])
+
+    def test_beleg_ohne_objekt_landet_in_ohne_objekt(self):
+        self._beleg('kein_objekt.pdf', self.kreditor, None)
+
+        antwort = self.client.get('/api/v1/akten/kreditorenakte/',
+                                  {'kreditor': str(self.kreditor.id)})
+
+        letzte = antwort.data['objekte'][-1]
+        self.assertEqual(letzte['bezeichnung'], 'Ohne Objekt')
+        self.assertIsNone(letzte['objekt_id'])
+
+    def test_ohne_kreditor_parameter_kommt_400(self):
+        self.assertEqual(
+            self.client.get('/api/v1/akten/kreditorenakte/').status_code, 400)
+
+    def test_ohne_anmeldung_kein_zugriff(self):
+        self.client.force_authenticate(None)
+        antwort = self.client.get('/api/v1/akten/kreditorenakte/',
+                                  {'kreditor': str(self.kreditor.id)})
+        self.assertEqual(antwort.status_code, 401)
 
 
 class AnzeigenameTest(AktenApiBasis):

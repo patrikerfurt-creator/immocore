@@ -213,6 +213,13 @@ class VorgangEreignis(models.Model):
         ('mail_eingegangen',            'E-Mail eingegangen'),
         ('schreiben_erstellt',          'Schreiben erstellt'),
         ('schreiben_versendet',         'Schreiben versendet'),
+        # Chat-Antworten: unsere direkte Mail-Antwort an den Kunden und die
+        # Rückantwort des Kunden über das Eigentümer-Portal. Beide gehören zur
+        # Konversation (intern=False) und werden in der Chat-Ansicht als
+        # Sprechblasen dargestellt.
+        ('antwort_freigegeben',         'Antwort fürs Portal freigegeben'),
+        ('mail_antwort_gesendet',       'Mail-Antwort an Kunde gesendet'),
+        ('portal_antwort',              'Antwort über Portal (Kunde)'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
@@ -223,6 +230,14 @@ class VorgangEreignis(models.Model):
     text = models.TextField(null=True, blank=True)
     alter_wert = models.CharField(max_length=100, null=True, blank=True)
     neuer_wert = models.CharField(max_length=100, null=True, blank=True)
+    # Optionaler Beleg zum Ereignis — v.a. die Original-.eml einer eingegangenen
+    # Mail, damit die Chat-Ansicht je Nachricht direkt auf das DMS-Dokument
+    # verlinken kann. SET_NULL: ein gelöschtes Dokument darf den Audit-Verlauf
+    # nicht mitlöschen (GoBD: das Ereignis bleibt bestehen).
+    dokument = models.ForeignKey(
+        'dokumente.Dokument', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='vorgang_ereignisse',
+    )
     intern = models.BooleanField(
         default=True,
         verbose_name='Intern',

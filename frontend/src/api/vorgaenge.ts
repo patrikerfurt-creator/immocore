@@ -64,6 +64,11 @@ export const vorgaengeApi = {
   antwortVorschlagVerwerfen: (id: string, grund?: string) =>
     client.post<VorgangAntwortVorschlag>(`/vorgaenge/${id}/antwort-vorschlag/verwerfen/`, grund ? { grund } : {}).then(r => r.data),
 
+  // Antwort an den Kunden absenden: kanal 'portal' = Freigabe fürs Portal,
+  // kanal 'mail' = direkte E-Mail-Antwort (für Kunden ohne Portal-Zugang).
+  antwortSenden: (id: string, text: string, kanal: 'mail' | 'portal') =>
+    client.post<VorgangDetail>(`/vorgaenge/${id}/antwort/`, { text, kanal }).then(r => r.data),
+
   // ── Zeiterfassung (optionale Sonderkosten) ──────────────────────────────
   abrechenbarSetzen: (id: string, abrechenbar: boolean) =>
     client.post<VorgangDetail>(`/vorgaenge/${id}/abrechenbar/`, { abrechenbar }).then(r => r.data),

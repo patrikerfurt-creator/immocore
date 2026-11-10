@@ -29,7 +29,7 @@ from .serializers import (
     VorgangTypSerializer,
     VorgangZeiteintragCreateSerializer,
 )
-from .services import antwort_vorschlag_service, dokument_service, vorgang_service
+from .services import antwort_service, antwort_vorschlag_service, dokument_service, vorgang_service
 
 # Handwerkerauftrag-Anlage aus einem Vorgang heraus (Phase C, Orchestrator-
 # Vorgabe Schritt 3) — Action AM bestehenden VorgangViewSet, wie in der Spec
@@ -338,6 +338,30 @@ class VorgangViewSet(mixins.ListModelMixin,
         except DjangoValidationError as exc:
             return _validation_error_response(exc)
         return Response(VorgangAntwortVorschlagSerializer(vorschlag).data)
+
+    @action(detail=True, methods=['post'], url_path='antwort')
+    def antwort(self, request, pk=None):
+        """Antwort an den Kunden — Body ``{text, kanal: 'mail'|'portal'}``.
+
+        ``portal`` gibt die Antwort fürs Eigentümer-Portal frei (kein Versand),
+        ``mail`` versendet sie direkt per E-Mail (für Kunden ohne Portal). Beide
+        erscheinen als Nachricht im Chat-Verlauf des Vorgangs."""
+        vorgang = self.get_object()
+        text = request.data.get('text', '')
+        kanal = request.data.get('kanal', 'portal')
+        try:
+            if kanal == 'mail':
+                antwort_service.sende_mail_antwort(vorgang, text, request.user)
+            elif kanal == 'portal':
+                antwort_service.gib_antwort_frei(vorgang, text, request.user)
+            else:
+                return Response(
+                    {'detail': "'kanal' muss 'mail' oder 'portal' sein."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        except DjangoValidationError as exc:
+            return _validation_error_response(exc)
+        return Response(VorgangDetailSerializer(vorgang).data)
 
     @action(detail=True, methods=['post'], url_path='handwerkerauftrag')
     def handwerkerauftrag(self, request, pk=None):

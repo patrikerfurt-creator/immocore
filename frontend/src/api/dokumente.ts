@@ -1,18 +1,84 @@
 import client from './client'
 import type { Dokument, ObjektDokument } from '../types'
 
+/** Ein aufgelöster Vorschlagstreffer (Objekt/Einheit/Person/Register). */
+export interface VorschlagRef {
+  id: string
+  label: string
+  /** Nur bei einer Einheit gesetzt: ID des übergeordneten Objekts. */
+  objekt?: string
+}
+
+/** Antwort von POST /dokumente/upload-vorschlag/ — reine Vorschläge, nichts
+ *  ist gesetzt. `owner` nennt das bevorzugte Kontextfeld (oder null). */
+export interface UploadVorschlag {
+  inhalt_erkannt: boolean
+  kontext: {
+    owner: 'objekt' | 'einheit' | 'person' | null
+    objekt: VorschlagRef | null
+    einheit: VorschlagRef | null
+    person: VorschlagRef | null
+    quelle: string
+    konfidenz: number | null
+    begruendung: string
+    fehler: string
+  }
+  register: {
+    register_id: string | null
+    code: string
+    bezeichnung: string
+    aktenart: string
+    quelle: string
+    konfidenz: number | null
+    begruendung: string
+    fehler: string
+  }
+}
+
+/** Felder beim bestätigten Upload. Genau EINES von objekt/einheit/person wird
+ *  gesetzt (Owner-Regel des Dokument-Modells). */
+export interface DokumentUploadFelder {
+  objekt?: string | null
+  einheit?: string | null
+  person?: string | null
+  register?: string | null
+  kategorie: string
+  dokument_typ?: string
+  beschreibung?: string
+}
+
 export const dokumenteApi = {
   list: (params?: Record<string, string>) =>
     client.get<Dokument[]>('/dokumente/', { params }).then(r => r.data),
   get: (id: string) => client.get<Dokument>(`/dokumente/${id}/`).then(r => r.data),
   delete: (id: string) => client.delete(`/dokumente/${id}/`),
 
-  upload: (objektId: string, file: File, kategorie: string, beschreibung?: string) => {
+  /** Analysiert die Datei und schlägt Kontext + Register vor — ohne etwas
+   *  anzulegen. Lazy aufrufen (die KI-Stufen kosten pro Aufruf). */
+  analyseVorschlag: (file: File, beschreibung?: string, dokumentTyp?: string) => {
     const form = new FormData()
-    form.append('objekt', objektId)
     form.append('datei', file)
-    form.append('kategorie', kategorie)
     if (beschreibung) form.append('beschreibung', beschreibung)
+    if (dokumentTyp) form.append('dokument_typ', dokumentTyp)
+    return client.post<UploadVorschlag>('/dokumente/upload-vorschlag/', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }).then(r => r.data)
+  },
+
+  upload: (file: File, felder: DokumentUploadFelder) => {
+    const form = new FormData()
+    form.append('datei', file)
+    // dateiname ist ein eigenes Pflichtfeld des Dokuments (die Brücke zur Datei
+    // im Archivordner) — aus dem Dateinamen der hochgeladenen Datei ableiten.
+    form.append('dateiname', file.name)
+    form.append('kategorie', felder.kategorie)
+    // Genau einen Kontext-FK setzen — der Owner muss eindeutig sein.
+    if (felder.einheit) form.append('einheit', felder.einheit)
+    else if (felder.person) form.append('person', felder.person)
+    else if (felder.objekt) form.append('objekt', felder.objekt)
+    if (felder.register) form.append('register', felder.register)
+    if (felder.dokument_typ) form.append('dokument_typ', felder.dokument_typ)
+    if (felder.beschreibung) form.append('beschreibung', felder.beschreibung)
     return client.post<Dokument>('/dokumente/', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
     }).then(r => r.data)

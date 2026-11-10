@@ -51,7 +51,7 @@ class VorgangEreignisSerializer(serializers.ModelSerializer):
         model = VorgangEreignis
         fields = [
             'id', 'typ', 'text', 'alter_wert', 'neuer_wert', 'intern',
-            'erstellt_am', 'erstellt_von', 'erstellt_von_name',
+            'dokument', 'erstellt_am', 'erstellt_von', 'erstellt_von_name',
         ]
         read_only_fields = fields
 
@@ -61,11 +61,17 @@ class VorgangEreignisSerializer(serializers.ModelSerializer):
 
 class VorgangDokumentSerializer(serializers.ModelSerializer):
     hochgeladen_von_name = serializers.SerializerMethodField()
+    # anzeigename ist der sprechende Name (Titel bzw. aus einer Rechnung
+    # abgeleitet, sonst Dateiname) — damit in der Vorgangsansicht nicht die
+    # rohe Graph-Message-ID einer importierten Mail steht. dateiname bleibt
+    # zusaetzlich erhalten: er ist die Bruecke zur Datei im Archivordner.
+    anzeigename = serializers.CharField(read_only=True)
 
     class Meta:
         model = Dokument
         fields = [
-            'id', 'dateiname', 'kategorie', 'dokument_typ', 'beschreibung',
+            'id', 'dateiname', 'titel', 'anzeigename',
+            'kategorie', 'dokument_typ', 'beschreibung',
             'version', 'vorgaenger_version', 'sha256',
             'hochgeladen_am', 'hochgeladen_von', 'hochgeladen_von_name',
         ]

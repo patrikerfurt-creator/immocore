@@ -765,6 +765,9 @@ export interface Kreditor {
   gewerke_bezeichnungen: string[]
   ist_handwerker: boolean
   kontakt_person: string
+  /** Register, in das Belege dieses Kreditors automatisch vorgeschlagen werden. */
+  standard_register: string | null
+  standard_register_bezeichnung: string | null
 }
 
 export interface DublettKandidat {
@@ -1014,6 +1017,8 @@ export type VorgangEreignisTyp =
   | 'antwort_vorschlag_freigegeben' | 'antwort_vorschlag_verworfen'
   | 'handwerker_beauftragt' | 'handwerker_angenommen' | 'handwerker_abgelehnt'
   | 'handwerker_abgeschlossen' | 'handwerker_abgelaufen'
+  | 'mail_eingegangen' | 'schreiben_erstellt' | 'schreiben_versendet'
+  | 'antwort_freigegeben' | 'mail_antwort_gesendet' | 'portal_antwort'
 
 export interface VorgangTyp {
   id: string
@@ -1079,6 +1084,8 @@ export interface VorgangEreignis {
   neuer_wert: string | null
   /** true (Default) = nur intern sichtbar; false = für den Eigentümer sichtbar. */
   intern: boolean
+  /** Optionales DMS-Dokument (z.B. Original-.eml einer eingegangenen Mail). */
+  dokument: string | null
   erstellt_am: string
   erstellt_von: number | null
   erstellt_von_name: string | null
@@ -1087,6 +1094,8 @@ export interface VorgangEreignis {
 export interface VorgangDokument {
   id: string
   dateiname: string
+  titel: string
+  anzeigename: string
   kategorie: string
   dokument_typ: string
   beschreibung: string

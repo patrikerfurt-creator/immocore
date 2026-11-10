@@ -9,6 +9,7 @@ from rest_framework.response import Response
 from django.http import FileResponse, HttpResponse
 from .models import Dokument
 from .serializers import DokumentSerializer
+from .services import upload_analyse_service
 from .services.beleg_service import dokument_pfad, loeschsperre_grund
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,21 @@ class DokumentViewSet(viewsets.ModelViewSet):
             qs = qs.filter(kategorie=kategorie)
         return qs
 
+    def create(self, request, *args, **kwargs):
+        # ``dateiname`` ist ein eigenes Pflichtfeld (die Bruecke zur Datei im
+        # Archivordner). Die Upload-Maske schickt nur die Datei — fehlt der
+        # Name, aus der hochgeladenen Datei ableiten, statt mit 400 abzuweisen.
+        if not request.data.get('dateiname') and request.FILES.get('datei') is not None:
+            data = request.data.copy()
+            data['dateiname'] = request.FILES['datei'].name
+            serializer = self.get_serializer(data=data)
+            serializer.is_valid(raise_exception=True)
+            self.perform_create(serializer)
+            headers = self.get_success_headers(serializer.data)
+            return Response(serializer.data, status=status.HTTP_201_CREATED,
+                            headers=headers)
+        return super().create(request, *args, **kwargs)
+
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
         if instance.revisionssicher:
@@ -65,6 +81,36 @@ class DokumentViewSet(viewsets.ModelViewSet):
                 {'error': 'Dokument kann nicht gelöscht werden: es wird an anderer Stelle referenziert.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+    @action(detail=False, methods=['post'], url_path='upload-vorschlag')
+    def upload_vorschlag(self, request):
+        """``POST /api/v1/dokumente/upload-vorschlag/`` (multipart)
+
+        Analysiert eine hochgeladene Datei VOR dem Anlegen und schlaegt Kontext
+        (Objekt/Einheit/Person) und Aktenregister vor — ohne etwas zu
+        speichern. Die Oberflaeche belegt damit die Auswahlfelder vor; gesetzt
+        wird erst beim bestaetigten Upload ueber ``POST /dokumente/``.
+
+        Die KI-Stufen kosten pro Aufruf; deshalb bewusst ein eigener Endpunkt,
+        den die Maske genau einmal pro Datei aufruft, statt sie in jede
+        Dokumentliste einzurechnen.
+        """
+        datei = request.FILES.get('datei')
+        if datei is None:
+            return Response({'error': 'Keine Datei übergeben (Feld "datei").'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        beschreibung = request.data.get('beschreibung', '') or ''
+        dokument_typ = request.data.get('dokument_typ', 'sonstiges') or 'sonstiges'
+        try:
+            ergebnis = upload_analyse_service.analysiere(
+                datei, datei.name, beschreibung, dokument_typ)
+        except Exception:
+            logger.exception('Upload-Analyse für %s fehlgeschlagen.', datei.name)
+            return Response(
+                {'error': 'Die Datei konnte nicht analysiert werden. Du kannst '
+                          'Objekt und Register manuell wählen und normal hochladen.'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        return Response(ergebnis)
 
     @action(detail=True, methods=['get'], url_path='datei')
     def datei(self, request, pk=None):

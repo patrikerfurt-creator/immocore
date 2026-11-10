@@ -11,7 +11,7 @@
 |--------------------|-------------------------------|
 | **Anbieter**       | Strato AG                     |
 | **Paket**          | VPS Linux VC2-4 (a.LZ12)      |
-| **IP-Adresse**     | 87.106.219.148                |
+| **IP-Adresse**     | 192.168.161.50                |
 | **Betriebssystem** | Ubuntu 22.04.5 LTS (Jammy)    |
 | **Kernel**         | 5.15.0-179-generic            |
 | **CPU**            | 2 vCores                      |
@@ -26,7 +26,7 @@
 
 ### SSH
 ```bash
-ssh -i $env:USERPROFILE\.ssh\strato_server_key patrik@87.106.219.148
+ssh -i $env:USERPROFILE\.ssh\strato_server_key patrik@192.168.161.50
 ```
 
 | Eigenschaft     | Wert                          |
@@ -39,8 +39,8 @@ ssh -i $env:USERPROFILE\.ssh\strato_server_key patrik@87.106.219.148
 ### Anwendung
 | URL                           | Beschreibung              |
 |-------------------------------|---------------------------|
-| http://87.106.219.148:8082    | IMMOCORE Frontend (live)  |
-| http://87.106.219.148:8082/admin/ | Django Admin          |
+| http://192.168.161.50:8082    | IMMOCORE Frontend (live)  |
+| http://192.168.161.50:8082/admin/ | Django Admin          |
 
 **Login:** Benutzername `admin` — Passwort in `admin.txt` im Projektverzeichnis
 
@@ -115,9 +115,9 @@ POSTGRES_DB=immocore
 POSTGRES_USER=immocore
 POSTGRES_PASSWORD=<nur auf dem Server>
 
-ALLOWED_HOSTS=87.106.219.148
-CORS_ALLOWED_ORIGINS=http://87.106.219.148
-CSRF_TRUSTED_ORIGINS=http://87.106.219.148
+ALLOWED_HOSTS=192.168.161.50
+CORS_ALLOWED_ORIGINS=http://192.168.161.50
+CSRF_TRUSTED_ORIGINS=http://192.168.161.50
 
 REDIS_URL=redis://redis:6379/0
 ANTHROPIC_API_KEY=<falls vorhanden>
@@ -142,7 +142,7 @@ ANTHROPIC_API_KEY=<falls vorhanden>
 
 ```bash
 # Per SSH einloggen
-ssh -i ~/.ssh/strato_server_key patrik@87.106.219.148
+ssh -i ~/.ssh/strato_server_key patrik@192.168.161.50
 
 # Deployment-Skript ausführen
 cd ~/immocore

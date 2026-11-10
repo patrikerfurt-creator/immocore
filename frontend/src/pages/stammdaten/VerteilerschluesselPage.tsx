@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { objekteApi } from '../../api/objekte'
+import type { MeaVorschau, MeaStatus } from '../../api/objekte'
 import type { Verteilerschluessel, Einheit } from '../../types'
 
 const vsTypLabel: Record<string, string> = {
@@ -195,6 +196,172 @@ function VsDetail({
   )
 }
 
+// ── MEA-Import (Excel) ────────────────────────────────────────────────
+
+const meaStatusLabel: Record<MeaStatus, string> = {
+  ok: 'Wird importiert',
+  nicht_gefunden: 'Einheit nicht gefunden',
+  fremdes_objekt: 'Fremdes Objekt',
+  kein_wert: 'Kein Wert',
+  doppelt: 'Doppelte Flächennummer',
+}
+
+const meaStatusClass: Record<MeaStatus, string> = {
+  ok: 'bg-green-50 text-green-700',
+  nicht_gefunden: 'bg-yellow-50 text-yellow-700',
+  fremdes_objekt: 'bg-red-50 text-red-700',
+  kein_wert: 'bg-yellow-50 text-yellow-700',
+  doppelt: 'bg-yellow-50 text-yellow-700',
+}
+
+function num(s: string): string {
+  const n = parseFloat(s)
+  return isNaN(n) ? '–' : n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
+}
+
+function MeaImportPanel({ objektId, onClose }: { objektId: string; onClose: () => void }) {
+  const qc = useQueryClient()
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [vorschau, setVorschau] = useState<MeaVorschau | null>(null)
+  const [dateiname, setDateiname] = useState('')
+  const [laden, setLaden] = useState(false)
+  const [fehler, setFehler] = useState<string | null>(null)
+  const [ergebnis, setErgebnis] = useState<string | null>(null)
+
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setLaden(true); setFehler(null); setVorschau(null); setErgebnis(null)
+    setDateiname(file.name)
+    try {
+      setVorschau(await objekteApi.meaVorschau(objektId, file))
+    } catch (err: any) {
+      const d = err?.response?.data
+      setFehler(d?.error ?? d?.detail ?? 'Datei konnte nicht gelesen werden.')
+    } finally {
+      setLaden(false)
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }
+
+  const importMut = useMutation({
+    mutationFn: () => objekteApi.meaCommit(objektId, vorschau!.zeilen),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['verteilerschluessel', objektId] })
+      setErgebnis(`${data.aktualisiert} MEA-Werte gesetzt (Summe ${num(data.summe)}). ${data.uebersprungen} übersprungen.`)
+      setVorschau(null)
+    },
+    onError: (err: any) => {
+      const d = err?.response?.data
+      setFehler(d?.error ?? d?.detail ?? 'Import fehlgeschlagen.')
+    },
+  })
+
+  const s = vorschau?.summary
+  const objektPasst = s ? (s.objektnummer_datei.length === 0 || s.objektnummer_datei.includes(s.objektnummer)) : true
+
+  return (
+    <div className="mb-4 bg-white border border-gray-300 rounded-lg p-4 text-sm">
+      <div className="flex items-center justify-between mb-3">
+        <p className="font-medium text-gray-800">MEA aus Excel importieren (Schlüssel 010)</p>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xs">Schließen ✕</button>
+      </div>
+      <p className="text-gray-500 mb-3">
+        Excel-Datei (.xls/.xlsx) mit Spalte A = Objektnummer, Spalte B = Flächennummer, Spalte F = MEA-Wert.
+        Die Werte werden über die Flächennummer den vorhandenen Einheiten zugeordnet. Es werden keine Einheiten angelegt.
+      </p>
+
+      <div className="flex items-center gap-3 mb-3">
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".xls,.xlsx,.xlsm"
+          onChange={handleFile}
+          className="text-sm file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0
+                     file:bg-primary-600 file:text-white file:text-sm hover:file:bg-primary-700 file:cursor-pointer"
+        />
+        {laden && <span className="text-gray-400">Lese Datei…</span>}
+        {dateiname && !laden && <span className="text-gray-500 text-xs">{dateiname}</span>}
+      </div>
+
+      {fehler && <p className="mb-3 text-red-600">{fehler}</p>}
+      {ergebnis && (
+        <div className="mb-3 bg-green-50 border border-green-200 text-green-800 rounded px-3 py-2">{ergebnis}</div>
+      )}
+
+      {s && (
+        <>
+          {!objektPasst && (
+            <div className="mb-3 bg-red-50 border border-red-200 text-red-700 rounded px-3 py-2">
+              Achtung: Die Datei enthält Objektnummer(n) {s.objektnummer_datei.join(', ')}, das gewählte Objekt ist{' '}
+              {s.objektnummer || '(ohne Nummer)'}. Zeilen fremder Objekte werden nicht importiert.
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-1 mb-3 text-gray-700">
+            <span><strong>{s.ok}</strong> von {s.gesamt} werden importiert</span>
+            <span>Summe MEA: <span className="font-mono font-medium">{num(s.summe)}</span></span>
+            {s.nicht_gefunden > 0 && <span className="text-yellow-700">{s.nicht_gefunden} nicht gefunden</span>}
+            {s.fremdes_objekt > 0 && <span className="text-red-700">{s.fremdes_objekt} fremdes Objekt</span>}
+            {s.kein_wert > 0 && <span className="text-yellow-700">{s.kein_wert} ohne Wert</span>}
+            {s.doppelt > 0 && <span className="text-yellow-700">{s.doppelt} doppelt</span>}
+          </div>
+          {s.einheiten_ohne_zeile.length > 0 && (
+            <div className="mb-3 bg-yellow-50 border border-yellow-200 text-yellow-800 rounded px-3 py-2 text-xs">
+              {s.einheiten_ohne_zeile.length} Einheit(en) im Objekt haben keine Zeile in der Datei und bleiben unverändert:{' '}
+              {s.einheiten_ohne_zeile.slice(0, 10).map(e => e.flaechennummer).join(', ')}
+              {s.einheiten_ohne_zeile.length > 10 ? ' …' : ''}
+            </div>
+          )}
+
+          <div className="max-h-80 overflow-auto border border-gray-200 rounded mb-3">
+            <table className="w-full text-xs">
+              <thead className="bg-gray-50 border-b border-gray-200 sticky top-0">
+                <tr>
+                  <th className="text-left px-3 py-2 font-medium text-gray-600">Zeile</th>
+                  <th className="text-left px-3 py-2 font-medium text-gray-600">Fl.-Nr.</th>
+                  <th className="text-left px-3 py-2 font-medium text-gray-600">Einheit</th>
+                  <th className="text-right px-3 py-2 font-medium text-gray-600">Alt</th>
+                  <th className="text-right px-3 py-2 font-medium text-gray-600">Neu</th>
+                  <th className="text-left px-3 py-2 font-medium text-gray-600">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {vorschau!.zeilen.map((z, i) => (
+                  <tr key={i} className="border-b border-gray-50">
+                    <td className="px-3 py-1.5 text-gray-500">{z.zeile}</td>
+                    <td className="px-3 py-1.5 font-mono text-gray-700">{z.flaechennummer || '–'}</td>
+                    <td className="px-3 py-1.5 text-gray-700">{z.einheit_nr || <span className="text-gray-400">—</span>}</td>
+                    <td className="px-3 py-1.5 text-right font-mono text-gray-500">{z.alt_wert ? num(z.alt_wert) : '–'}</td>
+                    <td className="px-3 py-1.5 text-right font-mono font-medium text-gray-800">{z.neu_wert ? num(z.neu_wert) : '–'}</td>
+                    <td className="px-3 py-1.5">
+                      <span className={`px-1.5 py-0.5 rounded ${meaStatusClass[z.status]}`} title={z.meldung}>
+                        {meaStatusLabel[z.status]}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => importMut.mutate()}
+              disabled={importMut.isPending || s.ok === 0}
+              className="px-4 py-1.5 bg-primary-600 text-white rounded hover:bg-primary-700 disabled:opacity-50"
+            >
+              {importMut.isPending ? 'Übernehme…' : `${s.ok} MEA-Werte übernehmen`}
+            </button>
+            <button onClick={() => setVorschau(null)} className="px-3 py-1.5 border border-gray-300 rounded hover:bg-gray-50">
+              Verwerfen
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 // ── Listen-Ansicht ────────────────────────────────────────────────────
 
 export function VerteilerschluesselPage() {
@@ -212,6 +379,7 @@ export function VerteilerschluesselPage() {
   const [anlegenOffen, setAnlegenOffen] = useState(false)
   const [neuVs, setNeuVs] = useState(leeresFormular)
   const [anlegenFehler, setAnlegenFehler] = useState<string | null>(null)
+  const [meaImportOffen, setMeaImportOffen] = useState(false)
 
   const { data: wirtschaftsjahre = [] } = useQuery({
     queryKey: ['wirtschaftsjahre', objektId],
@@ -329,13 +497,23 @@ export function VerteilerschluesselPage() {
             + Neuer Verteilerschlüssel
           </button>
           <button
-            onClick={() => { setKopierenOffen(o => !o); setKopierenResult(null); setAnlegenOffen(false) }}
+            onClick={() => { setKopierenOffen(o => !o); setKopierenResult(null); setAnlegenOffen(false); setMeaImportOffen(false) }}
             className="px-3 py-1.5 border border-gray-300 text-sm rounded hover:bg-gray-50"
           >
             Ins nächste Jahr kopieren
           </button>
+          <button
+            onClick={() => { setMeaImportOffen(o => !o); setAnlegenOffen(false); setKopierenOffen(false) }}
+            className="px-3 py-1.5 border border-gray-300 text-sm rounded hover:bg-gray-50"
+          >
+            MEA importieren
+          </button>
         </div>
       </div>
+
+      {meaImportOffen && (
+        <MeaImportPanel objektId={objektId} onClose={() => setMeaImportOffen(false)} />
+      )}
 
       {/* WJ-Tabs */}
       <div className="flex gap-1 mb-4 border-b border-gray-200">

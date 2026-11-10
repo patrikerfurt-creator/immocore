@@ -96,4 +96,50 @@ export const objekteApi = {
       `/objekte/${objektId}/vs-kopieren/`,
       { quell_wj: quellWj, ziel_wj: zielWj }
     ).then(r => r.data),
+
+  // MEA-Import (Excel) je Liegenschaft — setzt Schlüssel 010 auf vorhandene Einheiten
+  meaVorschau: (objektId: string, file: File) => {
+    const fd = new FormData()
+    fd.append('datei', file)
+    return client.post<MeaVorschau>(
+      `/objekte/${objektId}/mea-vorschau/`, fd,
+      { headers: { 'Content-Type': undefined } }
+    ).then(r => r.data)
+  },
+  meaCommit: (objektId: string, rows: MeaVorschauZeile[]) =>
+    client.post<{ aktualisiert: number; uebersprungen: number; fehler: string[]; summe: string }>(
+      `/objekte/${objektId}/mea-commit/`, { rows }
+    ).then(r => r.data),
+}
+
+export type MeaStatus = 'ok' | 'nicht_gefunden' | 'fremdes_objekt' | 'kein_wert' | 'doppelt'
+
+export type MeaVorschauZeile = {
+  zeile: number
+  status: MeaStatus
+  meldung: string
+  flaechennummer: string
+  objektnummer: string
+  einheit_nr: string
+  lage: string
+  alt_wert: string
+  neu_wert: string
+  daten: { einheit_id: string | null; wert: string | null }
+}
+
+export type MeaVorschau = {
+  zeilen: MeaVorschauZeile[]
+  summary: {
+    objektnummer: string
+    objektnummer_datei: string[]
+    gesamt: number
+    ok: number
+    nicht_gefunden: number
+    fremdes_objekt: number
+    kein_wert: number
+    doppelt: number
+    einheiten_gesamt: number
+    einheiten_ohne_zeile: Array<{ flaechennummer: string; einheit_nr: string }>
+    summe: string
+  }
 }
