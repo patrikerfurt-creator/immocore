@@ -6,6 +6,9 @@ psycopg2-binary==2.9.10
 django-cors-headers==4.4.0
 python-dotenv==1.0.1
 celery==5.4.0
+# kombu fest: 5.7.0 verlangt redis-py >= 6.1.0 und bricht mit redis==5.0.8
+# (VersionMismatch, Worker startet nicht). Nur gemeinsam mit redis anheben.
+kombu==5.6.2
 redis==5.0.8
 django-storages==1.14.4
 WeasyPrint==65.1
