@@ -1,0 +1,23 @@
+{% autoescape off %}Bitte bestätigen Sie Ihr SEPA-Lastschriftmandat
+
+{% if person.briefanrede %}{{ person.briefanrede }}{% else %}Sehr geehrte Damen und Herren,{% endif %}
+{% if person.briefanrede2 %}{{ person.briefanrede2 }}{% endif %}
+
+Sie haben im Eigentümer-Portal ein SEPA-Lastschriftmandat {% if aenderung %}geändert{% else %}erteilt{% endif %} (Mandatsreferenz {{ mandatsreferenz }}, Konto {{ iban_maskiert }}, gilt für: {{ geltungsbereich_text }}).
+
+Das Mandat wird erst wirksam, wenn Sie es über diesen Link verbindlich bestätigen:
+
+{{ url }}
+
+Der Link ist {{ gueltig_stunden }} Stunden gültig und kann nur einmal verwendet werden. Auf der Seite sehen Sie den vollständigen Mandatstext und bestätigen dort, dass Sie Inhaber des Kontos sind.
+
+Mandatstext:
+------------------------------------------------------------
+{{ mandatstext }}
+------------------------------------------------------------
+
+Wenn Sie dieses Mandat nicht veranlasst haben, ignorieren Sie diese E-Mail bitte - ohne Bestätigung ändert sich nichts.
+
+Mit freundlichen Grüßen
+Demme Immobilien Verwaltung GmbH
+{% endautoescape %}

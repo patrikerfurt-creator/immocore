@@ -3,8 +3,8 @@ Tests für die Selbstpflege der Stammdaten (Spec 1a, Kap. 5 und 8).
 
 Deckt die Akzeptanzkriterien ab:
   - je geändertem Feld genau ein Audit-Eintrag
-  - Bankverbindung mit aktivem Mandat: Mandat wird aktualisiert,
-    Mandatsreferenz bleibt gleich
+  - Bankverbindung mit aktivem Mandat: Mandat bleibt unverändert (K2),
+    nur Person.ibans wird gepflegt
   - Bankverbindung ohne aktives Mandat: kein Mandat wird berührt
   - E-Mail-Änderung erst nach Bestätigung wirksam, alte Adresse bleibt
     bis dahin login-fähig
@@ -121,32 +121,34 @@ class KontaktAenderungTest(PortalTestBasis):
 
 
 class BankverbindungMitMandatTest(PortalTestBasis):
+    """K2: "Meine Daten → Bankverbindung" ändert KEIN Mandat mehr — nur noch
+    ``Person.ibans``. Das Mandat ändert allein der Magic-Link-Flow."""
+
     def setUp(self):
         super().setUp()
         self.mandat = erstelle_mandat(self.person)
 
-    def test_mandat_wird_aktualisiert_referenz_bleibt_gleich(self):
-        """Akzeptanzkriterium Kap. 8: Mandat direkt aktualisiert,
-        Mandatsreferenz unverändert."""
+    def test_mandat_bleibt_unveraendert(self):
         neue_iban = 'DE89370400440532013000'
-        response = self.client.patch(BANK_URL, {'iban': neue_iban})
+        response = self.client.patch(BANK_URL, {'iban': neue_iban, 'bic': 'COBADEFFXXX'})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(response.data['mandat_aktualisiert'])
+        self.assertFalse(response.data['mandat_aktualisiert'])
+        self.assertEqual(response.data['mandatsreferenz'], 'MND-PORTAL-1')
+        self.assertIn('SEPA-Lastschriftmandat', response.data['hinweis'])
 
         self.mandat.refresh_from_db()
-        self.assertEqual(self.mandat.iban, neue_iban)
+        self.assertEqual(self.mandat.iban, 'DE02120300000000202051')
+        self.assertEqual(self.mandat.bic, 'BYLADEM1001')
         self.assertEqual(self.mandat.mandatsreferenz, 'MND-PORTAL-1')
         self.assertEqual(SEPAMandat.objects.count(), 1)
 
-    def test_audit_eintrag_fuer_iban_und_mandatsbezug(self):
+    def test_person_ibans_wird_gepflegt_und_nur_iban_protokolliert(self):
         self.client.patch(BANK_URL, {'iban': 'DE89370400440532013000'})
 
         self.assertEqual(self.eintraege('iban').count(), 1)
-        mandat_eintrag = self.eintraege('sepa_mandat').first()
-        self.assertIsNotNone(mandat_eintrag)
-        self.assertIn('MND-PORTAL-1', mandat_eintrag.neuer_wert)
-        self.assertIn('unverändert', mandat_eintrag.neuer_wert)
+        self.assertEqual(self.eintraege('sepa_mandat').count(), 0)
+        self.assertEqual(self.eintraege('bic').count(), 0)
 
     def test_alte_iban_bleibt_in_der_personenliste_erhalten(self):
         """Die E-Banking-Erkennung ordnet Zahlungen über Person.ibans zu."""
@@ -159,20 +161,20 @@ class BankverbindungMitMandatTest(PortalTestBasis):
 
     def test_iban_mit_leerzeichen_wird_normalisiert(self):
         self.client.patch(BANK_URL, {'iban': 'DE89 3704 0044 0532 0130 00'})
-        self.mandat.refresh_from_db()
-        self.assertEqual(self.mandat.iban, 'DE89370400440532013000')
+        self.person.refresh_from_db()
+        self.assertEqual(self.person.ibans[0], 'DE89370400440532013000')
 
     def test_ungueltige_iban_wird_abgelehnt(self):
         response = self.client.patch(BANK_URL, {'iban': 'DE00KEINEIBAN'})
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.mandat.refresh_from_db()
-        self.assertEqual(self.mandat.iban, 'DE02120300000000202051')
+        self.person.refresh_from_db()
+        self.assertEqual(self.person.ibans, ['DE02120300000000202051'])
 
-    def test_bic_aenderung_landet_im_mandat(self):
+    def test_nur_bic_aendert_nichts(self):
         self.client.patch(BANK_URL, {'bic': 'COBADEFFXXX'})
         self.mandat.refresh_from_db()
-        self.assertEqual(self.mandat.bic, 'COBADEFFXXX')
-        self.assertEqual(self.eintraege('bic').count(), 1)
+        self.assertEqual(self.mandat.bic, 'BYLADEM1001')
+        self.assertEqual(self.eintraege('bic').count(), 0)
 
     def test_unveraenderte_iban_erzeugt_keinen_eintrag(self):
         self.client.patch(BANK_URL, {'iban': self.mandat.iban})

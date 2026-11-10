@@ -31,6 +31,7 @@ from apps.personen.models import Person
 EINLADUNG_GUELTIG_STUNDEN = 72
 MAGIC_LINK_GUELTIG_MINUTEN = 15
 EMAIL_BESTAETIGUNG_GUELTIG_STUNDEN = 24
+SEPA_MANDAT_BESTAETIGUNG_GUELTIG_STUNDEN = 24
 SESSION_GUELTIG_STUNDEN = 12
 
 
@@ -100,10 +101,12 @@ class PortalToken(models.Model):
     TYP_EINLADUNG = 'einladung'
     TYP_MAGIC = 'magic'
     TYP_EMAIL_BESTAETIGUNG = 'email_bestaetigung'
+    TYP_SEPA_MANDAT = 'sepa_mandat'
     TYP_CHOICES = [
         (TYP_EINLADUNG, 'Einladung'),
         (TYP_MAGIC, 'Magic Link'),
         (TYP_EMAIL_BESTAETIGUNG, 'E-Mail-Bestätigung'),
+        (TYP_SEPA_MANDAT, 'SEPA-Mandat-Bestätigung'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
@@ -191,6 +194,7 @@ class PersonStammdatenAenderung(models.Model):
     """
 
     QUELLE_PORTAL = 'Portal-Selbständerung'
+    QUELLE_PORTAL_MAGIC_LINK = 'Portal-Magic-Link'
 
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
     person = models.ForeignKey(
@@ -213,3 +217,107 @@ class PersonStammdatenAenderung(models.Model):
 
     def __str__(self):
         return f'{self.person}: {self.feld} -> {self.neuer_wert}'
+
+
+class PortalSepaMandatAenderung(models.Model):
+    """Antrag UND unveränderlicher Nachweis einer per Magic Link erteilten
+    oder geänderten SEPA-Mandatsänderung.
+
+    Nach Status ``bestaetigt`` wird nichts mehr geändert (GoBD). Alle FKs
+    sind PROTECT, damit der Nachweis nicht mit den Objekten verschwindet,
+    die er dokumentiert. Im Admin nur lesbar.
+    """
+
+    GELTUNG_ALLE = 'alle'
+    GELTUNG_EINHEIT = 'einheit'
+    GELTUNG_CHOICES = [
+        (GELTUNG_ALLE, 'Alle Einheiten (Sammelmandat)'),
+        (GELTUNG_EINHEIT, 'Einzelne Einheit'),
+    ]
+
+    AKTION_ANLAGE = 'anlage'
+    AKTION_AENDERUNG = 'aenderung'
+    AKTION_CHOICES = [
+        (AKTION_ANLAGE, 'Neues Mandat'),
+        (AKTION_AENDERUNG, 'Änderung eines Mandats'),
+    ]
+
+    STATUS_OFFEN = 'offen'
+    STATUS_BESTAETIGT = 'bestaetigt'
+    STATUS_VERFALLEN = 'verfallen'
+    STATUS_VERWORFEN = 'verworfen'
+    STATUS_CHOICES = [
+        (STATUS_OFFEN, 'Offen'),
+        (STATUS_BESTAETIGT, 'Bestätigt'),
+        (STATUS_VERFALLEN, 'Verfallen'),
+        (STATUS_VERWORFEN, 'Verworfen'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    zugang = models.ForeignKey(
+        PortalZugang, on_delete=models.PROTECT,
+        related_name='sepa_mandat_aenderungen',
+    )
+    person = models.ForeignKey(
+        'personen.Person', on_delete=models.PROTECT,
+        related_name='sepa_mandat_antraege',
+    )
+    geltungsbereich = models.CharField(max_length=10, choices=GELTUNG_CHOICES)
+    eigentumsverhaeltnis = models.ForeignKey(
+        'personen.EigentumsVerhaeltnis', on_delete=models.PROTECT,
+        null=True, blank=True, related_name='sepa_mandat_antraege',
+    )
+    aktion = models.CharField(max_length=10, choices=AKTION_CHOICES)
+    ziel_mandat = models.ForeignKey(
+        'personen.SEPAMandat', on_delete=models.PROTECT,
+        null=True, blank=True, related_name='+',
+        help_text='Bei aktion=aenderung: das zu ändernde Mandat',
+    )
+    mandat = models.ForeignKey(
+        'personen.SEPAMandat', on_delete=models.PROTECT,
+        null=True, blank=True, related_name='portal_nachweise',
+        help_text='Nach Bestätigung: das angelegte/geänderte Mandat',
+    )
+    token = models.OneToOneField(
+        PortalToken, on_delete=models.PROTECT,
+        null=True, blank=True, related_name='sepa_mandat_aenderung',
+    )
+    status = models.CharField(
+        max_length=10, choices=STATUS_CHOICES, default=STATUS_OFFEN,
+    )
+    mandatsreferenz = models.CharField(max_length=35)
+    iban = models.CharField(max_length=34)
+    bic = models.CharField(max_length=11, blank=True, default='')
+    kontoinhaber_name = models.CharField(max_length=140, blank=True, default='')
+    mandatstext = models.TextField(blank=True, default='')
+    mandatstext_version = models.CharField(max_length=30, blank=True, default='')
+    mandatstext_sha256 = models.CharField(max_length=64, blank=True, default='')
+    abgedeckte_glaeubiger = models.JSONField(default=list, blank=True)
+    empfaenger_email = models.EmailField(blank=True, default='')
+    erstellt_am = models.DateTimeField(auto_now_add=True)
+    mail_versendet_am = models.DateTimeField(null=True, blank=True)
+    anforderung_ip = models.GenericIPAddressField(null=True, blank=True)
+    anforderung_user_agent = models.TextField(blank=True, default='')
+    portal_session_id = models.UUIDField(null=True, blank=True)
+    bestaetigt_am = models.DateTimeField(null=True, blank=True)
+    bestaetigung_ip = models.GenericIPAddressField(null=True, blank=True)
+    bestaetigung_user_agent = models.TextField(blank=True, default='')
+    forwarded_for_roh = models.CharField(max_length=255, blank=True, default='')
+    kontoinhaber_erklaerung = models.BooleanField(default=False)
+    verworfen_grund = models.CharField(max_length=200, blank=True, default='')
+
+    class Meta:
+        verbose_name = 'Portal-SEPA-Mandatsantrag'
+        verbose_name_plural = 'Portal-SEPA-Mandatsanträge'
+        ordering = ['-erstellt_am']
+        indexes = [models.Index(fields=['zugang', 'status'])]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['zugang'],
+                condition=models.Q(status='offen'),
+                name='uniq_offene_sepa_anfrage_je_zugang',
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.mandatsreferenz} ({self.get_status_display()})"

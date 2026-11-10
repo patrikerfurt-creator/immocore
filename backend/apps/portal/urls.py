@@ -11,6 +11,10 @@ from .views import (
     MagicLinkEinloesenView,
     MeineDatenView,
     MeineEinheitenView,
+    SepaMandatAnfordernView,
+    SepaMandatBestaetigenView,
+    SepaMandatStatusView,
+    SepaMandatVorschauView,
 )
 from .views_konto import PortalFaelligkeitenView, PortalSaldoView
 from .views_verwaltung import PortalZugangViewSet
@@ -46,6 +50,18 @@ urlpatterns = router.urls + [
     path('portal/meine-daten/bankverbindung/', BankverbindungView.as_view(),
          name='portal-bankverbindung'),
     path('portal/iban-check/', IbanPruefenView.as_view(), name='portal-iban-check'),
+
+    # SEPA-Lastschriftmandat (Architektur-Entscheid Portal-SEPA-Mandat). Die
+    # Bestätigung wirkt erst auf den POST, die Vorschau (GET) verbraucht den
+    # Token nicht.
+    path('portal/sepa-mandat/', SepaMandatStatusView.as_view(),
+         name='portal-sepa-mandat-status'),
+    path('portal/sepa-mandat/anfordern/', SepaMandatAnfordernView.as_view(),
+         name='portal-sepa-mandat-anfordern'),
+    path('portal/sepa-mandat/bestaetigen/<str:token>/', SepaMandatVorschauView.as_view(),
+         name='portal-sepa-mandat-vorschau'),
+    path('portal/sepa-mandat/bestaetigen/', SepaMandatBestaetigenView.as_view(),
+         name='portal-sepa-mandat-bestaetigen'),
 
     # Vorgänge (Spec Portal-Erweiterung v1.1, Kap. 4/5). 'vorgang-typen'
     # steht vor der Detailroute — keine überlappenden Präfixe, aber die

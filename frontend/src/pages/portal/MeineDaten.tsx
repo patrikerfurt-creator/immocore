@@ -144,11 +144,9 @@ function BankverbindungSektion({ daten }: { daten: PortalMeineDaten }) {
     mutationFn: bankverbindungSpeichern,
     onSuccess: (neu) => {
       queryClient.setQueryData(['portal', 'meine-daten'], neu)
-      setMeldung(
-        neu.mandat_aktualisiert
-          ? `Gespeichert. Ihr SEPA-Lastschriftmandat ${neu.mandatsreferenz} wurde mit der neuen Bankverbindung aktualisiert.`
-          : 'Gespeichert.',
-      )
+      // Seit K2 ändert die Bankverbindung das Mandat nicht mehr; ein Hinweis
+      // des Servers erklärt den Weg über den Kopfzeilen-Button.
+      setMeldung(neu.hinweis ? `Gespeichert. ${neu.hinweis}` : 'Gespeichert.')
       setFehler('')
     },
     onError: (e) => {
@@ -169,14 +167,12 @@ function BankverbindungSektion({ daten }: { daten: PortalMeineDaten }) {
   return (
     <Sektion titel="Bankverbindung">
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-        {/* Transparenz-Hinweis (Spec Kap. 6.2): der Eigentümer soll wissen,
-            dass die Änderung sein Lastschriftmandat mit umfasst. */}
+        {/* Das Mandat wird nicht mehr über diese Sektion geändert (K2). */}
         {daten.hat_aktives_mandat && (
           <p className="text-sm text-portal-soft bg-portal-brand-soft border border-portal-line rounded p-3">
             Für Sie besteht ein SEPA-Lastschriftmandat
             {daten.mandatsreferenz ? ` (${daten.mandatsreferenz})` : ''}.
-            Eine Änderung der Bankverbindung gilt automatisch auch für dieses Mandat —
-            künftige Hausgeldzahlungen werden dann von der neuen IBAN eingezogen.
+            Ihr SEPA-Lastschriftmandat erteilen oder ändern Sie über „SEPA-Lastschriftmandat“ in der Kopfzeile.
           </p>
         )}
         <div className="flex flex-col gap-1">

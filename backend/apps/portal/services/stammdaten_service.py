@@ -11,15 +11,17 @@ Real-Code-Abweichungen von der Spec (Real-Code-vor-Spec-Prinzip):
   haben ein solches Feld (``Bankkonto.kontoinhaber`` gehört zu den
   Objektkonten der Verwaltung, nicht zur Person). Kontoinhaber wird
   deshalb nicht zur Bearbeitung angeboten.
-* ``SEPAMandat`` hängt per FK an der ``Person`` (``Person.sepa_mandat``),
-  nicht an der Einheit — der Mandat-Sync betrifft folglich genau ein
-  Mandat je Person.
+* Die Bankverbindung hier betrifft nur ``Person.ibans``. Das SEPA-Mandat
+  wird ausschließlich über den Magic-Link-Flow geändert
+  (``sepa_mandat_service``); ``aktives_mandat`` liest das Sammelmandat über
+  den Resolver (``apps.personen.services.sepa_mandat``).
 """
 import logging
 
 from django.db import transaction
 
 from apps.personen.models import Person, SEPAMandat
+from apps.personen.services.sepa_mandat import sammelmandat_fuer_person
 from ..models import PersonStammdatenAenderung, PortalZugang
 from . import zugang_service
 
@@ -87,13 +89,16 @@ def _setze_ersten_listeneintrag(liste, wert: str, schluessel: tuple[str, ...]) -
 # Audit-Log
 # ---------------------------------------------------------------------------
 
-def protokolliere(person: Person, feld: str, alter_wert: str, neuer_wert: str) -> None:
+def protokolliere(
+    person: Person, feld: str, alter_wert: str, neuer_wert: str,
+    quelle: str = PersonStammdatenAenderung.QUELLE_PORTAL,
+) -> None:
     PersonStammdatenAenderung.objects.create(
         person=person,
         feld=feld,
         alter_wert=alter_wert or '',
         neuer_wert=neuer_wert or '',
-        quelle=PersonStammdatenAenderung.QUELLE_PORTAL,
+        quelle=quelle,
     )
 
 
@@ -140,14 +145,11 @@ def aktualisiere_kontakt(zugang: PortalZugang, daten: dict) -> Person:
 
 
 # ---------------------------------------------------------------------------
-# Bankverbindung (Spec 5.2) — inkl. SEPA-Mandat-Synchronisation
+# Bankverbindung (Spec 5.2) — nur Person.ibans, kein Mandat
 # ---------------------------------------------------------------------------
 
 def aktives_mandat(person: Person) -> SEPAMandat | None:
-    mandat = person.sepa_mandat
-    if mandat is not None and mandat.aktiv:
-        return mandat
-    return None
+    return sammelmandat_fuer_person(person)
 
 
 def erste_iban(person: Person) -> str:
@@ -163,86 +165,72 @@ def _normalisiere_iban(wert: str) -> str:
     return (wert or '').replace(' ', '').strip().upper()
 
 
+def pflege_ibans(person: Person, neue_iban: str) -> None:
+    """Setzt ``neue_iban`` an Position 0 von ``Person.ibans``.
+
+    Die bisherigen IBANs bleiben erhalten: die E-Banking-Erkennung ordnet
+    Zahlungen über diese Liste zu — würde die alte IBAN verschwinden, ließen
+    sich bereits laufende Zahlungen von dort nicht mehr automatisch zuordnen.
+    ``neue_iban`` muss normalisiert sein; gespeichert wird hier.
+    """
+    bestand = [
+        _normalisiere_iban(_wert_aus_eintrag(e, ('iban', 'wert')))
+        for e in (person.ibans or [])
+    ]
+    bestand = [i for i in bestand if i and i != neue_iban]
+    person.ibans = [neue_iban] + bestand
+    person.save(update_fields=['ibans'])
+
+
+MANDAT_HINWEIS = (
+    'Ihr SEPA-Mandat ändern Sie über „SEPA-Lastschriftmandat" in der Kopfzeile.'
+)
+
+
 @transaction.atomic
 def aktualisiere_bankverbindung(zugang: PortalZugang, daten: dict) -> dict:
-    """IBAN/BIC ändern und ein aktives SEPA-Mandat mitziehen.
+    """IBAN auf der Person ändern — das SEPA-Mandat bleibt unangetastet.
 
-    Aktives Mandat vorhanden → IBAN/BIC werden DIREKT im bestehenden
-    Mandat aktualisiert, die ``mandatsreferenz`` bleibt unverändert (Spec
-    Kap. 5.2). Der nächste Lastschriftlauf zieht damit automatisch von der
-    neuen IBAN ein.
+    Seit dem Magic-Link-Flow (Architektur-Entscheid K2) ändert dieser Weg
+    NIE mehr ein Mandat: eine Mandatsänderung braucht die Bestätigung per
+    Link (``sepa_mandat_service``). Geschrieben wird nur ``Person.ibans``
+    (neue IBAN an Position 0, bisherige bleiben erhalten) samt Audit-Eintrag
+    'iban'. Eine übergebene BIC hat keinen Speicherort mehr (Mandat-BIC wird
+    nur über den Magic-Link-Flow gesetzt) und wird verworfen.
 
-    Kein aktives Mandat → nur die Bankverbindung auf der Person, kein
-    Mandat wird angefasst.
-
-    Die bisherige IBAN bleibt in ``Person.ibans`` erhalten (neue an
-    Position 0): die E-Banking-Erkennung ordnet Zahlungen über diese Liste
-    zu — würde die alte IBAN verschwinden, ließen sich bereits laufende
-    Zahlungen von dort nicht mehr automatisch zuordnen.
-
-    Rückgabe: ``{'mandat_aktualisiert': bool, 'mandatsreferenz': str|None}``
+    Rückgabe: ``{'mandat_aktualisiert': False, 'mandatsreferenz': str|None}``
+    — ``mandatsreferenz`` ist die des Sammelmandats; existiert ein Mandat,
+    steht zusätzlich ``'hinweis'`` darin.
     """
     person = zugang.person
     mandat = aktives_mandat(person)
 
-    neue_iban = _normalisiere_iban(daten.get('iban', ''))
-    alte_iban = _normalisiere_iban(erste_iban(person))
-    iban_geaendert = 'iban' in daten and neue_iban != alte_iban
-
-    if 'iban' in daten and not neue_iban:
-        raise StammdatenFehler('Die IBAN darf nicht leer sein.')
-
-    bic_uebergeben = 'bic' in daten
-    neue_bic = (daten.get('bic') or '').replace(' ', '').strip().upper()
-    alte_bic = (mandat.bic if mandat else '').strip().upper()
-    bic_geaendert = bic_uebergeben and neue_bic != alte_bic
-
-    if not iban_geaendert and not bic_geaendert:
-        return {'mandat_aktualisiert': False, 'mandatsreferenz': mandat.mandatsreferenz if mandat else None}
-
-    if iban_geaendert:
-        bestand = [
-            _normalisiere_iban(_wert_aus_eintrag(e, ('iban', 'wert')))
-            for e in (person.ibans or [])
-        ]
-        bestand = [i for i in bestand if i and i != neue_iban]
-        person.ibans = [neue_iban] + bestand
-        person.save(update_fields=['ibans'])
-        protokolliere(person, 'iban', alte_iban, neue_iban)
-
-    mandat_felder: list[str] = []
-    if mandat is not None:
-        if iban_geaendert:
-            mandat.iban = neue_iban
-            mandat_felder.append('iban')
-        if bic_geaendert:
-            protokolliere(person, 'bic', alte_bic, neue_bic)
-            mandat.bic = neue_bic
-            mandat_felder.append('bic')
-        if mandat_felder:
-            mandat.save(update_fields=mandat_felder)
-            # Eigener Eintrag: dokumentiert, dass die Änderung das
-            # Lastschriftmandat mit umfasst hat — die reinen iban/bic-
-            # Einträge oben sagen nichts über den Mandatsbezug aus.
-            protokolliere(
-                person, 'sepa_mandat',
-                f'Mandat {mandat.mandatsreferenz} (IBAN {alte_iban})',
-                f'Mandat {mandat.mandatsreferenz} (IBAN {mandat.iban}) — '
-                f'Mandatsreferenz unverändert',
-            )
-    elif bic_geaendert:
-        # Ohne Mandat gibt es kein Feld, in dem eine BIC gespeichert würde;
-        # ein Audit-Eintrag über eine nirgends gespeicherte Änderung wäre
-        # irreführend.
-        logger.info(
-            'Portal: BIC-Änderung ohne aktives SEPA-Mandat für Person %s '
-            'wird verworfen (kein Speicherort im Datenmodell).', person.pk,
-        )
-
-    return {
-        'mandat_aktualisiert': bool(mandat_felder),
+    ergebnis = {
+        'mandat_aktualisiert': False,
         'mandatsreferenz': mandat.mandatsreferenz if mandat else None,
     }
+    if mandat is not None:
+        ergebnis['hinweis'] = MANDAT_HINWEIS
+
+    if 'iban' in daten and not _normalisiere_iban(daten.get('iban', '')):
+        raise StammdatenFehler('Die IBAN darf nicht leer sein.')
+
+    if 'bic' in daten:
+        logger.info(
+            'Portal: BIC-Angabe für Person %s wird verworfen (Mandats-BIC nur '
+            'über den SEPA-Mandat-Flow).', person.pk,
+        )
+
+    if 'iban' not in daten:
+        return ergebnis
+
+    neue_iban = _normalisiere_iban(daten['iban'])
+    alte_iban = _normalisiere_iban(erste_iban(person))
+    if neue_iban != alte_iban:
+        pflege_ibans(person, neue_iban)
+        protokolliere(person, 'iban', alte_iban, neue_iban)
+
+    return ergebnis
 
 
 # ---------------------------------------------------------------------------

@@ -349,3 +349,29 @@ Smoke-Test gegen alle Regeln R1–R8, Testlauf gesamt.
 *Diese Anleitung ist als Orchestrator-Prompt für eine Fable-5-Session gedacht:
 Fable startet mit Phase 0 und schlägt zuerst die Agenten-/Modellzuordnung für
 die V1–V5-Erhebung vor, bevor der erste Subagent aufgerufen wird.*
+
+---
+
+## 11. Nachtrag nach Phase 0 (2026-11-03) — Angleichung an den Ist-Befund
+
+Vollständiger Befund: `IST_BERICHT_PORTAL_SEPA_MANDAT.md` (Repo-Root). Die
+folgenden Angaben **ersetzen** die jeweiligen Stellen oben; die Fachregeln
+R1–R8 bleiben unverändert.
+
+| Spec-Stelle | Gilt ab jetzt (verifiziert) |
+|---|---|
+| §0 „Einzel-FK" | `Person.sepa_mandat` ist FK many-to-one, `related_name='personen'` (personen/models.py:125-128). Mehrere Personen können ein Mandat teilen (Dev: 0 Fälle); Migration muss den Fall behandeln. |
+| §4.3 / §5.4 „`sepa_lastschrift.py:220` ersetzen" | Mandatswahl an **drei** Stellen: `auto_pipeline_service._filtere_lastschrift_kandidaten` (:158-199, Vorfilter kein_sepa_mandat / mandat_typ_frst / keine_iban, **ohne** `aktiv`-Check), `sepa_lastschrift.commite_lastschriftlauf` (:216-238), `buchhaltung/views.py:1510-1517` (View-Filter mit aktiv). Der Resolver `mandat_fuer_ev` bedient alle drei. |
+| §10 Bestandsrisiko | Im Produktivpfad kein Crash (Vorfilter). Verbleibende Lücke: inaktives Mandat passiert den Vorfilter. |
+| §4.2 Token-Bindung „wie `ziel_email`" | `PortalToken.ziel_email` ist EmailField → für Mandatsdaten ungeeignet. Bindung Token↔Pending ist Architekt-Entscheid (e). |
+| §3 IBAN-Prüfung | Keine Service-Funktion; inline `schwifty.IBAN()` in `IbanPruefenView.get` (views.py:221-249) und `BankverbindungSerializer.validate_iban` (serializers.py:80-91). Für R5 im Service: Helper extrahieren. |
+| §3 Token/Mail | `zugang_service.erzeuge_email_bestaetigung(zugang, neue_email) -> PortalToken` (:219), `loese_token_ein(token_wert, erwartete_typen: tuple) -> PortalToken` (:234, wirft `TokenUngueltig`/`ZugangGesperrt`), `_erzeuge_token(zugang, typ, gueltig_bis, ziel_email='')` (:125), `_entwerte_offene_token(zugang, typ)` (:131). `mail_service._sende(betreff, vorlage, empfaenger, kontext)` (:101), `email_bestaetigung_url(token)` (:77). Templates in **`backend/templates/email/`**. |
+| §2 R6 / §5.2 `protokolliere` | `protokolliere(person, feld: str, alter_wert: str, neuer_wert: str) -> None` (stammdaten_service.py:90). `PersonStammdatenAenderung` liegt in **apps/portal/models.py:183**. |
+| §2 R7 `Person.ibans` | Pflege-Code in `aktualisiere_bankverbindung` :203-211 (neue IBAN an Position 0, Bestand bereinigt). |
+| §2 R8 / §5.3 Auth | Person/Zugang aus `request.portal_zugang` bzw. `request.user.person` (auth.py:72-74, :93-96). `request.auth` ist None. |
+| §3 „aktiv = `ende IS NULL`" | Portal-Definition (einheiten_service.py:59-66): `beginn <= heute` und (`ende` leer oder `>= heute`). Modell-Property `ist_aktiv` = `ende is None`. Welche Definition der Resolver nutzt: Architekt-Entscheid (d). |
+| §5.3 Einheitenliste | `meine_einheiten(person)` liefert WEG-Karten mit `einheit_id`, **keine EV-ID**; keine Zugehörigkeitsprüfung einer ID vorhanden. `GET /sepa-mandat/` liefert daher eine eigene Einheitenliste mit `ev_id`; Zugehörigkeit prüft der Service serverseitig. |
+| §6.3 Route | Vorbild nutzt Path-Param: `/portal/email-bestaetigen/:token` (App.tsx:102). Neue Route `/portal/sepa-mandat/bestaetigen/:token`. |
+| §6.2 Dialog | Kein Modal im Portal vorhanden; Muster `pages/korrespondenz/schreiben/SchreibenErstellenDialog.tsx:135`. `IbanInput` (components/ui) mit Prop `pruefe={ibanPruefen}`; `Button` variant `portal`/`portal-secondary`. |
+| §6.1 Header | `PortalLayout.tsx` hat keinen Nutzer-State; Nav :48-51 (`NavLink`, `linkClass` :27-32). Zustand für R4 per react-query (`['portal','sepa-mandat']`) im Layout laden. |
+| §8 Tests | Django-Runner im Dev-Container: `docker compose exec backend python manage.py test apps.portal` bzw. `… apps.buchhaltung.tests.test_lastschrift_end_to_end apps.buchhaltung.tests.test_lastschrift_erloesbuchung apps.buchhaltung.tests.test_auto_pipeline_service`. Braucht Postgres + Redis. Portal-Testbasis: `apps/portal/tests/basis.py` (`erstelle_mandat`, `verknuepfe`, …). |

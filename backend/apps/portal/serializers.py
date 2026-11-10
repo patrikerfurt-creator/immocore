@@ -8,6 +8,8 @@ Feldliste die Sicherheitsgrenze, deshalb steht sie ausgeschrieben da.
 """
 from rest_framework import serializers
 
+from .services import iban_service
+
 
 class MagicLinkAnfrageSerializer(serializers.Serializer):
     email = serializers.EmailField()
@@ -78,16 +80,9 @@ class BankverbindungSerializer(serializers.Serializer):
     bic = serializers.CharField(required=False, allow_blank=True, max_length=11)
 
     def validate_iban(self, wert):
-        roh = (wert or '').replace(' ', '').strip().upper()
-        try:
-            from schwifty import IBAN
-            IBAN(roh)
-        except ImportError:
-            # Ohne schwifty keine Prüfung erzwingen — das Backend soll bei
-            # fehlender optionaler Abhängigkeit nicht ausfallen.
-            pass
-        except Exception:
-            raise serializers.ValidationError('Diese IBAN ist ungültig.')
+        roh = iban_service.normalisiere_iban(wert)
+        if not iban_service.pruefe_iban(roh)['valid']:
+            raise serializers.ValidationError(iban_service.IBAN_UNGUELTIG)
         return roh
 
     def validate(self, attrs):
@@ -98,6 +93,20 @@ class BankverbindungSerializer(serializers.Serializer):
 
 class EmailAenderungSerializer(serializers.Serializer):
     email = serializers.EmailField()
+
+
+class SepaMandatAnfordernSerializer(serializers.Serializer):
+    """``schluessel`` ist ``alle`` oder ``ev:<uuid>`` und wird serverseitig nur
+    gegen die eigene Liste aufgelöst (R8). Die IBAN-Prüfung macht der Service."""
+
+    schluessel = serializers.CharField(max_length=60)
+    iban = serializers.CharField(max_length=60)
+    bic = serializers.CharField(required=False, allow_blank=True, default='', max_length=20)
+
+
+class SepaMandatBestaetigenSerializer(serializers.Serializer):
+    token = serializers.CharField(max_length=200)
+    kontoinhaber_erklaerung = serializers.BooleanField(required=False, default=False)
 
 
 class EinheitSerializer(serializers.Serializer):

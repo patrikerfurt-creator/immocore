@@ -1,0 +1,23 @@
+{% autoescape off %}{# Mandatstext SEPA-Core-Lastschrift (Portal). Rechtliche Anpassung hier; danach MANDATSTEXT_VERSION in apps/portal/services/sepa_mandat_text.py erhöhen. #}SEPA-Lastschriftmandat (Core){% if aenderung %} - Änderung der Kontoverbindung{% endif %}
+
+Zahlungsempfänger (Gläubiger):
+{% for g in glaeubiger %}- {{ g.bezeichnung }}, Gläubiger-Identifikationsnummer {{ g.glaeubiger_id }}
+{% endfor %}
+Die Zahlungsempfänger werden bei der Einziehung vertreten durch:
+{{ verwalter_name }}
+
+Mandatsreferenz: {{ mandatsreferenz }}
+Gilt für: {{ geltungsbereich_text }}
+Zahlungsart: wiederkehrende Zahlungen
+
+Kontoinhaber: {{ kontoinhaber_name }}
+IBAN: {{ iban }}
+BIC: {{ bic|default:"-" }}
+
+Ich ermächtige die oben genannten Zahlungsempfänger, vertreten durch {{ verwalter_name }}, wiederkehrende Zahlungen (insbesondere Hausgeld-Vorauszahlungen und Sonderumlagen) von meinem Konto mittels SEPA-Basislastschrift einzuziehen. Zugleich weise ich mein Kreditinstitut an, die von den Zahlungsempfängern auf mein Konto gezogenen Lastschriften einzulösen.{% if aenderung %}
+
+Diese Erklärung ändert die Kontoverbindung des bestehenden Mandats mit der oben genannten Mandatsreferenz. Die Mandatsreferenz bleibt unverändert.{% endif %}
+
+Hinweis: Ich kann innerhalb von acht Wochen, beginnend mit dem Belastungsdatum, die Erstattung des belasteten Betrages verlangen. Es gelten dabei die mit meinem Kreditinstitut vereinbarten Bedingungen.
+
+Vorabankündigung: Die Frist für die Vorabankündigung (Pre-Notification) wird auf einen Kalendertag vor Fälligkeit verkürzt. Die Ankündigung des Einzugs kann durch den Wirtschaftsplan, die Hausgeldabrechnung oder eine gesonderte Mitteilung erfolgen.{% endautoescape %}

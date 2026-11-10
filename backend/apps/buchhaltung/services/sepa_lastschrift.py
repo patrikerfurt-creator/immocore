@@ -196,6 +196,7 @@ def commite_lastschriftlauf(
     from decimal import Decimal
     from apps.buchhaltung.models import LastschriftLauf
     from apps.objekte.models import Bankkonto as BKModel
+    from apps.personen.services.sepa_mandat import mandate_fuer_evs
 
     # Bewirtschaftungskonto als einziges Zielkonto für alle Einzüge
     hauptkonto = BKModel.objects.filter(
@@ -213,11 +214,21 @@ def commite_lastschriftlauf(
     # Gruppierung nach EV: alle Sollstellungen einer Person → eine SEPA-Position
     ev_map: dict = {}
 
+    mandate = mandate_fuer_evs([ss.eigentumsverhaeltnis for ss in kandidaten])
+
     for ss in kandidaten:
         ev = ss.eigentumsverhaeltnis
         ev_id = str(ev.id)
         person = ev.person
-        mandat = person.sepa_mandat
+        mandat = mandate.get(ev.id)
+
+        if mandat is None:
+            logger.warning(
+                'Lastschriftlauf: kein aktives SEPA-Mandat für EV %s (%s) — '
+                'Sollstellung %s übersprungen',
+                ev_id, person.name, ss.id,
+            )
+            continue
 
         if ev_id not in ev_map:
             try:

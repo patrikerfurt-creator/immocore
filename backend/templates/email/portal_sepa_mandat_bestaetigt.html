@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <title>Ihr SEPA-Lastschriftmandat wurde {% if aenderung %}geändert{% else %}erteilt{% endif %}</title>
+</head>
+<body style="font-family:Arial,Helvetica,sans-serif;color:#222;line-height:1.5;">
+  <h2>Ihr SEPA-Lastschriftmandat wurde {% if aenderung %}geändert{% else %}erteilt{% endif %}</h2>
+
+  <p>{% if person.briefanrede %}{{ person.briefanrede }}{% else %}Sehr geehrte Damen und Herren,{% endif %}</p>
+  {% if person.briefanrede2 %}<p>{{ person.briefanrede2 }}</p>{% endif %}
+
+  <p>Sie haben Ihr SEPA-Lastschriftmandat am {{ bestaetigt_am|date:"d.m.Y" }} um
+     {{ bestaetigt_am|date:"H:i" }} Uhr verbindlich
+     {% if aenderung %}geändert{% else %}erteilt{% endif %}.</p>
+
+  <p>Mandatsreferenz: <strong>{{ mandatsreferenz }}</strong><br>
+     Konto: <strong>{{ iban_maskiert }}</strong></p>
+
+  <p>Zahlungsempfänger:</p>
+  <ul>
+    {% for g in glaeubiger %}<li>{{ g.bezeichnung }}, Gläubiger-Identifikationsnummer {{ g.glaeubiger_id }}</li>
+    {% endfor %}
+  </ul>
+
+  <p>Bitte bewahren Sie diese E-Mail als Nachweis auf.</p>
+
+  <h3>Mandatstext</h3>
+  <div style="font-size:13px;border:1px solid #ddd;padding:12px;background:#fafafa;">
+    {{ mandatstext|linebreaksbr }}
+  </div>
+
+  <p style="font-size:12px;color:#555;">
+    Wenn Sie dieses Mandat nicht erteilt haben, wenden Sie sich bitte umgehend an die
+    Verwaltung.
+  </p>
+
+  <p>Mit freundlichen Grüßen<br>
+     Demme Immobilien Verwaltung GmbH</p>
+</body>
+</html>
