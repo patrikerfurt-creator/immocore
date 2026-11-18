@@ -26,15 +26,35 @@ Fehler statt still zu scheitern – dieselbe Schutzlogik wie
 from __future__ import annotations
 
 import base64
-from email.utils import parseaddr
+import logging
+import time
+from datetime import datetime, timezone
+from email.utils import parseaddr, parsedate_to_datetime
 
 import requests
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.core.mail.backends.base import BaseEmailBackend
 
+logger = logging.getLogger(__name__)
+
 GRAPH_SENDMAIL_URL = "https://graph.microsoft.com/v1.0/users/{sender}/sendMail"
 _TIMEOUT = 30
+
+# Microsoft Graph drosselt app-weit (HTTP 429 ApplicationThrottled, u.a. das
+# "IncomingBytes"-Limit, das base64-codierte PDF-Anhänge schnell reißen) und
+# liefert bei Überlast zeitweise 503/504. In diesen Fällen soll NICHT hart
+# geworfen, sondern – wie von Microsoft vorgesehen – die im ``Retry-After``-
+# Header genannte Wartezeit abgewartet und erneut gesendet werden.
+#
+# Bewusst eng begrenzt: Der ``sofort=true``-Pfad versendet innerhalb eines
+# Web-Requests, deshalb darf der Worst Case (``_MAX_RETRIES`` × ``_MAX_RETRY_
+# WAIT``) den Gunicorn-Timeout nicht sprengen. Der Massenversand läuft ohnehin
+# über Celery (kein Request-Timeout).
+_RETRY_STATUS = frozenset({429, 503, 504})
+_MAX_RETRIES = 3          # zusätzliche Versuche nach dem ersten
+_MAX_RETRY_WAIT = 60      # Sekunden-Obergrenze je Wartepause
+_DEFAULT_RETRY_WAIT = 20  # Fallback, falls kein brauchbarer Retry-After kommt
 
 
 class GraphVersandError(Exception):
@@ -96,19 +116,57 @@ class GraphEmailBackend(BaseEmailBackend):
 
     def _sende_eine(self, message, token: str) -> None:
         payload = self._baue_payload(message)
-        resp = requests.post(
-            GRAPH_SENDMAIL_URL.format(sender=self._postfach()),
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=_TIMEOUT,
-        )
-        if resp.status_code >= 400:
+        url = GRAPH_SENDMAIL_URL.format(sender=self._postfach())
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+        for versuch in range(_MAX_RETRIES + 1):
+            resp = requests.post(url, headers=headers, json=payload, timeout=_TIMEOUT)
+            if resp.status_code < 400:
+                return
+            drosselung = resp.status_code in _RETRY_STATUS
+            if drosselung and versuch < _MAX_RETRIES:
+                wartezeit = self._retry_after_sekunden(resp)
+                logger.warning(
+                    "Graph sendMail gedrosselt (HTTP %s), Versuch %s/%s — warte "
+                    "%.0fs und sende erneut. %s",
+                    resp.status_code, versuch + 1, _MAX_RETRIES,
+                    wartezeit, resp.text[:200],
+                )
+                time.sleep(wartezeit)
+                continue
             raise GraphVersandError(
                 f"Graph sendMail fehlgeschlagen (HTTP {resp.status_code}): {resp.text[:500]}"
             )
+
+    @staticmethod
+    def _retry_after_sekunden(resp) -> float:
+        """Wartezeit aus dem ``Retry-After``-Header (Sekunden oder HTTP-Datum).
+
+        Fehlt der Header oder ist er unverständlich, greift ``_DEFAULT_RETRY_
+        WAIT``. Das Ergebnis ist immer auf ``[0, _MAX_RETRY_WAIT]`` begrenzt,
+        damit ein (fehlerhaftes oder bösartiges) Datum weit in der Zukunft den
+        Request nicht blockiert.
+        """
+        kopf = getattr(resp, "headers", None)
+        rohwert = kopf.get("Retry-After") if kopf else None
+        if rohwert is None:
+            return _DEFAULT_RETRY_WAIT
+        text = str(rohwert).strip()
+        if text.isdigit():
+            wartezeit = float(text)
+        else:
+            try:
+                ziel = parsedate_to_datetime(text)
+            except (TypeError, ValueError):
+                return _DEFAULT_RETRY_WAIT
+            if ziel is None:
+                return _DEFAULT_RETRY_WAIT
+            if ziel.tzinfo is None:
+                ziel = ziel.replace(tzinfo=timezone.utc)
+            wartezeit = (ziel - datetime.now(timezone.utc)).total_seconds()
+        return max(0.0, min(wartezeit, float(_MAX_RETRY_WAIT)))
 
     # -- Payload-Aufbau ---------------------------------------------------
     def _postfach(self) -> str:

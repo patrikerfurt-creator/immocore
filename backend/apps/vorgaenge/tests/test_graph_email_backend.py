@@ -104,6 +104,64 @@ class GraphEmailBackendVersandTest(TestCase):
             gesendet = GraphEmailBackend(fail_silently=True).send_messages([msg])
         self.assertEqual(gesendet, 0)
 
+    def test_429_wird_nach_retry_after_wiederholt_und_dann_gesendet(self):
+        """Drosselung (429 ApplicationThrottled) wird abgewartet und erneut
+        versucht – nicht hart als Fehler verbucht."""
+        msg = EmailMessage('S', 'B', 'info@demme-immobilien.de', ['k@example.de'])
+        gedrosselt = MagicMock(
+            status_code=429,
+            text='{"error":{"code":"ApplicationThrottled"}}',
+            headers={'Retry-After': '7'},
+        )
+        erfolg = MagicMock(status_code=202, text='')
+        with patch('msal.ConfidentialClientApplication', return_value=_mock_msal()), \
+                patch('config.email_backends.time.sleep') as sleep, \
+                patch('config.email_backends.requests.post') as post:
+            post.side_effect = [gedrosselt, erfolg]
+            gesendet = GraphEmailBackend().send_messages([msg])
+
+        self.assertEqual(gesendet, 1)
+        self.assertEqual(post.call_count, 2)
+        sleep.assert_called_once_with(7.0)
+
+    def test_retry_after_wird_auf_obergrenze_gedeckelt(self):
+        """Ein überlanger Retry-After-Wert blockiert den Request nicht."""
+        msg = EmailMessage('S', 'B', 'info@demme-immobilien.de', ['k@example.de'])
+        gedrosselt = MagicMock(status_code=503, text='busy',
+                               headers={'Retry-After': '99999'})
+        erfolg = MagicMock(status_code=202, text='')
+        with patch('msal.ConfidentialClientApplication', return_value=_mock_msal()), \
+                patch('config.email_backends.time.sleep') as sleep, \
+                patch('config.email_backends.requests.post') as post:
+            post.side_effect = [gedrosselt, erfolg]
+            GraphEmailBackend().send_messages([msg])
+
+        sleep.assert_called_once_with(60.0)  # _MAX_RETRY_WAIT
+
+    def test_dauerhafte_drosselung_wirft_nach_maximalen_versuchen(self):
+        """Bleibt es bei 429, wird nach _MAX_RETRIES+1 Versuchen geworfen."""
+        msg = EmailMessage('S', 'B', 'info@demme-immobilien.de', ['k@example.de'])
+        gedrosselt = MagicMock(status_code=429, text='throttled',
+                               headers={'Retry-After': '1'})
+        with patch('msal.ConfidentialClientApplication', return_value=_mock_msal()), \
+                patch('config.email_backends.time.sleep'), \
+                patch('config.email_backends.requests.post') as post:
+            post.return_value = gedrosselt
+            with self.assertRaises(GraphVersandError):
+                GraphEmailBackend(fail_silently=False).send_messages([msg])
+        self.assertEqual(post.call_count, 4)  # 1 + _MAX_RETRIES (3)
+
+    def test_429_ohne_retry_after_nutzt_fallback_wartezeit(self):
+        msg = EmailMessage('S', 'B', 'info@demme-immobilien.de', ['k@example.de'])
+        gedrosselt = MagicMock(status_code=429, text='throttled', headers={})
+        erfolg = MagicMock(status_code=202, text='')
+        with patch('msal.ConfidentialClientApplication', return_value=_mock_msal()), \
+                patch('config.email_backends.time.sleep') as sleep, \
+                patch('config.email_backends.requests.post') as post:
+            post.side_effect = [gedrosselt, erfolg]
+            GraphEmailBackend().send_messages([msg])
+        sleep.assert_called_once_with(20)  # _DEFAULT_RETRY_WAIT
+
 
 class GraphEmailBackendKonfigTest(TestCase):
     @override_settings(MS_GRAPH_TENANT_ID='', MS_GRAPH_CLIENT_ID='',
