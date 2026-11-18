@@ -12,9 +12,6 @@ im PDF-Anhang dieser E-Mail.
 Tagesordnung im Ueberblick:
 {% for top in tagesordnung %}  TOP {{ top.nummer }}: {{ top.titel }}
 {% endfor %}
-{% if ladungsfrist.warnung %}
-Hinweis: {{ ladungsfrist.warnung }}
-{% endif %}
 Sollten Sie nicht persoenlich teilnehmen koennen, koennen Sie sich vertreten
 lassen. Bitte legen Sie in diesem Fall eine schriftliche Vollmacht vor.
 
