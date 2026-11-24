@@ -26,6 +26,7 @@ Die Gruppe `eingabe` ist dynamisch: sie enthält die Eingabefelder der jeweilige
 | `objekt.bezeichnung` | Bezeichnung des Objekts | text | `WEG Musterstraße 1` |
 | `objekt.anschrift` | Anschrift des Objekts | text | `Musterstraße 1, 60311 Frankfurt am Main` |
 | `objekt.ist_weg` | Objekt ist eine WEG | bool | `True` |
+| `objekt.verwaltung_seit` | Beginn der Verwaltung | datum | `2020-01-01` |
 
 ### Gruppe `einheit`
 
@@ -111,6 +112,7 @@ Die Gruppe `eingabe` ist dynamisch: sie enthält die Eingabefelder der jeweilige
 | `objekt.bezeichnung` | Bezeichnung des Objekts | text | `WEG Musterstraße 1` |
 | `objekt.anschrift` | Anschrift des Objekts | text | `Musterstraße 1, 60311 Frankfurt am Main` |
 | `objekt.ist_weg` | Objekt ist eine WEG | bool | `True` |
+| `objekt.verwaltung_seit` | Beginn der Verwaltung | datum | `2020-01-01` |
 
 ### Gruppe `einheit`
 
@@ -188,6 +190,7 @@ Die Gruppe `eingabe` ist dynamisch: sie enthält die Eingabefelder der jeweilige
 | `objekt.bezeichnung` | Bezeichnung des Objekts | text | `WEG Musterstraße 1` |
 | `objekt.anschrift` | Anschrift des Objekts | text | `Musterstraße 1, 60311 Frankfurt am Main` |
 | `objekt.ist_weg` | Objekt ist eine WEG | bool | `True` |
+| `objekt.verwaltung_seit` | Beginn der Verwaltung | datum | `2020-01-01` |
 
 ### Gruppe `einheit`
 
@@ -272,6 +275,7 @@ Die Gruppe `eingabe` ist dynamisch: sie enthält die Eingabefelder der jeweilige
 | `objekt.bezeichnung` | Bezeichnung des Objekts | text | `WEG Musterstraße 1` |
 | `objekt.anschrift` | Anschrift des Objekts | text | `Musterstraße 1, 60311 Frankfurt am Main` |
 | `objekt.ist_weg` | Objekt ist eine WEG | bool | `True` |
+| `objekt.verwaltung_seit` | Beginn der Verwaltung | datum | `2020-01-01` |
 
 ### Gruppe `einheit`
 
@@ -356,6 +360,7 @@ Die Gruppe `eingabe` ist dynamisch: sie enthält die Eingabefelder der jeweilige
 | `objekt.bezeichnung` | Bezeichnung des Objekts | text | `WEG Musterstraße 1` |
 | `objekt.anschrift` | Anschrift des Objekts | text | `Musterstraße 1, 60311 Frankfurt am Main` |
 | `objekt.ist_weg` | Objekt ist eine WEG | bool | `True` |
+| `objekt.verwaltung_seit` | Beginn der Verwaltung | datum | `2020-01-01` |
 
 ### Gruppe `einheit`
 
@@ -440,6 +445,7 @@ Die Gruppe `eingabe` ist dynamisch: sie enthält die Eingabefelder der jeweilige
 | `objekt.bezeichnung` | Bezeichnung des Objekts | text | `WEG Musterstraße 1` |
 | `objekt.anschrift` | Anschrift des Objekts | text | `Musterstraße 1, 60311 Frankfurt am Main` |
 | `objekt.ist_weg` | Objekt ist eine WEG | bool | `True` |
+| `objekt.verwaltung_seit` | Beginn der Verwaltung | datum | `2020-01-01` |
 
 ### Gruppe `einheit`
 
@@ -519,6 +525,7 @@ Die Gruppe `eingabe` ist dynamisch: sie enthält die Eingabefelder der jeweilige
 | `objekt.bezeichnung` | Bezeichnung des Objekts | text | `WEG Musterstraße 1` |
 | `objekt.anschrift` | Anschrift des Objekts | text | `Musterstraße 1, 60311 Frankfurt am Main` |
 | `objekt.ist_weg` | Objekt ist eine WEG | bool | `True` |
+| `objekt.verwaltung_seit` | Beginn der Verwaltung | datum | `2020-01-01` |
 
 ### Gruppe `einheit`
 
@@ -589,6 +596,7 @@ Die Gruppe `eingabe` ist dynamisch: sie enthält die Eingabefelder der jeweilige
 | `objekt.bezeichnung` | Bezeichnung des Objekts | text | `WEG Musterstraße 1` |
 | `objekt.anschrift` | Anschrift des Objekts | text | `Musterstraße 1, 60311 Frankfurt am Main` |
 | `objekt.ist_weg` | Objekt ist eine WEG | bool | `True` |
+| `objekt.verwaltung_seit` | Beginn der Verwaltung | datum | `2020-01-01` |
 
 ### Gruppe `einheit`
 

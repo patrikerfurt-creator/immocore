@@ -152,6 +152,7 @@ export function PersonDetail() {
               <table className="w-full text-sm">
                 <thead className="border-b border-gray-100">
                   <tr>
+                    <th className="text-left py-2 pr-4 font-medium text-gray-600">Objekt</th>
                     <th className="text-left py-2 pr-4 font-medium text-gray-600">Einheit</th>
                     <th className="text-left py-2 pr-4 font-medium text-gray-600">Beginn</th>
                     <th className="text-left py-2 pr-4 font-medium text-gray-600">Ende</th>
@@ -161,6 +162,12 @@ export function PersonDetail() {
                 <tbody>
                   {evs.map(ev => (
                     <tr key={ev.id} className="border-b border-gray-50">
+                      <td className="py-2 pr-4 text-gray-800">
+                        {ev.objekt_bezeichnung}
+                        {ev.objekt_nummer ? (
+                          <span className="text-gray-400"> ({ev.objekt_nummer})</span>
+                        ) : null}
+                      </td>
                       <td className="py-2 pr-4 text-gray-800">{ev.einheit_nr}</td>
                       <td className="py-2 pr-4 text-gray-600">{ev.beginn}</td>
                       <td className="py-2 pr-4 text-gray-600">{ev.ende || '–'}</td>

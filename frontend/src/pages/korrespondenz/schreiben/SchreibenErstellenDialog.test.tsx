@@ -63,7 +63,7 @@ beforeEach(() => {
   })
   vi.mocked(personenApi.list).mockResolvedValue([])
   vi.mocked(personenApi.eigentumsverhaeltnisse).mockResolvedValue([
-    { id: 'ev1', person: 'p1', person_name: 'Max Muster', einheit: 'e1', einheit_nr: '12', beginn: '2020-01-01',
+    { id: 'ev1', person: 'p1', person_name: 'Max Muster', einheit: 'e1', einheit_nr: '12', objekt_bezeichnung: 'WEG Musterstraße 1', objekt_nummer: '53', beginn: '2020-01-01',
       ende: null, hausgeld_soll: null, ist_aktiv: true, hausgeld_eintraege: [] },
   ])
 })

@@ -1106,7 +1106,7 @@ export function ObjektDetail() {
                 />
               </EditField>
 
-              <EditField label="Verw. seit *">
+              <EditField label="Beginn der Verwaltung *">
                 <input
                   type="date"
                   className={inputCls}
@@ -1182,7 +1182,7 @@ export function ObjektDetail() {
             <Field label="Objektnummer" value={data.objektnummer} />
             <Field label="Typ" value={data.objekt_typ} />
             <Field label="Baujahr" value={data.baujahr} />
-            <Field label="Verw. seit" value={data.verwaltung_seit} />
+            <Field label="Beginn der Verwaltung" value={data.verwaltung_seit} />
             <Field label="Straße" value={data.strasse} />
             <Field label="PLZ / Ort" value={`${data.plz} ${data.ort}`} />
             <Field label="WJ-Start" value={`Monat ${data.wirtschaftsjahr_start}`} />

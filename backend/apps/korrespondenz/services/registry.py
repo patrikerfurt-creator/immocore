@@ -61,6 +61,7 @@ PLATZHALTER = (
     _p('objekt', 'bezeichnung', 'Bezeichnung des Objekts', 'text', 'WEG Musterstraße 1'),
     _p('objekt', 'anschrift', 'Anschrift des Objekts', 'text', 'Musterstraße 1, 60311 Frankfurt am Main'),
     _p('objekt', 'ist_weg', 'Objekt ist eine WEG', 'bool', True),
+    _p('objekt', 'verwaltung_seit', 'Beginn der Verwaltung', 'datum', '2020-01-01'),
     # --- einheit ------------------------------------------------------
     _p('einheit', 'einheit_nr', 'Einheitennummer', 'text', '12'),
     _p('einheit', 'flaechennummer', 'Flächennummer', 'text', '0012'),
