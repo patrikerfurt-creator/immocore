@@ -203,6 +203,8 @@ export interface EigentumsVerhaeltnis {
   person_name: string
   einheit: string
   einheit_nr: string
+  objekt_bezeichnung: string
+  objekt_nummer: string
   beginn: string
   ende: string | null
   hausgeld_soll: string | null

@@ -154,6 +154,7 @@ class KontextWerteTest(APITestCase):
         k = _kontext('eigentuemer_allgemein', self.s)
         self.assertEqual(k['objekt']['anschrift'], 'Musterstraße 1, 60311 Frankfurt am Main')
         self.assertIs(k['objekt']['ist_weg'], True)
+        self.assertEqual(k['objekt']['verwaltung_seit'], date(2020, 1, 1))
         self.assertEqual(k['einheit']['flaechennummer'], '0012')
         self.assertEqual(k['einheit']['typ'], 'Wohnung')
 

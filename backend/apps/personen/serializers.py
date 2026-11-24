@@ -75,6 +75,8 @@ class EigentumsVerhaeltnisSerializer(serializers.ModelSerializer):
     hausgeld_eintraege = HausgeldHistorieSerializer(many=True, read_only=True)
     person_name = serializers.CharField(source='person.name', read_only=True)
     einheit_nr = serializers.CharField(source='einheit.einheit_nr', read_only=True)
+    objekt_bezeichnung = serializers.CharField(source='einheit.objekt.bezeichnung', read_only=True)
+    objekt_nummer = serializers.CharField(source='einheit.objekt.objektnummer', read_only=True)
     personenkonto_id = serializers.SerializerMethodField()
     personenkonto_nr = serializers.SerializerMethodField()
 

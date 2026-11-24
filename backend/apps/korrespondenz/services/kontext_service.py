@@ -179,6 +179,7 @@ def _gruppe_objekt(r: _Refs) -> dict:
         'bezeichnung': o.bezeichnung,
         'anschrift': f'{o.strasse}, {o.plz} {o.ort}',
         'ist_weg': o.objekt_typ == 'WEG',
+        'verwaltung_seit': o.verwaltung_seit,
     }
 
 

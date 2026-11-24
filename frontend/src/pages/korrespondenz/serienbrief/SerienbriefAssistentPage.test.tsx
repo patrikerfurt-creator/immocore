@@ -95,8 +95,8 @@ beforeEach(() => {
   ])
   vi.mocked(mitarbeiterApi.list).mockResolvedValue([{ id: 'm1', user_id: 7, vollname: 'Anna Betreuerin', aktiv: true } as never])
   vi.mocked(personenApi.eigentumsverhaeltnisse).mockResolvedValue([
-    { id: 'ev1', person: 'p1', person_name: 'Max Muster', einheit: 'e1', einheit_nr: '12', beginn: '2020-01-01', ende: null, hausgeld_soll: null, ist_aktiv: true, hausgeld_eintraege: [] },
-    { id: 'ev2', person: 'p2', person_name: 'Alt Eigentümer', einheit: 'e2', einheit_nr: '14', beginn: '2010-01-01', ende: '2019-12-31', hausgeld_soll: null, ist_aktiv: false, hausgeld_eintraege: [] },
+    { id: 'ev1', person: 'p1', person_name: 'Max Muster', einheit: 'e1', einheit_nr: '12', objekt_bezeichnung: 'WEG Musterstraße 1', objekt_nummer: '53', beginn: '2020-01-01', ende: null, hausgeld_soll: null, ist_aktiv: true, hausgeld_eintraege: [] },
+    { id: 'ev2', person: 'p2', person_name: 'Alt Eigentümer', einheit: 'e2', einheit_nr: '14', objekt_bezeichnung: 'WEG Musterstraße 1', objekt_nummer: '53', beginn: '2010-01-01', ende: '2019-12-31', hausgeld_soll: null, ist_aktiv: false, hausgeld_eintraege: [] },
   ])
   vi.mocked(schreibenApi.pdf).mockResolvedValue(new Blob(['%PDF'], { type: 'application/pdf' }))
   vi.mocked(druckstapelApi.pdf).mockResolvedValue(new Blob(['%PDF'], { type: 'application/pdf' }))
